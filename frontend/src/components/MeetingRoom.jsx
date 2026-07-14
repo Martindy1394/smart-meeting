@@ -186,7 +186,8 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       ? `${meeting.id}:${meeting.summary_format || "bullets"}`
       : "";
     revokeAudioUrl();
-    if (meeting.has_audio) {
+    // Load whenever the meeting may already have a saved WAV.
+    if (meeting.has_audio || meeting.status === "finalized" || meeting.audio_path) {
       loadAudio(meeting.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -305,14 +306,19 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
           {recorder.recording ? "■ Stop recording" : "● Start recording"}
         </button>
 
-        {(audioUrl || audioLoading) && !recorder.recording && (
-          <div className="audio-player-wrap">
+        {!recorder.recording && (
+          <div className="audio-player-wrap" title={audioUrl ? "Meeting recording" : "Recording available after you stop"}>
             {audioLoading ? (
               <span className="card-tag">Loading audio…</span>
-            ) : (
+            ) : audioUrl ? (
               <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
                 Your browser does not support audio playback.
               </audio>
+            ) : (
+              <div className="audio-player-empty">
+                <span className="audio-player-label">Audio</span>
+                <span className="audio-player-hint">No recording yet</span>
+              </div>
             )}
           </div>
         )}

@@ -32,7 +32,9 @@ def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
 
 
 def _has_audio(m: Meeting) -> bool:
-    return bool(m.audio_path and os.path.exists(m.audio_path))
+    if not m.audio_path:
+        return False
+    return os.path.exists(os.path.abspath(m.audio_path))
 
 
 def _clean_attendees(names: list[str]) -> str:
@@ -124,8 +126,9 @@ def get_meeting_audio(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No audio recording is available for this meeting yet.",
         )
+    path = os.path.abspath(meeting.audio_path)
     return FileResponse(
-        path=meeting.audio_path,
+        path=path,
         media_type="audio/wav",
         filename=f"{meeting.title or 'meeting'}.wav",
         content_disposition_type="inline",

@@ -30,19 +30,22 @@ def float32_to_pcm16(samples: np.ndarray) -> bytes:
 
 
 def audio_dir() -> str:
-    os.makedirs(settings.audio_storage_dir, exist_ok=True)
-    return settings.audio_storage_dir
+    path = settings.audio_storage_dir
+    if not os.path.isabs(path):
+        path = os.path.abspath(path)
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def save_wav(meeting_id: str, pcm_bytes: bytes) -> str:
-    """Persist raw PCM bytes as a 16 kHz mono WAV file. Returns the path."""
+    """Persist raw PCM bytes as a 16 kHz mono WAV file. Returns an absolute path."""
     path = os.path.join(audio_dir(), f"{meeting_id}.wav")
     with wave.open(path, "wb") as wf:
         wf.setnchannels(settings.audio_channels)
         wf.setsampwidth(2)  # 16-bit
         wf.setframerate(settings.audio_sample_rate)
         wf.writeframes(pcm_bytes)
-    return path
+    return os.path.abspath(path)
 
 
 def wav_duration_seconds(pcm_bytes: bytes) -> float:

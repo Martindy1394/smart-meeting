@@ -86,13 +86,20 @@ export default function Workspace() {
   );
 
   const refreshActive = useCallback(
-    (updated) => {
+    async (updated) => {
       if (updated && updated.id) {
         setActiveMeeting((m) => ({ ...m, ...updated }));
+      } else if (activeId) {
+        try {
+          const detail = await api.getMeeting(activeId);
+          setActiveMeeting(detail);
+        } catch {
+          /* keep current */
+        }
       }
       loadMeetings(search);
     },
-    [loadMeetings, search]
+    [activeId, loadMeetings, search]
   );
 
   return (
