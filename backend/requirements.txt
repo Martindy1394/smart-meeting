@@ -6,6 +6,8 @@ websockets==14.1
 
 # Database
 SQLAlchemy==2.0.36
+# PostgreSQL driver (used in production / docker-compose; SQLite needs nothing).
+psycopg[binary]==3.2.3
 
 # Settings / validation
 pydantic==2.10.4

@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: smartmeeting
+      POSTGRES_PASSWORD: smartmeeting
+      POSTGRES_DB: smartmeeting
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartmeeting"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://smartmeeting:smartmeeting@db:5432/smartmeeting
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
+      CORS_ORIGINS: http://localhost:8080
+      AUDIO_STORAGE_DIR: /data/audio
+    volumes:
+      - audio_data:/data/audio
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  db_data:
+  audio_data:
