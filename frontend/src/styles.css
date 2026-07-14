@@ -367,6 +367,8 @@ button {
 }
 .settings-panel {
   max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
 }
 .settings-card {
   margin-bottom: 20px;
@@ -384,6 +386,8 @@ button {
 }
 .history-panel {
   max-width: 920px;
+  width: 100%;
+  margin: 0 auto;
 }
 .history-card {
   margin-bottom: 20px;
