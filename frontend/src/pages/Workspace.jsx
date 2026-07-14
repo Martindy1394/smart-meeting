@@ -11,6 +11,7 @@ export default function Workspace() {
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loadingMeeting, setLoadingMeeting] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [saveControls, setSaveControls] = useState(null);
   const searchTimer = useRef(null);
 
   const loadMeetings = useCallback(async (q) => {
@@ -38,6 +39,7 @@ export default function Workspace() {
 
   const selectMeeting = useCallback(async (id) => {
     setActiveId(id);
+    setSaveControls(null);
     setLoadingMeeting(true);
     try {
       const detail = await api.getMeeting(id);
@@ -56,6 +58,7 @@ export default function Workspace() {
         language: "hil",
         meeting_date: new Date().toISOString(),
       });
+      setSaveControls(null);
       setActiveId(detail.id);
       setActiveMeeting(detail);
       loadMeetings(search);
@@ -72,6 +75,7 @@ export default function Workspace() {
         if (id === activeId) {
           setActiveId(null);
           setActiveMeeting(null);
+          setSaveControls(null);
         }
         loadMeetings(search);
       } catch {
@@ -108,7 +112,7 @@ export default function Workspace() {
 
       <div className="main">
         <div className="topbar">
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="topbar-left">
             <button
               className="btn secondary menu-btn"
               onClick={() => setSidebarOpen(true)}
@@ -121,6 +125,17 @@ export default function Workspace() {
                 : "Smart Meeting"}
             </h1>
           </div>
+          {activeMeeting && saveControls && (
+            <div className="topbar-right">
+              <button
+                className="btn"
+                onClick={() => saveControls.save()}
+                disabled={saveControls.disabled || saveControls.saving}
+              >
+                {saveControls.saving ? <span className="spinner" /> : "Save"}
+              </button>
+            </div>
+          )}
         </div>
 
         {loadingMeeting ? (
@@ -132,6 +147,7 @@ export default function Workspace() {
             key={activeMeeting.id}
             meeting={activeMeeting}
             onMeetingUpdated={refreshActive}
+            onSaveControls={setSaveControls}
           />
         ) : (
           <div className="empty-state">

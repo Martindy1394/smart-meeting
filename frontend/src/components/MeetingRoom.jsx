@@ -13,7 +13,7 @@ function fmtTime(sec) {
   return `${m}:${s}`;
 }
 
-export default function MeetingRoom({ meeting, onMeetingUpdated }) {
+export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls }) {
   const detailsRef = useRef(null);
   const [detailsReady, setDetailsReady] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
@@ -58,6 +58,22 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
   );
 
   const recorder = useRecorder({ onFinalTranscript });
+
+  // Publish save controls so the parent can place the Save button in the topbar.
+  useEffect(() => {
+    if (!onSaveControls) return;
+    onSaveControls({
+      save: () => saveDetails(),
+      saving: savingDetails,
+      disabled: recorder.recording || recorder.status === "finalizing",
+    });
+  }, [
+    onSaveControls,
+    saveDetails,
+    savingDetails,
+    recorder.recording,
+    recorder.status,
+  ]);
 
   // Reset local state when the selected meeting changes.
   useEffect(() => {
@@ -217,19 +233,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
         {recorder.connectionState === "connecting" && (
           <span className="card-tag">connecting…</span>
         )}
-      </div>
-
-      <div className="save-bar">
-        <button
-          className="btn"
-          onClick={() => saveDetails()}
-          disabled={savingDetails || recorder.recording || recorder.status === "finalizing"}
-        >
-          {savingDetails ? <span className="spinner" /> : "Save details"}
-        </button>
-        <span className="card-tag">
-          Details also save automatically when recording finishes
-        </span>
       </div>
 
       <div className="cards bottom-cards">

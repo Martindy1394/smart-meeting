@@ -308,9 +308,25 @@ button {
   z-index: 5;
   gap: 12px;
 }
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
 .topbar h1 {
   font-size: 18px;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .topbar .title-input {
   font-size: 18px;
@@ -639,13 +655,6 @@ select.inline {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 18px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-.save-bar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
   margin-bottom: 20px;
   flex-wrap: wrap;
 }
