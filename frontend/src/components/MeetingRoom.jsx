@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { useRecorder } from "../hooks/useRecorder.js";
 import MeetingDetails from "./MeetingDetails.jsx";
@@ -13,17 +13,11 @@ function fmtTime(sec) {
   return `${m}:${s}`;
 }
 
-function isDetailsComplete(meeting) {
-  return Boolean(
-    meeting?.title?.trim() &&
-      meeting?.venue?.trim() &&
-      meeting?.meeting_date &&
-      Array.isArray(meeting?.attendees) &&
-      meeting.attendees.length > 0
-  );
-}
-
 export default function MeetingRoom({ meeting, onMeetingUpdated }) {
+  const detailsRef = useRef(null);
+  const [detailsReady, setDetailsReady] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+
   const [finalTranscript, setFinalTranscript] = useState(meeting.final_transcript || "");
   const [status, setStatus] = useState(meeting.status);
 
@@ -42,13 +36,25 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState("");
 
+  const saveDetails = useCallback(async ({ silent = false } = {}) => {
+    if (!detailsRef.current) return false;
+    setSavingDetails(true);
+    try {
+      return await detailsRef.current.save({ silent });
+    } finally {
+      setSavingDetails(false);
+    }
+  }, []);
+
   const onFinalTranscript = useCallback(
-    (data) => {
+    async (data) => {
       setFinalTranscript(data.text || "");
       setStatus("finalized");
+      // Automatically persist meeting details after recording finishes.
+      await saveDetails({ silent: true });
       if (onMeetingUpdated) onMeetingUpdated();
     },
-    [onMeetingUpdated]
+    [onMeetingUpdated, saveDetails]
   );
 
   const recorder = useRecorder({ onFinalTranscript });
@@ -79,7 +85,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
       recorder.stop();
       return;
     }
-    if (!isDetailsComplete(meeting)) return;
+    if (!detailsRef.current?.isComplete()) return;
     try {
       await recorder.start(meeting.id);
       setStatus("recording");
@@ -88,7 +94,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
     }
   }
 
-  const detailsReady = isDetailsComplete(meeting);
   const canStart = detailsReady && recorder.status !== "finalizing";
 
   async function runSummarize() {
@@ -140,7 +145,12 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
         <div className="error-banner">{recorder.message}</div>
       )}
 
-      <MeetingDetails meeting={meeting} onUpdated={onMeetingUpdated} />
+      <MeetingDetails
+        ref={detailsRef}
+        meeting={meeting}
+        onUpdated={onMeetingUpdated}
+        onValidityChange={setDetailsReady}
+      />
 
       <div className="recorder-bar">
         <button
@@ -149,7 +159,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
           disabled={recorder.recording ? recorder.status === "finalizing" : !canStart}
           title={
             !detailsReady && !recorder.recording
-              ? "Fill in and save all meeting details first"
+              ? "Fill in all meeting details first"
               : undefined
           }
         >
@@ -157,7 +167,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
         </button>
         {!detailsReady && !recorder.recording && (
           <span className="card-tag">
-            Save title, venue, date &amp; time, and attendees first
+            Fill in title, venue, date &amp; time, and attendees first
           </span>
         )}
         {recorder.recording && (
@@ -176,7 +186,18 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
         )}
       </div>
 
-      <div className="cards">
+      <div className="save-bar">
+        <button
+          className="btn"
+          onClick={() => saveDetails()}
+          disabled={savingDetails || recorder.recording || recorder.status === "finalizing"}
+        >
+          {savingDetails ? <span className="spinner" /> : "Save details"}
+        </button>
+        <span className="card-tag">
+          Details also save automatically when recording finishes
+        </span>
+      </div>
         {/* Transcript card */}
         <div className="card">
           <div className="card-head">

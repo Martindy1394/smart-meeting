@@ -607,6 +607,13 @@ select.inline {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 18px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.save-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   margin-bottom: 20px;
   flex-wrap: wrap;
 }

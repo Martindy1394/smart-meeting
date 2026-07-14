@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { api } from "../api/client";
 
 // Converts an ISO timestamp to the value expected by <input type="datetime-local">.
@@ -14,7 +14,17 @@ function nowLocalInput() {
   return toLocalInput(new Date().toISOString());
 }
 
-export default function MeetingDetails({ meeting, onUpdated }) {
+function resolveAttendees(attendees, attendeeInput) {
+  const pending = attendeeInput.trim();
+  return pending
+    ? Array.from(new Set([...attendees, pending]))
+    : attendees;
+}
+
+const MeetingDetails = forwardRef(function MeetingDetails(
+  { meeting, onUpdated, onValidityChange },
+  ref
+) {
   const [title, setTitle] = useState(meeting.title || "");
   const [venue, setVenue] = useState(meeting.venue || "");
   const [dateTime, setDateTime] = useState(
@@ -36,6 +46,74 @@ export default function MeetingDetails({ meeting, onUpdated }) {
     setSavedAt(0);
   }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const isComplete = () => {
+    const names = resolveAttendees(attendees, attendeeInput);
+    return Boolean(
+      title.trim() && venue.trim() && dateTime && names.length > 0
+    );
+  };
+
+  useEffect(() => {
+    if (onValidityChange) onValidityChange(isComplete());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, venue, dateTime, attendees, attendeeInput]);
+
+  async function save({ silent = false } = {}) {
+    setError("");
+    const finalAttendees = resolveAttendees(attendees, attendeeInput);
+
+    if (!title.trim()) {
+      if (!silent) setError("Title is required.");
+      return false;
+    }
+    if (!venue.trim()) {
+      if (!silent) setError("Venue is required.");
+      return false;
+    }
+    if (!dateTime) {
+      if (!silent) setError("Date & time is required.");
+      return false;
+    }
+    if (finalAttendees.length === 0) {
+      if (!silent) setError("Add at least one attendee.");
+      return false;
+    }
+
+    setSaving(true);
+    try {
+      await api.updateMeeting(meeting.id, {
+        title: title.trim(),
+        venue: venue.trim(),
+        meeting_date: dateTime,
+        attendees: finalAttendees,
+      });
+      setAttendees(finalAttendees);
+      setAttendeeInput("");
+      setSavedAt(Date.now());
+      if (onUpdated) {
+        onUpdated({
+          ...meeting,
+          title: title.trim(),
+          venue: venue.trim(),
+          meeting_date: dateTime,
+          attendees: finalAttendees,
+        });
+      }
+      return true;
+    } catch (err) {
+      if (!silent) setError(err.message || "Could not save details.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useImperativeHandle(ref, () => ({
+    save,
+    isComplete,
+    isSaving: () => saving,
+  }));
+
   function addAttendee() {
     const name = attendeeInput.trim();
     if (!name) return;
@@ -54,47 +132,6 @@ export default function MeetingDetails({ meeting, onUpdated }) {
     setAttendees((prev) => prev.filter((n) => n !== name));
   }
 
-  async function save() {
-    setError("");
-    // Include a name still sitting in the input box.
-    const pending = attendeeInput.trim();
-    const finalAttendees = pending
-      ? Array.from(new Set([...attendees, pending]))
-      : attendees;
-
-    // All fields are required.
-    if (!title.trim()) return setError("Title is required.");
-    if (!venue.trim()) return setError("Venue is required.");
-    if (!dateTime) return setError("Date & time is required.");
-    if (finalAttendees.length === 0)
-      return setError("Add at least one attendee.");
-
-    setSaving(true);
-    try {
-      await api.updateMeeting(meeting.id, {
-        title: title.trim(),
-        venue: venue.trim(),
-        meeting_date: dateTime,
-        attendees: finalAttendees,
-      });
-      setAttendees(finalAttendees);
-      setAttendeeInput("");
-      setSavedAt(Date.now());
-      if (onUpdated)
-        onUpdated({
-          ...meeting,
-          title: title.trim(),
-          venue: venue.trim(),
-          meeting_date: dateTime,
-          attendees: finalAttendees,
-        });
-    } catch (err) {
-      setError(err.message || "Could not save details.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
     <div className="details-card">
       <div className="details-head">
@@ -102,9 +139,6 @@ export default function MeetingDetails({ meeting, onUpdated }) {
         <div className="details-actions">
           {savedAt > 0 && !saving && <span className="saved-tag">Saved ✓</span>}
           {error && <span className="details-error">{error}</span>}
-          <button className="btn secondary" onClick={save} disabled={saving}>
-            {saving ? <span className="spinner" /> : "Save details"}
-          </button>
         </div>
       </div>
 
@@ -187,4 +221,6 @@ export default function MeetingDetails({ meeting, onUpdated }) {
       </div>
     </div>
   );
-}
+});
+
+export default MeetingDetails;
