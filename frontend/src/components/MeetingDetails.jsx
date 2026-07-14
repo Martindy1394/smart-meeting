@@ -28,24 +28,17 @@ export default function MeetingDetails({ meeting, onUpdated }) {
     setSavedAt(0);
   }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function addAttendees(raw) {
-    const names = raw
-      .split(",")
-      .map((n) => n.trim())
-      .filter(Boolean);
-    if (names.length === 0) return;
-    setAttendees((prev) => {
-      const set = new Set(prev);
-      names.forEach((n) => set.add(n));
-      return Array.from(set);
-    });
+  function addAttendee() {
+    const name = attendeeInput.trim();
+    if (!name) return;
+    setAttendees((prev) => (prev.includes(name) ? prev : [...prev, name]));
     setAttendeeInput("");
   }
 
   function onAttendeeKeyDown(e) {
-    if (e.key === "Enter" || e.key === ",") {
+    if (e.key === "Enter") {
       e.preventDefault();
-      addAttendees(attendeeInput);
+      addAttendee();
     }
   }
 
@@ -127,14 +120,23 @@ export default function MeetingDetails({ meeting, onUpdated }) {
               </span>
             ))}
           </div>
-          <input
-            type="text"
-            placeholder="Type a name and press Enter (comma-separated OK)"
-            value={attendeeInput}
-            onChange={(e) => setAttendeeInput(e.target.value)}
-            onKeyDown={onAttendeeKeyDown}
-            onBlur={() => attendeeInput.trim() && addAttendees(attendeeInput)}
-          />
+          <div className="attendee-input-row">
+            <input
+              type="text"
+              placeholder="Type an attendee's name"
+              value={attendeeInput}
+              onChange={(e) => setAttendeeInput(e.target.value)}
+              onKeyDown={onAttendeeKeyDown}
+            />
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={addAttendee}
+              disabled={!attendeeInput.trim()}
+            >
+              + Add
+            </button>
+          </div>
         </div>
       </div>
     </div>

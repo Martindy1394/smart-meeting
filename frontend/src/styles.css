@@ -568,6 +568,17 @@ select.inline {
 .chip-x:hover {
   color: #fca5a5;
 }
+.attendee-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.attendee-input-row input {
+  flex: 1;
+}
+.attendee-input-row .btn {
+  white-space: nowrap;
+}
 @media (max-width: 620px) {
   .details-grid {
     grid-template-columns: 1fr;
