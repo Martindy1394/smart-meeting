@@ -1,4 +1,4 @@
-"""Audio helpers: PCM (int16 LE) <-> float32, WAV persistence, and gain normalize.
+"""Audio helpers: PCM (int16 LE) <-> float32, and WAV persistence.
 
 The browser streams raw 16 kHz / 16-bit / mono PCM.  We keep everything in that
 canonical format so no server-side decoding (WebM/Opus) is required.
@@ -27,39 +27,6 @@ def pcm16_to_float32(data: bytes) -> np.ndarray:
 def float32_to_pcm16(samples: np.ndarray) -> bytes:
     clipped = np.clip(samples, -1.0, 1.0)
     return (clipped * 32767.0).astype("<i2").tobytes()
-
-
-def rms_level(samples: np.ndarray) -> float:
-    if samples.size == 0:
-        return 0.0
-    return float(np.sqrt(np.mean(np.square(samples), dtype=np.float64)))
-
-
-def peak_level(samples: np.ndarray) -> float:
-    if samples.size == 0:
-        return 0.0
-    return float(np.max(np.abs(samples)))
-
-
-def normalize_audio(
-    samples: np.ndarray,
-    target_peak: float = 0.85,
-    max_gain: float = 40.0,
-) -> np.ndarray:
-    """Peak-normalize quiet mic captures so Whisper/VAD can hear speech.
-
-    Browser captures (or remote-forwarded mics) are sometimes extremely quiet,
-    which makes VAD drop every frame and live captions stay blank.
-    """
-    if samples.size == 0:
-        return samples
-    peak = peak_level(samples)
-    if peak < 1e-6:
-        return samples
-    gain = min(max_gain, target_peak / peak)
-    if gain <= 1.05:
-        return samples
-    return np.clip(samples * gain, -1.0, 1.0).astype(np.float32)
 
 
 def audio_dir() -> str:

@@ -20,7 +20,6 @@ when the (multi-gigabyte) model weights / package are not installed.
 from __future__ import annotations
 
 import logging
-import re
 import threading
 from dataclasses import dataclass
 
@@ -32,21 +31,6 @@ logger = logging.getLogger("smart_meeting.transcription")
 
 # Closest supported language when the requested dialect is unavailable.
 _LANGUAGE_FALLBACK = {"hil": "tl"}
-
-_JUNK_CAPTION_RE = re.compile(
-    r"^[\s\.\,\!\?…\-–—\"'“”‘’]*$"
-    r"|^(thanks for watching|thank you for watching|subscribe|bye\.?)$",
-    re.IGNORECASE,
-)
-
-
-def _is_junk_caption(text: str) -> bool:
-    if not text:
-        return True
-    if _JUNK_CAPTION_RE.match(text.strip()):
-        return True
-    letters = sum(ch.isalpha() for ch in text)
-    return letters < 2
 
 
 class TranscriptionUnavailable(RuntimeError):
@@ -137,44 +121,26 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     """Fast, low-latency transcription of a short audio window (live captions).
 
     ``pcm`` must be mono float32 in [-1, 1] at ``settings.audio_sample_rate``.
-    Live mode disables VAD (too aggressive on short/quiet windows) and
-    peak-normalizes the chunk first so captions keep flowing.
     """
-    from . import audio as audio_util
-
     model = _cache.get(settings.whisper_live_model)
     lang = _cache.resolve_language(language or settings.whisper_default_language)
-    samples = audio_util.normalize_audio(np.asarray(pcm, dtype=np.float32))
-    if audio_util.rms_level(samples) < 1e-4:
-        return []
     segments, _info = model.transcribe(
-        samples,
+        pcm,
         language=lang,
         beam_size=1,
         best_of=1,
         temperature=0.0,
-        # Short live windows + quiet mics: VAD often wipes the entire chunk.
+        # Live windows are short; VAD often drops the whole chunk.
         vad_filter=False,
         condition_on_previous_text=False,
-        without_timestamps=True,
-        # Suppress hallucinations on near-silence / noise.
-        no_speech_threshold=0.5,
-        compression_ratio_threshold=2.4,
-        log_prob_threshold=-0.8,
+        without_timestamps=False,
+        no_speech_threshold=0.6,
     )
-    out: list[Segment] = []
-    for s in segments:
-        text = (s.text or "").strip()
-        if _is_junk_caption(text):
-            continue
-        out.append(
-            Segment(
-                text=text,
-                start=float(getattr(s, "start", 0.0) or 0.0),
-                end=float(getattr(s, "end", 0.0) or 0.0),
-            )
-        )
-    return out
+    return [
+        Segment(text=s.text.strip(), start=s.start, end=s.end)
+        for s in segments
+        if (s.text or "").strip() and any(ch.isalpha() for ch in s.text)
+    ]
 
 
 def transcribe_final(audio_source, language: str | None) -> list[Segment]:
@@ -182,76 +148,20 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
 
     ``audio_source`` may be a file path (str) or a float32 numpy array.
     """
-    from . import audio as audio_util
-
     model = _cache.get(settings.whisper_final_model)
     lang = _cache.resolve_language(language or settings.whisper_default_language)
-
-    if isinstance(audio_source, np.ndarray):
-        audio_source = audio_util.normalize_audio(np.asarray(audio_source, dtype=np.float32))
-
-    # Correct VadOptions keys for this faster-whisper version: onset/offset
-    # (not "threshold"). Soft settings keep quieter speech after normalization.
-    vad_parameters = {
-        "onset": 0.35,
-        "offset": 0.25,
-        "min_speech_duration_ms": 150,
-        "min_silence_duration_ms": 400,
-        "speech_pad_ms": 400,
-    }
-
-    try:
-        segments, _info = model.transcribe(
-            audio_source,
-            language=lang,
-            beam_size=5,
-            best_of=5,
-            temperature=0.0,
-            vad_filter=True,
-            vad_parameters=vad_parameters,
-            condition_on_previous_text=True,
-            without_timestamps=False,
-        )
-        out = [
-            Segment(text=s.text.strip(), start=s.start, end=s.end)
-            for s in segments
-            if (s.text or "").strip()
-        ]
-    except TypeError as exc:
-        # Older/newer VadOptions mismatch — retry without custom params.
-        logger.warning("VAD params unsupported (%s); retrying with defaults.", exc)
-        segments, _info = model.transcribe(
-            audio_source,
-            language=lang,
-            beam_size=5,
-            best_of=5,
-            temperature=0.0,
-            vad_filter=True,
-            condition_on_previous_text=True,
-            without_timestamps=False,
-        )
-        out = [
-            Segment(text=s.text.strip(), start=s.start, end=s.end)
-            for s in segments
-            if (s.text or "").strip()
-        ]
-
-    # If VAD wiped everything, retry without VAD so we still return a transcript.
-    if not out and isinstance(audio_source, np.ndarray) and audio_util.rms_level(audio_source) > 1e-4:
-        logger.warning("Final VAD produced no speech — retrying without VAD filter.")
-        segments, _info = model.transcribe(
-            audio_source,
-            language=lang,
-            beam_size=5,
-            best_of=5,
-            temperature=0.0,
-            vad_filter=False,
-            condition_on_previous_text=True,
-            without_timestamps=False,
-        )
-        out = [
-            Segment(text=s.text.strip(), start=s.start, end=s.end)
-            for s in segments
-            if (s.text or "").strip() and not _is_junk_caption(s.text.strip())
-        ]
-    return out
+    segments, _info = model.transcribe(
+        audio_source,
+        language=lang,
+        beam_size=5,
+        best_of=5,
+        temperature=0.0,
+        vad_filter=True,
+        condition_on_previous_text=True,
+        without_timestamps=False,
+    )
+    return [
+        Segment(text=s.text.strip(), start=s.start, end=s.end)
+        for s in segments
+        if (s.text or "").strip()
+    ]

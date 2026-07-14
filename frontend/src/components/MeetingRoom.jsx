@@ -28,15 +28,13 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState("");
 
-  // Translation state — always auto-translates the transcript into English.
+  // Translation state
+  const [languages, setLanguages] = useState([]);
+  const [targetLang, setTargetLang] = useState("es");
   const [translation, setTranslation] = useState(meeting.translation || "");
-  const [translationLang, setTranslationLang] = useState(
-    meeting.translation_language || "English"
-  );
+  const [translationLang, setTranslationLang] = useState(meeting.translation_language || "");
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState("");
-  const autoTranslateRef = useRef("");
-  const autoSummaryRef = useRef("");
 
   const saveDetails = useCallback(async ({ silent = false } = {}) => {
     if (!detailsRef.current) return false;
@@ -48,56 +46,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     }
   }, []);
 
-  const summarizeFromEnglish = useCallback(
-    async (format = summaryFormat) => {
-      setSummarizing(true);
-      setSummaryError("");
-      try {
-        const res = await api.summarize({
-          meeting_id: meeting.id,
-          output_format: format,
-        });
-        setSummary(res.summary);
-        setSummaryEngine(res.engine);
-        autoSummaryRef.current = `${meeting.id}:${format}`;
-        if (onMeetingUpdated) onMeetingUpdated();
-      } catch (err) {
-        setSummaryError(err.message || "Summarization failed.");
-      } finally {
-        setSummarizing(false);
-      }
-    },
-    [meeting.id, onMeetingUpdated, summaryFormat]
-  );
-
-  const translateToEnglish = useCallback(
-    async (transcriptText) => {
-      const text = (transcriptText || "").trim();
-      if (!text) return;
-      if (autoTranslateRef.current === text) return;
-      autoTranslateRef.current = text;
-      setTranslating(true);
-      setTranslateError("");
-      try {
-        const res = await api.translate({
-          meeting_id: meeting.id,
-          target_language: "en",
-        });
-        setTranslation(res.translation);
-        setTranslationLang(res.language_name || "English");
-        if (onMeetingUpdated) onMeetingUpdated();
-        // BART summarizes from the English translation for accuracy.
-        await summarizeFromEnglish(summaryFormat);
-      } catch (err) {
-        autoTranslateRef.current = "";
-        setTranslateError(err.message || "English translation failed.");
-      } finally {
-        setTranslating(false);
-      }
-    },
-    [meeting.id, onMeetingUpdated, summarizeFromEnglish, summaryFormat]
-  );
-
   const onFinalTranscript = useCallback(
     async (data) => {
       const text = data.text || "";
@@ -106,10 +54,27 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       // Automatically persist meeting details after recording finishes.
       await saveDetails({ silent: true });
       if (onMeetingUpdated) onMeetingUpdated();
-      // Automatically translate the finalized transcript into English.
-      await translateToEnglish(text);
+
+      // BART summary after transcription (from the finalized transcript).
+      if (text.trim()) {
+        setSummarizing(true);
+        setSummaryError("");
+        try {
+          const res = await api.summarize({
+            meeting_id: meeting.id,
+            output_format: summaryFormat,
+          });
+          setSummary(res.summary);
+          setSummaryEngine(res.engine);
+          if (onMeetingUpdated) onMeetingUpdated();
+        } catch (err) {
+          setSummaryError(err.message || "Summarization failed.");
+        } finally {
+          setSummarizing(false);
+        }
+      }
     },
-    [onMeetingUpdated, saveDetails, translateToEnglish]
+    [meeting.id, onMeetingUpdated, saveDetails, summaryFormat]
   );
 
   const recorder = useRecorder({ onFinalTranscript });
@@ -137,34 +102,19 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     setSummary(meeting.summary || "");
     setSummaryFormat(meeting.summary_format || "bullets");
     setTranslation(meeting.translation || "");
-    setTranslationLang(meeting.translation_language || "English");
+    setTranslationLang(meeting.translation_language || "");
     setSummaryError("");
     setTranslateError("");
     setSummaryEngine("");
-    autoTranslateRef.current = meeting.translation ? meeting.final_transcript || "" : "";
-    autoSummaryRef.current = meeting.summary
-      ? `${meeting.id}:${meeting.summary_format || "bullets"}`
-      : "";
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
 
-  // Auto-translate existing finalized transcripts that don't have English yet.
   useEffect(() => {
-    const text = (meeting.final_transcript || "").trim();
-    if (!text) return;
-    if (meeting.translation) return;
-    translateToEnglish(text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, meeting.final_transcript, meeting.translation]);
-
-  // If English exists but summary does not, auto-summarize from the translation.
-  useEffect(() => {
-    if (!meeting.translation) return;
-    if (meeting.summary) return;
-    if (autoSummaryRef.current.startsWith(`${meeting.id}:`)) return;
-    summarizeFromEnglish(summaryFormat);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, meeting.translation, meeting.summary]);
+    api
+      .languages()
+      .then(setLanguages)
+      .catch(() => setLanguages([]));
+  }, []);
 
   async function toggleRecord() {
     if (recorder.recording) {
@@ -181,14 +131,41 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   }
 
   const canStart = detailsReady && recorder.status !== "finalizing";
-  const hasEnglish = Boolean((translation || "").trim());
 
   async function runSummarize() {
-    if (!hasEnglish) {
-      setSummaryError("Wait for the English translation to finish first.");
-      return;
+    setSummarizing(true);
+    setSummaryError("");
+    try {
+      const res = await api.summarize({
+        meeting_id: meeting.id,
+        output_format: summaryFormat,
+      });
+      setSummary(res.summary);
+      setSummaryEngine(res.engine);
+      if (onMeetingUpdated) onMeetingUpdated();
+    } catch (err) {
+      setSummaryError(err.message || "Summarization failed.");
+    } finally {
+      setSummarizing(false);
     }
-    await summarizeFromEnglish(summaryFormat);
+  }
+
+  async function runTranslate() {
+    setTranslating(true);
+    setTranslateError("");
+    try {
+      const res = await api.translate({
+        meeting_id: meeting.id,
+        target_language: targetLang,
+      });
+      setTranslation(res.translation);
+      setTranslationLang(res.language_name);
+      if (onMeetingUpdated) onMeetingUpdated();
+    } catch (err) {
+      setTranslateError(err.message || "Translation failed.");
+    } finally {
+      setTranslating(false);
+    }
   }
 
   const isRefined = status === "finalized" && finalTranscript;
@@ -198,9 +175,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   return (
     <div className="content">
       {!recorder.transcriptionAvailable && recorder.message && (
-        <div className="banner-warn">{recorder.message}</div>
-      )}
-      {recorder.transcriptionAvailable && recorder.message && recorder.recording && (
         <div className="banner-warn">{recorder.message}</div>
       )}
       {recorder.status === "error" && recorder.message && (
@@ -269,17 +243,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
           <>
             <span className="dot-live" />
             <span className="timer">{fmtTime(recorder.elapsed)}</span>
-            <span
-              className="mic-meter"
-              title={`Mic level ${(recorder.micLevel * 100).toFixed(1)}%`}
-            >
-              <span
-                className="mic-meter-fill"
-                style={{
-                  width: `${Math.min(100, Math.max(4, recorder.micLevel * 400))}%`,
-                }}
-              />
-            </span>
           </>
         )}
         {recorder.status === "finalizing" && (
@@ -293,12 +256,12 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       </div>
 
       <div className="cards bottom-cards">
-        {/* Summary card (BART) — from English translation */}
+        {/* Summary card (BART) */}
         <div className="card">
           <div className="card-head">
             <h3>Summary</h3>
             <span className="card-tag">
-              BART · from English{summaryEngine ? ` · ${summaryEngine}` : ""}
+              BART · from transcript{summaryEngine ? ` · ${summaryEngine}` : ""}
             </span>
           </div>
           <div className="card-head" style={{ borderTop: "none", paddingTop: 0 }}>
@@ -319,52 +282,64 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             <button
               className="btn"
               onClick={runSummarize}
-              disabled={!hasEnglish || summarizing || translating}
+              disabled={!hasTranscript || summarizing}
             >
               {summarizing ? <span className="spinner" /> : "Summarize"}
             </button>
           </div>
           <div className="card-body">
             {summaryError && <div className="error-banner">{summaryError}</div>}
-            {summarizing ? (
-              <div className="center-spin">
-                <span className="spinner" /> Summarizing English translation…
-              </div>
-            ) : summary ? (
+            {summary ? (
               summary
             ) : (
               <div className="placeholder">
-                {!hasTranscript
-                  ? "Finalize a transcript first."
-                  : translating || !hasEnglish
-                    ? "Waiting for English translation, then summary runs automatically."
-                    : "Choose a format and click Summarize."}
+                {hasTranscript
+                  ? "Choose a format and click Summarize (runs on the transcript)."
+                  : "Finalize a transcript first — summary runs automatically after recording."}
               </div>
             )}
           </div>
         </div>
 
-        {/* Translation card (mBART) — auto English */}
+        {/* Translation card (mBART) */}
         <div className="card">
           <div className="card-head">
-            <h3>English translation</h3>
+            <h3>Translation</h3>
             <span className="card-tag">
-              mBART · {translationLang || "English"}
+              mBART{translationLang ? ` · ${translationLang}` : ""}
             </span>
+          </div>
+          <div className="card-head" style={{ borderTop: "none", paddingTop: 0 }}>
+            <div className="controls-row">
+              <select
+                className="inline"
+                value={targetLang}
+                onChange={(e) => setTargetLang(e.target.value)}
+              >
+                {languages.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn"
+                onClick={runTranslate}
+                disabled={!hasTranscript || translating}
+              >
+                {translating ? <span className="spinner" /> : "Translate"}
+              </button>
+            </div>
           </div>
           <div className="card-body">
             {translateError && <div className="error-banner">{translateError}</div>}
-            {translating ? (
-              <div className="center-spin">
-                <span className="spinner" /> Translating to English…
-              </div>
-            ) : translation ? (
+            {translation ? (
               translation
             ) : (
               <div className="placeholder">
                 {hasTranscript
-                  ? "English translation will appear here automatically."
-                  : "Finalize a transcript to auto-translate into English."}
+                  ? "Choose a language and click Translate to translate the full transcript."
+                  : "Finalize a transcript first, then translate."}
               </div>
             )}
           </div>

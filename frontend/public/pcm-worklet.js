@@ -1,34 +1,35 @@
 // AudioWorkletProcessor that downsamples the microphone input to 16 kHz mono
-// and emits little-endian 16-bit PCM chunks to the main thread, plus a simple
-// RMS level meter so the UI can warn when the mic is silent.
+// and emits little-endian 16-bit PCM chunks (~ up to 4096 samples) to the main
+// thread. Using an AudioWorklet (rather than MediaRecorder) gives us raw PCM
+// with no server-side WebM/Opus decoding and minimal latency.
 class PCMWorkletProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
     this.targetSampleRate = 16000;
-    this.inputSampleRate = sampleRate;
+    this.inputSampleRate = sampleRate; // global provided by AudioWorkletGlobalScope
     this.ratio = this.inputSampleRate / this.targetSampleRate;
     this._buffer = [];
-    // Emit roughly every ~0.25s worth of 16k samples.
+    // Emit roughly every ~0.25s worth of 16k samples to keep chunks small.
     this._emitEvery = 4096;
-    this._levelCounter = 0;
   }
 
   _downsample(input) {
-    if (this.ratio <= 1.01) {
+    if (this.ratio <= 1) {
       return input;
     }
     const outLength = Math.floor(input.length / this.ratio);
     const out = new Float32Array(outLength);
+    let pos = 0;
     for (let i = 0; i < outLength; i++) {
       const start = Math.floor(i * this.ratio);
-      const end = Math.min(input.length, Math.floor((i + 1) * this.ratio));
+      const end = Math.floor((i + 1) * this.ratio);
       let sum = 0;
       let count = 0;
-      for (let j = start; j < end; j++) {
+      for (let j = start; j < end && j < input.length; j++) {
         sum += input[j];
         count++;
       }
-      out[i] = count > 0 ? sum / count : 0;
+      out[pos++] = count > 0 ? sum / count : 0;
     }
     return out;
   }
@@ -38,29 +39,10 @@ class PCMWorkletProcessor extends AudioWorkletProcessor {
     if (!input || input.length === 0) {
       return true;
     }
-    // Prefer first channel; if stereo somehow arrives, average L/R.
-    let channel = input[0];
+    const channel = input[0];
     if (!channel) {
       return true;
     }
-    if (input.length > 1 && input[1]) {
-      const mixed = new Float32Array(channel.length);
-      const right = input[1];
-      for (let i = 0; i < channel.length; i++) {
-        mixed[i] = (channel[i] + (right[i] || 0)) * 0.5;
-      }
-      channel = mixed;
-    }
-
-    // Level meter (~every ~100ms at 48k / 128 render quantum).
-    this._levelCounter += 1;
-    if (this._levelCounter % 8 === 0) {
-      let sum = 0;
-      for (let i = 0; i < channel.length; i++) sum += channel[i] * channel[i];
-      const rms = Math.sqrt(sum / Math.max(1, channel.length));
-      this.port.postMessage({ type: "level", rms });
-    }
-
     const down = this._downsample(channel);
     for (let i = 0; i < down.length; i++) {
       this._buffer.push(down[i]);

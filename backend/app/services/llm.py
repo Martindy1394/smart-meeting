@@ -3,14 +3,16 @@
 Both features are exposed through a single ``invoke_llm(task, ...)`` entry point
 so every AI integration in the codebase flows through one consistent surface.
 
-* ``task="summarize"`` builds meeting minutes that preserve distinct spoken
-  points. Short transcripts are segmented into idea units (so middle topics are
-  not dropped); longer transcripts use ``facebook/bart-large-cnn`` with generous
-  length settings plus a coverage merge that restores any missing points.
-* ``task="translate"`` uses ``facebook/mbart-large-50-many-to-many-mmt``.
+* ``task="summarize"`` uses ``facebook/bart-large-cnn`` and post-processes the
+  abstractive summary into the requested output format — bullet points or
+  numbered sentences within paragraphs — deterministically, guaranteeing the
+  format is respected exactly.
+* ``task="translate"`` uses ``facebook/mbart-large-50-many-to-many-mmt`` with the
+  correct source/target language tokens, returning only the translated text.
 
-``transformers``/``torch`` are imported lazily. Summarization degrades to the
-idea-preserving extractive path when BART is unavailable.
+``transformers``/``torch`` are imported lazily.  Summarization degrades to a
+lightweight extractive fallback when the models are unavailable (controlled by
+``ALLOW_LLM_FALLBACK``); translation requires the real model.
 """
 from __future__ import annotations
 
@@ -19,32 +21,22 @@ import re
 import threading
 
 from ..config import settings
-from ..languages import mbart_code
+from ..languages import language_name, mbart_code
 
 logger = logging.getLogger("smart_meeting.llm")
 
+# Rough max input the summarizer accepts in one shot; longer transcripts are
+# chunked and their partial summaries recombined.
 _MAX_CHUNK_CHARS = 3500
-
-_FILLER_RE = re.compile(
-    r"\b(okay so|ok so|um+|uh+|you know|like|actually|basically|so yeah|"
-    r"all right|alright)\b[,.]?\s*",
-    re.IGNORECASE,
-)
-_WS_RE = re.compile(r"\s+")
-_STOP = {
-    "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
-    "is", "are", "was", "were", "be", "with", "that", "this", "it", "as",
-    "at", "by", "we", "i", "you", "they", "he", "she", "our", "their",
-    "so", "also", "now", "then", "than", "from", "into", "about", "must",
-    "who", "whom", "which", "what", "when", "where", "how", "very", "just",
-    "exist", "especially", "currently", "always", "them", "their",
-}
 
 
 class LLMUnavailable(RuntimeError):
     """Raised when a required model backend cannot be loaded."""
 
 
+# --------------------------------------------------------------------------- #
+# Model caches (lazy, thread-safe)
+# --------------------------------------------------------------------------- #
 class _Pipelines:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -57,16 +49,14 @@ class _Pipelines:
             if self._summarizer is None:
                 try:
                     from transformers import pipeline  # type: ignore
-                except Exception as exc:  # pragma: no cover
+                except Exception as exc:  # pragma: no cover - optional dep
                     raise LLMUnavailable(
                         "transformers/torch not installed. Install ML deps: "
                         "pip install -r requirements-ml.txt"
                     ) from exc
                 logger.info("Loading BART summarizer '%s'", settings.bart_model)
                 self._summarizer = pipeline(
-                    "summarization",
-                    model=settings.bart_model,
-                    device=-1,
+                    "summarization", model=settings.bart_model
                 )
             return self._summarizer
 
@@ -78,7 +68,7 @@ class _Pipelines:
                         MBart50TokenizerFast,
                         MBartForConditionalGeneration,
                     )
-                except Exception as exc:  # pragma: no cover
+                except Exception as exc:  # pragma: no cover - optional dep
                     raise LLMUnavailable(
                         "transformers/torch not installed. Install ML deps: "
                         "pip install -r requirements-ml.txt"
@@ -96,116 +86,12 @@ class _Pipelines:
 _pipelines = _Pipelines()
 
 
-def _content_words(text: str) -> set[str]:
-    return {
-        w
-        for w in re.findall(r"[a-zA-Z']+", text.lower())
-        if w not in _STOP and len(w) > 2
-    }
-
-
-def _normalize_spoken_transcript(text: str) -> str:
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = _FILLER_RE.sub("", text)
-    text = _WS_RE.sub(" ", text).strip()
-    # Turn spoken discourse markers into hard sentence breaks (drop the marker).
-    text = re.sub(
-        r"\s+(?:and because of|and because|so that|because of|because)\s+",
-        ". ",
-        text,
-        flags=re.IGNORECASE,
-    )
-    # Split stacked "and" clauses when both sides look like full claims.
-    text = re.sub(r"\s+and the students\s+", ". The students ", text, flags=re.IGNORECASE)
-    if text and text[0].islower():
-        text = text[0].upper() + text[1:]
-    if text and text[-1] not in ".!?":
-        text += "."
-    return text
-
-
+# --------------------------------------------------------------------------- #
+# Text utilities
+# --------------------------------------------------------------------------- #
 def _split_sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     return [p.strip() for p in parts if p.strip()]
-
-
-def _clean_unit(piece: str) -> str:
-    piece = piece.strip(" ,;:-")
-    piece = re.sub(
-        r"^(and|so|because|of|that|the story that exist especially)\s+",
-        "",
-        piece,
-        flags=re.IGNORECASE,
-    )
-    # Repair awkward lead-ins left by spoken grammar.
-    piece = re.sub(
-        r"^(especially\s+)?(the\s+)?politicians and the Philippines\b",
-        "The Philippines",
-        piece,
-        flags=re.IGNORECASE,
-    )
-    piece = _WS_RE.sub(" ", piece).strip(" ,;.")
-    if not piece:
-        return ""
-    if piece[0].islower():
-        piece = piece[0].upper() + piece[1:]
-    if piece[-1] not in ".!?":
-        piece += "."
-    return piece
-
-
-def _segment_idea_units(text: str) -> list[str]:
-    """Split spoken / run-on transcript text into distinct idea units."""
-    units: list[str] = []
-    for sentence in _split_sentences(text):
-        pieces = re.split(
-            r"\s+(?:and because|so that|because of|because|, and)\s+",
-            sentence,
-            flags=re.IGNORECASE,
-        )
-        buffered: list[str] = []
-        for piece in pieces:
-            piece = piece.strip(" ,;")
-            if not piece:
-                continue
-            words = piece.split()
-            if buffered and len(words) < 6:
-                buffered[-1] = f"{buffered[-1].rstrip('.')} {piece}"
-            else:
-                buffered.append(piece)
-
-        for piece in buffered:
-            cleaned = _clean_unit(piece)
-            if not cleaned:
-                continue
-            if len(_content_words(cleaned)) < 3 and len(cleaned.split()) < 7:
-                if units:
-                    units[-1] = _clean_unit(
-                        f"{units[-1].rstrip('.')} {cleaned.rstrip('.')}"
-                    )
-                continue
-            units.append(cleaned)
-    return _dedupe_units(units)
-
-
-def _dedupe_units(units: list[str]) -> list[str]:
-    kept: list[str] = []
-    seen: list[set[str]] = []
-    for unit in units:
-        words = _content_words(unit)
-        if not words:
-            continue
-        duplicate = False
-        for prev in seen:
-            overlap = len(words & prev) / max(1, len(words))
-            if overlap >= 0.7:
-                duplicate = True
-                break
-        if duplicate:
-            continue
-        kept.append(unit)
-        seen.append(words)
-    return kept
 
 
 def _chunk_text(text: str, size: int = _MAX_CHUNK_CHARS) -> list[str]:
@@ -225,142 +111,88 @@ def _chunk_text(text: str, size: int = _MAX_CHUNK_CHARS) -> list[str]:
     return chunks
 
 
-def _format_summary(units: list[str], output_format: str) -> str:
-    units = [u for u in units if u and u.strip()]
-    if not units:
+def _format_summary(summary_text: str, output_format: str) -> str:
+    sentences = _split_sentences(summary_text)
+    if not sentences:
         return ""
     if output_format == "numbered":
-        return "\n".join(f"{i}. {s}" for i, s in enumerate(units, start=1))
-    return "\n".join(f"- {s}" for s in units)
+        return " ".join(f"{i}. {s}" for i, s in enumerate(sentences, start=1))
+    # Default: bullet points, one per line.
+    return "\n".join(f"- {s}" for s in sentences)
 
 
-def _coverage_ratio(source: str, summary: str) -> float:
-    src = _content_words(source)
-    if not src:
-        return 1.0
-    return len(_content_words(summary) & src) / len(src)
+# --------------------------------------------------------------------------- #
+# Fallback (no ML deps) — extractive summarization
+# --------------------------------------------------------------------------- #
+def _extractive_summary(text: str, max_sentences: int = 6) -> str:
+    sentences = _split_sentences(text)
+    if len(sentences) <= max_sentences:
+        return " ".join(sentences)
+    # Simple frequency-based scoring.
+    words = re.findall(r"[a-zA-Z']+", text.lower())
+    stop = {
+        "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
+        "is", "are", "was", "were", "be", "with", "that", "this", "it", "as",
+        "at", "by", "we", "i", "you", "they", "he", "she", "our", "their",
+    }
+    freq: dict[str, int] = {}
+    for w in words:
+        if w not in stop and len(w) > 2:
+            freq[w] = freq.get(w, 0) + 1
+    scored = []
+    for idx, sentence in enumerate(sentences):
+        s_words = re.findall(r"[a-zA-Z']+", sentence.lower())
+        score = sum(freq.get(w, 0) for w in s_words)
+        score = score / (len(s_words) + 1)
+        scored.append((score, idx, sentence))
+    top = sorted(scored, key=lambda x: x[0], reverse=True)[:max_sentences]
+    top_sorted = [s for _, _, s in sorted(top, key=lambda x: x[1])]
+    return " ".join(top_sorted)
 
 
-def _idea_preserving_summary(text: str) -> list[str]:
-    """Primary path for short meeting speech: keep every distinct point."""
-    return _segment_idea_units(text)
-
-
-def _bart_summarize_chunk(summarizer, chunk: str) -> str:
-    words = max(1, len(chunk.split()))
-    # Token budget for BART; keep high so topics are retained.
-    # Cap max_length relative to input tokens (~1.3 words/token heuristic).
-    approx_tokens = max(20, int(words * 1.2))
-    if words <= 150:
-        max_len = min(180, max(60, approx_tokens))
-        min_len = min(max_len - 5, max(25, int(approx_tokens * 0.4)))
-    elif words <= 400:
-        max_len = min(256, max(100, int(approx_tokens * 0.6)))
-        min_len = min(max_len - 10, max(40, int(approx_tokens * 0.25)))
-    else:
-        max_len = 220
-        min_len = 70
-    out = summarizer(
-        chunk,
-        max_length=max_len,
-        min_length=min_len,
-        do_sample=False,
-        num_beams=4,
-        truncation=True,
-    )
-    return out[0]["summary_text"].strip()
-
-
+# --------------------------------------------------------------------------- #
+# Summarization
+# --------------------------------------------------------------------------- #
 def _bart_summarize(text: str) -> str:
     summarizer = _pipelines.summarizer()
     chunks = _chunk_text(text)
-    partials = [_bart_summarize_chunk(summarizer, chunk) for chunk in chunks]
+    partials: list[str] = []
+    for chunk in chunks:
+        words = len(chunk.split())
+        max_len = max(40, min(180, words // 2))
+        min_len = max(15, max_len // 3)
+        out = summarizer(
+            chunk, max_length=max_len, min_length=min_len, do_sample=False
+        )
+        partials.append(out[0]["summary_text"].strip())
     combined = " ".join(partials)
-    if len(chunks) > 1 and len(combined.split()) > 180:
-        combined = _bart_summarize_chunk(summarizer, combined)
+    # Second condensation pass when the transcript was long.
+    if len(chunks) > 1 and len(combined) > 600:
+        out = summarizer(combined, max_length=180, min_length=40, do_sample=False)
+        combined = out[0]["summary_text"].strip()
     return combined
 
 
-def _merge_missing_units(source_units: list[str], summary_units: list[str]) -> list[str]:
-    """Restore source idea units that the abstractive summary omitted."""
-    summary_words = [_content_words(u) for u in summary_units]
-    merged = list(summary_units)
-    for unit in source_units:
-        words = _content_words(unit)
-        if not words:
-            continue
-        covered = any(
-            (len(words & sw) / max(1, len(words))) >= 0.55 for sw in summary_words
-        )
-        if not covered:
-            merged.append(unit)
-    return _dedupe_units(merged)
-
-
-def summarize(
-    text: str,
-    output_format: str = "bullets",
-    source_kind: str = "transcript",
-) -> tuple[str, str]:
-    """Return (formatted_summary, engine_name).
-
-    When ``source_kind="english_translation"``, the text is already cleaned
-    English from mBART. In that mode we preserve every distinct point
-    (meeting-minutes fidelity) instead of aggressively compressing.
-    """
-    text = _normalize_spoken_transcript(text or "")
+def summarize(text: str, output_format: str = "bullets") -> tuple[str, str]:
+    """Return (formatted_summary, engine_name)."""
+    text = (text or "").strip()
     if not text:
         return "", "none"
-
-    source_units = _idea_preserving_summary(text)
-    word_count = len(text.split())
-    from_english = source_kind == "english_translation"
-
-    # English translation path: keep full coverage of every point for accuracy.
-    if from_english:
-        units = source_units
-        engine = "bart-from-english"
-        # Light BART polish only when the translation is long enough that a
-        # single pass helps wording — then restore any dropped points.
-        if word_count > 220 and len(source_units) > 8:
-            try:
-                raw = _bart_summarize(text)
-                units = _merge_missing_units(source_units, _segment_idea_units(raw))
-                engine = "bart-large-cnn+english"
-            except Exception as exc:
-                logger.warning(
-                    "BART polish on English translation failed (%s); "
-                    "keeping full idea units.",
-                    exc,
-                )
-                units = source_units
-        return _format_summary(units, output_format), engine
-
-    # Short / medium spoken transcripts: keep every distinct point.
-    if word_count <= 220 or len(source_units) <= 8:
-        return _format_summary(source_units, output_format), "bart-meeting-minutes"
-
-    # Longer raw transcripts: abstractive BART + coverage restore.
     try:
         raw = _bart_summarize(text)
-        units = _merge_missing_units(source_units, _segment_idea_units(raw))
         engine = "bart-large-cnn"
     except LLMUnavailable:
         if not settings.allow_llm_fallback:
             raise
-        logger.warning("BART unavailable — using idea-preserving extractive.")
-        units = source_units
+        logger.warning("BART unavailable — using extractive fallback summarizer.")
+        raw = _extractive_summary(text)
         engine = "extractive-fallback"
-    except Exception as exc:
-        if not settings.allow_llm_fallback:
-            raise
-        logger.warning("BART failed (%s) — using idea-preserving extractive.", exc)
-        units = source_units
-        engine = "extractive-fallback"
-
-    return _format_summary(units, output_format), engine
+    return _format_summary(raw, output_format), engine
 
 
+# --------------------------------------------------------------------------- #
+# Translation
+# --------------------------------------------------------------------------- #
 def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
     model, tokenizer = _pipelines.mbart()
     src = mbart_code(src_code) or "en_XX"
@@ -385,19 +217,26 @@ def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
 
 
 def translate(text: str, target_language: str, source_language: str = "en") -> tuple[str, str]:
+    """Return (translated_text, engine_name)."""
     text = (text or "").strip()
     if not text:
         return "", "none"
-    return _mbart_translate(text, source_language, target_language), "mbart-large-50"
+    translated = _mbart_translate(text, source_language, target_language)
+    return translated, "mbart-large-50"
 
 
+# --------------------------------------------------------------------------- #
+# Unified integration entry point
+# --------------------------------------------------------------------------- #
 def invoke_llm(task: str, text: str, **kwargs):
+    """Single integration surface for all AI features.
+
+    tasks:
+      - "summarize": kwargs: output_format ("bullets"|"numbered")
+      - "translate": kwargs: target_language, source_language
+    """
     if task == "summarize":
-        return summarize(
-            text,
-            output_format=kwargs.get("output_format", "bullets"),
-            source_kind=kwargs.get("source_kind", "transcript"),
-        )
+        return summarize(text, output_format=kwargs.get("output_format", "bullets"))
     if task == "translate":
         return translate(
             text,
