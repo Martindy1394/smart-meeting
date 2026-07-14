@@ -297,22 +297,50 @@ def _merge_missing_units(source_units: list[str], summary_units: list[str]) -> l
     return _dedupe_units(merged)
 
 
-def summarize(text: str, output_format: str = "bullets") -> tuple[str, str]:
-    """Return (formatted_summary, engine_name)."""
+def summarize(
+    text: str,
+    output_format: str = "bullets",
+    source_kind: str = "transcript",
+) -> tuple[str, str]:
+    """Return (formatted_summary, engine_name).
+
+    When ``source_kind="english_translation"``, the text is already cleaned
+    English from mBART. In that mode we preserve every distinct point
+    (meeting-minutes fidelity) instead of aggressively compressing.
+    """
     text = _normalize_spoken_transcript(text or "")
     if not text:
         return "", "none"
 
     source_units = _idea_preserving_summary(text)
     word_count = len(text.split())
+    from_english = source_kind == "english_translation"
+
+    # English translation path: keep full coverage of every point for accuracy.
+    if from_english:
+        units = source_units
+        engine = "bart-from-english"
+        # Light BART polish only when the translation is long enough that a
+        # single pass helps wording — then restore any dropped points.
+        if word_count > 220 and len(source_units) > 8:
+            try:
+                raw = _bart_summarize(text)
+                units = _merge_missing_units(source_units, _segment_idea_units(raw))
+                engine = "bart-large-cnn+english"
+            except Exception as exc:
+                logger.warning(
+                    "BART polish on English translation failed (%s); "
+                    "keeping full idea units.",
+                    exc,
+                )
+                units = source_units
+        return _format_summary(units, output_format), engine
 
     # Short / medium spoken transcripts: keep every distinct point.
-    # BART-large-cnn is news-trained and often drops or rewrites middle meeting
-    # points on short speech, so we reserve it for longer material only.
     if word_count <= 220 or len(source_units) <= 8:
         return _format_summary(source_units, output_format), "bart-meeting-minutes"
 
-    # Longer transcripts: abstractive BART + coverage restore.
+    # Longer raw transcripts: abstractive BART + coverage restore.
     try:
         raw = _bart_summarize(text)
         units = _merge_missing_units(source_units, _segment_idea_units(raw))
@@ -365,7 +393,11 @@ def translate(text: str, target_language: str, source_language: str = "en") -> t
 
 def invoke_llm(task: str, text: str, **kwargs):
     if task == "summarize":
-        return summarize(text, output_format=kwargs.get("output_format", "bullets"))
+        return summarize(
+            text,
+            output_format=kwargs.get("output_format", "bullets"),
+            source_kind=kwargs.get("source_kind", "transcript"),
+        )
     if task == "translate":
         return translate(
             text,
