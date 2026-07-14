@@ -55,6 +55,8 @@ export default function Sidebar({
           />
         </div>
 
+        <div className="sidebar-section-label">History</div>
+
         <div className="meeting-list">
           {loading ? (
             <div className="center-spin">

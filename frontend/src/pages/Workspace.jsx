@@ -11,7 +11,6 @@ export default function Workspace() {
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loadingMeeting, setLoadingMeeting] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
   const searchTimer = useRef(null);
 
   const loadMeetings = useCallback(async (q) => {
@@ -43,7 +42,6 @@ export default function Workspace() {
     try {
       const detail = await api.getMeeting(id);
       setActiveMeeting(detail);
-      setTitleDraft(detail.title);
     } catch {
       setActiveMeeting(null);
     } finally {
@@ -59,7 +57,6 @@ export default function Workspace() {
       });
       setActiveId(detail.id);
       setActiveMeeting(detail);
-      setTitleDraft(detail.title);
       loadMeetings(search);
     } catch {
       /* ignore */
@@ -83,21 +80,15 @@ export default function Workspace() {
     [activeId, loadMeetings, search]
   );
 
-  const refreshActive = useCallback(() => {
-    loadMeetings(search);
-  }, [loadMeetings, search]);
-
-  async function saveTitle() {
-    const trimmed = titleDraft.trim();
-    if (!activeMeeting || !trimmed || trimmed === activeMeeting.title) return;
-    try {
-      await api.updateMeeting(activeMeeting.id, { title: trimmed });
-      setActiveMeeting((m) => ({ ...m, title: trimmed }));
+  const refreshActive = useCallback(
+    (updated) => {
+      if (updated && updated.id) {
+        setActiveMeeting((m) => ({ ...m, ...updated }));
+      }
       loadMeetings(search);
-    } catch {
-      /* ignore */
-    }
-  }
+    },
+    [loadMeetings, search]
+  );
 
   return (
     <div className="app-shell">
@@ -123,17 +114,7 @@ export default function Workspace() {
             >
               ☰
             </button>
-            {activeMeeting ? (
-              <input
-                className="title-input"
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                onBlur={saveTitle}
-                onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
-              />
-            ) : (
-              <h1>Smart Meeting</h1>
-            )}
+            <h1>{activeMeeting ? activeMeeting.title : "Smart Meeting"}</h1>
           </div>
         </div>
 

@@ -11,6 +11,7 @@ function toLocalInput(iso) {
 }
 
 export default function MeetingDetails({ meeting, onUpdated }) {
+  const [title, setTitle] = useState(meeting.title || "");
   const [venue, setVenue] = useState(meeting.venue || "");
   const [dateTime, setDateTime] = useState(toLocalInput(meeting.meeting_date));
   const [attendees, setAttendees] = useState(meeting.attendees || []);
@@ -20,6 +21,7 @@ export default function MeetingDetails({ meeting, onUpdated }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    setTitle(meeting.title || "");
     setVenue(meeting.venue || "");
     setDateTime(toLocalInput(meeting.meeting_date));
     setAttendees(meeting.attendees || []);
@@ -47,22 +49,39 @@ export default function MeetingDetails({ meeting, onUpdated }) {
   }
 
   async function save() {
-    setSaving(true);
     setError("");
+    // Include a name still sitting in the input box.
+    const pending = attendeeInput.trim();
+    const finalAttendees = pending
+      ? Array.from(new Set([...attendees, pending]))
+      : attendees;
+
+    // All fields are required.
+    if (!title.trim()) return setError("Title is required.");
+    if (!venue.trim()) return setError("Venue is required.");
+    if (!dateTime) return setError("Date & time is required.");
+    if (finalAttendees.length === 0)
+      return setError("Add at least one attendee.");
+
+    setSaving(true);
     try {
-      const pending = attendeeInput.trim();
-      const finalAttendees = pending
-        ? Array.from(new Set([...attendees, pending]))
-        : attendees;
       await api.updateMeeting(meeting.id, {
+        title: title.trim(),
         venue: venue.trim(),
-        meeting_date: dateTime ? dateTime : null,
+        meeting_date: dateTime,
         attendees: finalAttendees,
       });
       setAttendees(finalAttendees);
       setAttendeeInput("");
       setSavedAt(Date.now());
-      if (onUpdated) onUpdated();
+      if (onUpdated)
+        onUpdated({
+          ...meeting,
+          title: title.trim(),
+          venue: venue.trim(),
+          meeting_date: dateTime,
+          attendees: finalAttendees,
+        });
     } catch (err) {
       setError(err.message || "Could not save details.");
     } finally {
@@ -84,27 +103,48 @@ export default function MeetingDetails({ meeting, onUpdated }) {
       </div>
 
       <div className="details-grid">
+        <div className="field title-field">
+          <label>
+            Title <span className="req">*</span>
+          </label>
+          <input
+            type="text"
+            placeholder="Meeting title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            required
+          />
+        </div>
+
         <div className="field">
-          <label>Venue</label>
+          <label>
+            Venue <span className="req">*</span>
+          </label>
           <input
             type="text"
             placeholder="e.g. Conference Room A / Zoom"
             value={venue}
             onChange={(e) => setVenue(e.target.value)}
+            required
           />
         </div>
 
         <div className="field">
-          <label>Date &amp; time</label>
+          <label>
+            Date &amp; time <span className="req">*</span>
+          </label>
           <input
             type="datetime-local"
             value={dateTime}
             onChange={(e) => setDateTime(e.target.value)}
+            required
           />
         </div>
 
         <div className="field attendees-field">
-          <label>Attendees</label>
+          <label>
+            Attendees <span className="req">*</span>
+          </label>
           <div className="chips">
             {attendees.map((name) => (
               <span className="chip" key={name}>
