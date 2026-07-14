@@ -382,6 +382,74 @@ button {
   display: flex;
   justify-content: flex-end;
 }
+.history-panel {
+  max-width: 920px;
+}
+.history-card {
+  margin-bottom: 20px;
+}
+.history-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.history-search {
+  flex: 1;
+  min-width: 180px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+.history-search:focus {
+  border-color: var(--primary);
+}
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  flex-wrap: wrap;
+}
+.history-row.active {
+  border-color: var(--primary);
+}
+.history-row-main {
+  min-width: 0;
+  flex: 1;
+}
+.history-row-title {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+.history-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.history-row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
 
 .main {
   overflow-y: auto;

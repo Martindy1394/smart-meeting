@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import HistoryPanel from "../components/HistoryPanel.jsx";
 import MeetingRoom from "../components/MeetingRoom.jsx";
 import SettingsPanel from "../components/SettingsPanel.jsx";
 import Sidebar from "../components/Sidebar.jsx";
@@ -40,7 +41,7 @@ export default function Workspace() {
   }, [search, loadMeetings]);
 
   const selectMeeting = useCallback(async (id) => {
-    setSection("history");
+    setSection("meeting");
     setActiveId(id);
     setSaveControls(null);
     setLoadingMeeting(true);
@@ -61,7 +62,7 @@ export default function Workspace() {
         language: "hil",
         meeting_date: new Date().toISOString(),
       });
-      setSection("history");
+      setSection("meeting");
       setSaveControls(null);
       setActiveId(detail.id);
       setActiveMeeting(detail);
@@ -80,6 +81,7 @@ export default function Workspace() {
           setActiveId(null);
           setActiveMeeting(null);
           setSaveControls(null);
+          setSection("history");
         }
         loadMeetings(search);
       } catch {
@@ -107,20 +109,15 @@ export default function Workspace() {
   );
 
   const showSettings = section === "settings";
+  const showHistory = section === "history";
+  const showMeeting = section === "meeting";
 
   return (
     <div className="app-shell">
       <Sidebar
-        section={section}
+        section={section === "meeting" ? "history" : section}
         onSectionChange={setSection}
-        meetings={meetings}
-        loading={loadingList}
-        activeId={activeId}
-        search={search}
-        onSearch={setSearch}
-        onSelect={selectMeeting}
         onCreate={createMeeting}
-        onDelete={deleteMeeting}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -137,12 +134,14 @@ export default function Workspace() {
             <h1>
               {showSettings
                 ? "Settings"
-                : activeMeeting
-                  ? activeMeeting.title || "Untitled meeting"
-                  : "Smart Meeting"}
+                : showHistory
+                  ? "History"
+                  : activeMeeting
+                    ? activeMeeting.title || "Untitled meeting"
+                    : "Smart Meeting"}
             </h1>
           </div>
-          {!showSettings && activeMeeting && saveControls && (
+          {showMeeting && activeMeeting && saveControls && (
             <div className="topbar-right">
               <button
                 className="btn"
@@ -157,6 +156,17 @@ export default function Workspace() {
 
         {showSettings ? (
           <SettingsPanel />
+        ) : showHistory ? (
+          <HistoryPanel
+            meetings={meetings}
+            loading={loadingList}
+            search={search}
+            onSearch={setSearch}
+            activeId={activeId}
+            onSelect={selectMeeting}
+            onDelete={deleteMeeting}
+            onCreate={createMeeting}
+          />
         ) : loadingMeeting ? (
           <div className="center-spin">
             <span className="spinner" /> Loading meeting…
