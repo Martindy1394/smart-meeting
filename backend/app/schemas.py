@@ -91,6 +91,7 @@ class MeetingSummary(BaseModel):
     updated_at: datetime
     has_summary: bool = False
     has_translation: bool = False
+    has_audio: bool = False
 
     class Config:
         from_attributes = True
@@ -112,6 +113,7 @@ class MeetingDetail(BaseModel):
     duration_seconds: float
     created_at: datetime
     updated_at: datetime
+    has_audio: bool = False
     segments: list[TranscriptSegmentResponse] = []
 
     class Config:

@@ -1,10 +1,11 @@
-"""Meeting management: list, create, read, update, delete, search."""
+"""Meeting management: list, create, read, update, delete, search, audio."""
 from __future__ import annotations
 
 import json
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -30,6 +31,10 @@ def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
     return meeting
 
 
+def _has_audio(m: Meeting) -> bool:
+    return bool(m.audio_path and os.path.exists(m.audio_path))
+
+
 def _clean_attendees(names: list[str]) -> str:
     cleaned = [n.strip() for n in names if isinstance(n, str) and n.strip()]
     # De-duplicate while preserving order.
@@ -51,7 +56,14 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         updated_at=m.updated_at,
         has_summary=bool(m.summary),
         has_translation=bool(m.translation),
+        has_audio=_has_audio(m),
     )
+
+
+def _to_detail(m: Meeting) -> MeetingDetail:
+    detail = MeetingDetail.model_validate(m)
+    detail.has_audio = _has_audio(m)
+    return detail
 
 
 @router.get("", response_model=list[MeetingSummary])
@@ -86,7 +98,7 @@ def create_meeting(
     db.add(meeting)
     db.commit()
     db.refresh(meeting)
-    return MeetingDetail.model_validate(meeting)
+    return _to_detail(meeting)
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetail)
@@ -96,7 +108,28 @@ def get_meeting(
     db: Session = Depends(get_db),
 ):
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    return MeetingDetail.model_validate(meeting)
+    return _to_detail(meeting)
+
+
+@router.get("/{meeting_id}/audio")
+def get_meeting_audio(
+    meeting_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream the saved WAV recording for playback in the UI."""
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    if not _has_audio(meeting):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No audio recording is available for this meeting yet.",
+        )
+    return FileResponse(
+        path=meeting.audio_path,
+        media_type="audio/wav",
+        filename=f"{meeting.title or 'meeting'}.wav",
+        content_disposition_type="inline",
+    )
 
 
 @router.patch("/{meeting_id}", response_model=MeetingDetail)
@@ -117,7 +150,7 @@ def update_meeting(
         meeting.attendees = _clean_attendees(payload.attendees)
     db.commit()
     db.refresh(meeting)
-    return MeetingDetail.model_validate(meeting)
+    return _to_detail(meeting)
 
 
 @router.delete("/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)

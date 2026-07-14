@@ -70,6 +70,22 @@ export const api = {
   getMeeting: (id) => request(`/meetings/${id}`),
   updateMeeting: (id, payload) => request(`/meetings/${id}`, { method: "PATCH", body: payload }),
   deleteMeeting: (id) => request(`/meetings/${id}`, { method: "DELETE" }),
+  /**
+   * Fetch meeting audio as a blob URL for <audio> playback.
+   * Returns null when no recording exists yet.
+   */
+  getMeetingAudioUrl: async (id) => {
+    const token = getToken();
+    const res = await fetch(`/api/meetings/${id}/audio`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new ApiError("Could not load meeting audio.", res.status);
+    }
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  },
 
   // AI
   languages: () => request("/ai/languages"),

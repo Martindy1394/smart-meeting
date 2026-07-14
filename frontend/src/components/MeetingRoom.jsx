@@ -37,6 +37,35 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   const [translateError, setTranslateError] = useState("");
   const autoTranslateRef = useRef("");
   const autoSummaryRef = useRef("");
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const audioUrlRef = useRef(null);
+
+  const revokeAudioUrl = useCallback(() => {
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+    setAudioUrl(null);
+  }, []);
+
+  const loadAudio = useCallback(async (meetingId) => {
+    setAudioLoading(true);
+    try {
+      const url = await api.getMeetingAudioUrl(meetingId);
+      if (!url) {
+        revokeAudioUrl();
+        return;
+      }
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = url;
+      setAudioUrl(url);
+    } catch {
+      revokeAudioUrl();
+    } finally {
+      setAudioLoading(false);
+    }
+  }, [revokeAudioUrl]);
 
   const saveDetails = useCallback(async ({ silent = false } = {}) => {
     if (!detailsRef.current) return false;
@@ -106,10 +135,12 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       // Automatically persist meeting details after recording finishes.
       await saveDetails({ silent: true });
       if (onMeetingUpdated) onMeetingUpdated();
+      // Load the saved recording for playback beside the record button.
+      await loadAudio(meeting.id);
       // Automatically translate the finalized transcript into English.
       await translateToEnglish(text);
     },
-    [onMeetingUpdated, saveDetails, translateToEnglish]
+    [loadAudio, meeting.id, onMeetingUpdated, saveDetails, translateToEnglish]
   );
 
   const recorder = useRecorder({ onFinalTranscript });
@@ -145,8 +176,16 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     autoSummaryRef.current = meeting.summary
       ? `${meeting.id}:${meeting.summary_format || "bullets"}`
       : "";
+    revokeAudioUrl();
+    if (meeting.has_audio) {
+      loadAudio(meeting.id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
+
+  useEffect(() => {
+    return () => revokeAudioUrl();
+  }, [revokeAudioUrl]);
 
   // Auto-translate existing finalized transcripts that don't have English yet.
   useEffect(() => {
@@ -257,6 +296,19 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
         >
           {recorder.recording ? "■ Stop recording" : "● Start recording"}
         </button>
+
+        {(audioUrl || audioLoading) && !recorder.recording && (
+          <div className="audio-player-wrap">
+            {audioLoading ? (
+              <span className="card-tag">Loading audio…</span>
+            ) : (
+              <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
+                Your browser does not support audio playback.
+              </audio>
+            )}
+          </div>
+        )}
+
         {!detailsReady && !recorder.recording && (
           <span className="card-tag">
             Fill in title, venue, date &amp; time, and attendees first
