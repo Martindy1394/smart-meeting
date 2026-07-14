@@ -10,10 +10,16 @@ function toLocalInput(iso) {
   return new Date(d.getTime() - offset * 60000).toISOString().slice(0, 16);
 }
 
+function nowLocalInput() {
+  return toLocalInput(new Date().toISOString());
+}
+
 export default function MeetingDetails({ meeting, onUpdated }) {
   const [title, setTitle] = useState(meeting.title || "");
   const [venue, setVenue] = useState(meeting.venue || "");
-  const [dateTime, setDateTime] = useState(toLocalInput(meeting.meeting_date));
+  const [dateTime, setDateTime] = useState(
+    toLocalInput(meeting.meeting_date) || nowLocalInput()
+  );
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -23,7 +29,7 @@ export default function MeetingDetails({ meeting, onUpdated }) {
   useEffect(() => {
     setTitle(meeting.title || "");
     setVenue(meeting.venue || "");
-    setDateTime(toLocalInput(meeting.meeting_date));
+    setDateTime(toLocalInput(meeting.meeting_date) || nowLocalInput());
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
     setError("");

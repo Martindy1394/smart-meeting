@@ -54,6 +54,7 @@ export default function Workspace() {
       const detail = await api.createMeeting({
         title: "",
         language: "hil",
+        meeting_date: new Date().toISOString(),
       });
       setActiveId(detail.id);
       setActiveMeeting(detail);
