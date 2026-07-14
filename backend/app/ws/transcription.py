@@ -67,11 +67,27 @@ def _finalize_blocking(meeting_id: str, pcm_bytes: bytes, language: str) -> dict
 
         try:
             samples = audio.pcm16_to_float32(pcm_bytes)
+            # Skip obviously empty captures early with a clear message.
+            if audio.rms_level(samples) < 1e-4:
+                meeting.status = "failed"
+                db.commit()
+                return {
+                    "ok": False,
+                    "message": (
+                        "No usable microphone audio was captured (signal too quiet). "
+                        "Check mic permissions/device and try again."
+                    ),
+                }
             segments = transcription.transcribe_final(samples, language)
         except transcription.TranscriptionUnavailable as exc:
             meeting.status = "failed"
             db.commit()
             return {"ok": False, "message": str(exc)}
+        except Exception as exc:
+            logger.exception("Final transcription failed: %s", exc)
+            meeting.status = "failed"
+            db.commit()
+            return {"ok": False, "message": f"Final transcription failed: {exc}"}
 
         full_text = " ".join(s.text for s in segments).strip()
 

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../api/client";
 
-// Manages microphone capture (AudioWorklet -> 16 kHz PCM) and streams the audio
-// to the backend over a WebSocket, exposing live caption + finalization state.
+// Manages microphone capture (16 kHz PCM) and streams audio to the backend over
+// a WebSocket for live captions + finalization.
 export function useRecorder({ onFinalTranscript } = {}) {
   const [recording, setRecording] = useState(false);
   const [status, setStatus] = useState("idle"); // idle|recording|finalizing|error
@@ -16,6 +16,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const wsRef = useRef(null);
   const audioCtxRef = useRef(null);
   const workletNodeRef = useRef(null);
+  const processorRef = useRef(null);
   const silentGainRef = useRef(null);
   const sourceRef = useRef(null);
   const streamRef = useRef(null);
@@ -24,7 +25,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const meetingIdRef = useRef(null);
   const reconnectRef = useRef({ attempts: 0, timer: null, active: false });
   const stoppingRef = useRef(false);
-  const lowLevelSinceRef = useRef(0);
+  const pcmBufferRef = useRef([]);
+  const inputRateRef = useRef(48000);
 
   const composeLive = useCallback(() => {
     const keys = Object.keys(liveSegmentsRef.current)
@@ -39,6 +41,10 @@ export function useRecorder({ onFinalTranscript } = {}) {
         workletNodeRef.current.port.onmessage = null;
         workletNodeRef.current.disconnect();
       }
+      if (processorRef.current) {
+        processorRef.current.onaudioprocess = null;
+        processorRef.current.disconnect();
+      }
       if (silentGainRef.current) silentGainRef.current.disconnect();
       if (sourceRef.current) sourceRef.current.disconnect();
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
@@ -51,10 +57,42 @@ export function useRecorder({ onFinalTranscript } = {}) {
       /* ignore */
     }
     workletNodeRef.current = null;
+    processorRef.current = null;
     silentGainRef.current = null;
     sourceRef.current = null;
     audioCtxRef.current = null;
     streamRef.current = null;
+    pcmBufferRef.current = [];
+  }, []);
+
+  const sendPcmFloat = useCallback((floatSamples) => {
+    // Downsample to 16 kHz mono PCM16 and flush ~0.25s chunks.
+    const ratio = inputRateRef.current / 16000;
+    const outLen = Math.floor(floatSamples.length / ratio);
+    const buf = pcmBufferRef.current;
+    for (let i = 0; i < outLen; i++) {
+      const start = Math.floor(i * ratio);
+      const end = Math.min(floatSamples.length, Math.floor((i + 1) * ratio));
+      let sum = 0;
+      let count = 0;
+      for (let j = start; j < end; j++) {
+        sum += floatSamples[j];
+        count++;
+      }
+      buf.push(count ? sum / count : 0);
+    }
+    const ws = wsRef.current;
+    while (buf.length >= 4096) {
+      const slice = buf.splice(0, 4096);
+      const pcm = new Int16Array(slice.length);
+      for (let i = 0; i < slice.length; i++) {
+        const s = Math.max(-1, Math.min(1, slice[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(pcm.buffer);
+      }
+    }
   }, []);
 
   const buildWsUrl = useCallback((meetingId) => {
@@ -87,7 +125,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
         if (data.type === "status") {
           setTranscriptionAvailable(data.transcription_available);
-          setMessage(data.message || "");
+          if (data.message) setMessage(data.message);
         } else if (data.type === "warning") {
           setMessage(data.message || "");
         } else if (data.type === "live_segment") {
@@ -125,11 +163,32 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       };
 
-      ws.onerror = () => {
-        // onclose handles reconnection logic.
-      };
+      ws.onerror = () => {};
     },
     [buildWsUrl, composeLive, onFinalTranscript]
+  );
+
+  const startScriptProcessor = useCallback(
+    (audioCtx, source) => {
+      // Reliable fallback path (works even when AudioWorklet capture is silent).
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+        setMicLevel(Math.sqrt(sum / Math.max(1, input.length)));
+        // Copy because the underlying buffer is reused.
+        sendPcmFloat(new Float32Array(input));
+      };
+      const silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0;
+      silentGainRef.current = silentGain;
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
+    },
+    [sendPcmFloat]
   );
 
   const start = useCallback(
@@ -138,18 +197,18 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setLiveText("");
       setMicLevel(0);
       liveSegmentsRef.current = {};
+      pcmBufferRef.current = [];
       meetingIdRef.current = meetingId;
       stoppingRef.current = false;
-      lowLevelSinceRef.current = 0;
       reconnectRef.current = { attempts: 0, timer: null, active: true };
 
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            channelCount: 1,
+            channelCount: { ideal: 1 },
             echoCancellation: true,
-            noiseSuppression: false,
+            noiseSuppression: true,
             autoGainControl: true,
           },
         });
@@ -161,8 +220,10 @@ export function useRecorder({ onFinalTranscript } = {}) {
       streamRef.current = stream;
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx({ sampleRate: 48000 });
+      // Do NOT force sampleRate — a mismatch can yield silent MediaStreamSource output.
+      const audioCtx = new AudioCtx();
       audioCtxRef.current = audioCtx;
+      inputRateRef.current = audioCtx.sampleRate || 48000;
       if (audioCtx.state === "suspended") {
         try {
           await audioCtx.resume();
@@ -171,51 +232,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       }
 
-      try {
-        // Cache-bust so worklet updates are always picked up.
-        await audioCtx.audioWorklet.addModule(`/pcm-worklet.js?v=${Date.now()}`);
-      } catch (err) {
-        setStatus("error");
-        setMessage("Failed to initialize audio processor.");
-        cleanupAudio();
-        throw err;
-      }
-
       const source = audioCtx.createMediaStreamSource(stream);
       sourceRef.current = source;
-      const node = new AudioWorkletNode(audioCtx, "pcm-worklet");
-      workletNodeRef.current = node;
 
-      // Keep the graph alive without playing mic audio through speakers.
-      const silentGain = audioCtx.createGain();
-      silentGain.gain.value = 0;
-      silentGainRef.current = silentGain;
-
-      node.port.onmessage = (event) => {
-        const payload = event.data;
-        if (payload && payload.type === "level") {
-          setMicLevel(payload.rms || 0);
-          if ((payload.rms || 0) < 0.002) {
-            if (!lowLevelSinceRef.current) lowLevelSinceRef.current = Date.now();
-            else if (Date.now() - lowLevelSinceRef.current > 2500) {
-              setMessage(
-                "Mic level is very low — check the correct input device and permissions."
-              );
-            }
-          } else {
-            lowLevelSinceRef.current = 0;
-          }
-          return;
-        }
-        const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN && payload) {
-          ws.send(payload);
-        }
-      };
-
-      source.connect(node);
-      node.connect(silentGain);
-      silentGain.connect(audioCtx.destination);
+      // Prefer ScriptProcessor for capture reliability (live captions depend on
+      // real PCM arriving). AudioWorklet remains available as a secondary path
+      // but ScriptProcessor has been more consistent across browsers here.
+      startScriptProcessor(audioCtx, source);
 
       openSocket(meetingId);
 
@@ -224,7 +247,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     },
-    [cleanupAudio, openSocket]
+    [openSocket, startScriptProcessor]
   );
 
   const stop = useCallback(() => {
@@ -237,8 +260,19 @@ export function useRecorder({ onFinalTranscript } = {}) {
     }
     setRecording(false);
     setStatus("finalizing");
-    cleanupAudio();
+    // Flush remaining PCM before tearing down audio.
+    const buf = pcmBufferRef.current;
     const ws = wsRef.current;
+    if (buf.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
+      const pcm = new Int16Array(buf.length);
+      for (let i = 0; i < buf.length; i++) {
+        const s = Math.max(-1, Math.min(1, buf[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      ws.send(pcm.buffer);
+      pcmBufferRef.current = [];
+    }
+    cleanupAudio();
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop" }));
     }

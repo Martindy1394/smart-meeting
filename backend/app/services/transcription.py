@@ -190,25 +190,68 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
     if isinstance(audio_source, np.ndarray):
         audio_source = audio_util.normalize_audio(np.asarray(audio_source, dtype=np.float32))
 
-    segments, _info = model.transcribe(
-        audio_source,
-        language=lang,
-        beam_size=5,
-        best_of=5,
-        temperature=0.0,
-        vad_filter=True,
-        # Softer VAD so quieter speech is kept after normalization.
-        vad_parameters={
-            "threshold": 0.35,
-            "min_speech_duration_ms": 150,
-            "min_silence_duration_ms": 400,
-            "speech_pad_ms": 400,
-        },
-        condition_on_previous_text=True,
-        without_timestamps=False,
-    )
-    return [
-        Segment(text=s.text.strip(), start=s.start, end=s.end)
-        for s in segments
-        if (s.text or "").strip()
-    ]
+    # Correct VadOptions keys for this faster-whisper version: onset/offset
+    # (not "threshold"). Soft settings keep quieter speech after normalization.
+    vad_parameters = {
+        "onset": 0.35,
+        "offset": 0.25,
+        "min_speech_duration_ms": 150,
+        "min_silence_duration_ms": 400,
+        "speech_pad_ms": 400,
+    }
+
+    try:
+        segments, _info = model.transcribe(
+            audio_source,
+            language=lang,
+            beam_size=5,
+            best_of=5,
+            temperature=0.0,
+            vad_filter=True,
+            vad_parameters=vad_parameters,
+            condition_on_previous_text=True,
+            without_timestamps=False,
+        )
+        out = [
+            Segment(text=s.text.strip(), start=s.start, end=s.end)
+            for s in segments
+            if (s.text or "").strip()
+        ]
+    except TypeError as exc:
+        # Older/newer VadOptions mismatch — retry without custom params.
+        logger.warning("VAD params unsupported (%s); retrying with defaults.", exc)
+        segments, _info = model.transcribe(
+            audio_source,
+            language=lang,
+            beam_size=5,
+            best_of=5,
+            temperature=0.0,
+            vad_filter=True,
+            condition_on_previous_text=True,
+            without_timestamps=False,
+        )
+        out = [
+            Segment(text=s.text.strip(), start=s.start, end=s.end)
+            for s in segments
+            if (s.text or "").strip()
+        ]
+
+    # If VAD wiped everything, retry without VAD so we still return a transcript.
+    if not out and isinstance(audio_source, np.ndarray) and audio_util.rms_level(audio_source) > 1e-4:
+        logger.warning("Final VAD produced no speech — retrying without VAD filter.")
+        segments, _info = model.transcribe(
+            audio_source,
+            language=lang,
+            beam_size=5,
+            best_of=5,
+            temperature=0.0,
+            vad_filter=False,
+            condition_on_previous_text=True,
+            without_timestamps=False,
+        )
+        out = [
+            Segment(text=s.text.strip(), start=s.start, end=s.end)
+            for s in segments
+            if (s.text or "").strip() and not _is_junk_caption(s.text.strip())
+        ]
+    return out
