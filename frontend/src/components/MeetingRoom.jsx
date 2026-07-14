@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useRecorder } from "../hooks/useRecorder.js";
+import MeetingDetails from "./MeetingDetails.jsx";
 
 function fmtTime(sec) {
   const m = Math.floor(sec / 60)
@@ -124,6 +125,8 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
       {recorder.status === "error" && recorder.message && (
         <div className="error-banner">{recorder.message}</div>
       )}
+
+      <MeetingDetails meeting={meeting} onUpdated={onMeetingUpdated} />
 
       <div className="recorder-bar">
         <button

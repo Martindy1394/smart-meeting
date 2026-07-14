@@ -1,6 +1,7 @@
 """Pydantic request/response schemas + validation rules."""
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 
@@ -52,10 +53,16 @@ class UserResponse(BaseModel):
 class MeetingCreate(BaseModel):
     title: str = Field(default="Untitled meeting", max_length=255)
     language: str = Field(default="hil", max_length=16)
+    venue: str = Field(default="", max_length=255)
+    meeting_date: datetime | None = None
+    attendees: list[str] = Field(default_factory=list)
 
 
 class MeetingUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=255)
+    venue: str | None = Field(default=None, max_length=255)
+    meeting_date: datetime | None = None
+    attendees: list[str] | None = None
 
 
 class TranscriptSegmentResponse(BaseModel):
@@ -77,6 +84,8 @@ class MeetingSummary(BaseModel):
     title: str
     status: str
     language: str
+    venue: str = ""
+    meeting_date: datetime | None = None
     duration_seconds: float
     created_at: datetime
     updated_at: datetime
@@ -92,6 +101,9 @@ class MeetingDetail(BaseModel):
     title: str
     status: str
     language: str
+    venue: str = ""
+    meeting_date: datetime | None = None
+    attendees: list[str] = []
     final_transcript: str
     summary: str
     summary_format: str
@@ -104,6 +116,18 @@ class MeetingDetail(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_validator("attendees", mode="before")
+    @classmethod
+    def _parse_attendees(cls, v):
+        # The ORM stores attendees as a JSON-encoded string.
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v or "[]")
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return v or []
 
 
 # ------------------------------ AI -----------------------------------------

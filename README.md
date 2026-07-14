@@ -35,6 +35,8 @@ behind a secure JWT authentication system with per-user meeting history.
 - **mBART translation** — translate the finalized transcript into Spanish,
   French, German, Italian, Portuguese, Arabic, Hindi, Japanese, Chinese,
   Russian, Dutch, Korean, Hiligaynon, Tagalog (+ English).
+- **Meeting details** — capture each meeting's title, venue, date & time, and
+  attendee list; shown and editable in the meeting room and surfaced in history.
 - **Meeting history** — sidebar with search, load, rename, and delete.
 - **Production concerns** — CORS, rate limiting, input validation/sanitization,
   graceful error handling, reconnection with exponential backoff, loading
@@ -132,9 +134,9 @@ See `backend/.env.example`. Key variables:
 | POST | `/api/auth/login` | – | Login, returns JWT |
 | GET | `/api/auth/me` | ✓ | Current user |
 | GET | `/api/meetings` | ✓ | List (supports `?search=`) |
-| POST | `/api/meetings` | ✓ | Create |
-| GET | `/api/meetings/{id}` | ✓ | Detail (transcript/summary/translation) |
-| PATCH | `/api/meetings/{id}` | ✓ | Rename |
+| POST | `/api/meetings` | ✓ | Create (title, venue, date, attendees) |
+| GET | `/api/meetings/{id}` | ✓ | Detail (details + transcript/summary/translation) |
+| PATCH | `/api/meetings/{id}` | ✓ | Update title / venue / date / attendees |
 | DELETE | `/api/meetings/{id}` | ✓ | Delete |
 | GET | `/api/ai/languages` | ✓ | Supported languages |
 | POST | `/api/ai/summarize` | ✓ | BART summary (`bullets`/`numbered`) |

@@ -76,7 +76,7 @@ export default function Sidebar({
               >
                 <div className="title">{m.title}</div>
                 <div className="meta">
-                  <span>{fmtDate(m.created_at)}</span>
+                  <span>{fmtDate(m.meeting_date || m.created_at)}</span>
                   {m.status === "finalized" && (
                     <span className="badge refined">Refined</span>
                   )}

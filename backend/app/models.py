@@ -50,6 +50,15 @@ class Meeting(Base):
     )
     title: Mapped[str] = mapped_column(String(255), default="Untitled meeting")
 
+    # Meeting details.
+    venue: Mapped[str] = mapped_column(String(255), default="")
+    # Scheduled date/time of the meeting (distinct from created_at).
+    meeting_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # JSON-encoded list of attendee names.
+    attendees: Mapped[str] = mapped_column(Text, default="[]")
+
     # Transcript status: recording | processing | finalized | failed
     status: Mapped[str] = mapped_column(String(32), default="recording")
     language: Mapped[str] = mapped_column(String(16), default="hil")

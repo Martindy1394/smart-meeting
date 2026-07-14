@@ -1,6 +1,7 @@
 """Meeting management: list, create, read, update, delete, search."""
 from __future__ import annotations
 
+import json
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -29,12 +30,22 @@ def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
     return meeting
 
 
+def _clean_attendees(names: list[str]) -> str:
+    cleaned = [n.strip() for n in names if isinstance(n, str) and n.strip()]
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    unique = [n for n in cleaned if not (n in seen or seen.add(n))]
+    return json.dumps(unique)
+
+
 def _to_summary(m: Meeting) -> MeetingSummary:
     return MeetingSummary(
         id=m.id,
         title=m.title,
         status=m.status,
         language=m.language,
+        venue=m.venue or "",
+        meeting_date=m.meeting_date,
         duration_seconds=m.duration_seconds,
         created_at=m.created_at,
         updated_at=m.updated_at,
@@ -67,6 +78,9 @@ def create_meeting(
         owner_id=current_user.id,
         title=payload.title.strip() or "Untitled meeting",
         language=payload.language or "hil",
+        venue=payload.venue.strip(),
+        meeting_date=payload.meeting_date,
+        attendees=_clean_attendees(payload.attendees),
         status="recording",
     )
     db.add(meeting)
@@ -95,6 +109,12 @@ def update_meeting(
     meeting = _get_owned_meeting(meeting_id, current_user, db)
     if payload.title is not None:
         meeting.title = payload.title.strip() or meeting.title
+    if payload.venue is not None:
+        meeting.venue = payload.venue.strip()
+    if payload.meeting_date is not None:
+        meeting.meeting_date = payload.meeting_date
+    if payload.attendees is not None:
+        meeting.attendees = _clean_attendees(payload.attendees)
     db.commit()
     db.refresh(meeting)
     return MeetingDetail.model_validate(meeting)
