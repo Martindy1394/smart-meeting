@@ -77,7 +77,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     }
   }, []);
 
-  const summarizeFromEnglish = useCallback(
+  const summarizeFromTranscript = useCallback(
     async (format = summaryFormat) => {
       setSummarizing(true);
       setSummaryError("");
@@ -115,8 +115,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
         setTranslation(res.translation);
         setTranslationLang(res.language_name || "English");
         if (onMeetingUpdated) onMeetingUpdated();
-        // BART summarizes from the English translation for accuracy.
-        await summarizeFromEnglish(summaryFormat);
       } catch (err) {
         autoTranslateRef.current = "";
         setTranslateError(err.message || "English translation failed.");
@@ -124,7 +122,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
         setTranslating(false);
       }
     },
-    [meeting.id, onMeetingUpdated, summarizeFromEnglish, summaryFormat]
+    [meeting.id, onMeetingUpdated]
   );
 
   const onFinalTranscript = useCallback(
@@ -137,10 +135,21 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       if (onMeetingUpdated) onMeetingUpdated();
       // Load the saved recording for playback beside the record button.
       await loadAudio(meeting.id);
-      // Automatically translate the finalized transcript into English.
-      await translateToEnglish(text);
+      // BART runs on the transcript immediately; English translation in parallel.
+      await Promise.all([
+        summarizeFromTranscript(summaryFormat),
+        translateToEnglish(text),
+      ]);
     },
-    [loadAudio, meeting.id, onMeetingUpdated, saveDetails, translateToEnglish]
+    [
+      loadAudio,
+      meeting.id,
+      onMeetingUpdated,
+      saveDetails,
+      summarizeFromTranscript,
+      summaryFormat,
+      translateToEnglish,
+    ]
   );
 
   const recorder = useRecorder({ onFinalTranscript });
@@ -196,14 +205,15 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id, meeting.final_transcript, meeting.translation]);
 
-  // If English exists but summary does not, auto-summarize from the translation.
+  // Auto-summarize finalized transcripts that don't have a summary yet.
   useEffect(() => {
-    if (!meeting.translation) return;
+    const text = (meeting.final_transcript || "").trim();
+    if (!text) return;
     if (meeting.summary) return;
     if (autoSummaryRef.current.startsWith(`${meeting.id}:`)) return;
-    summarizeFromEnglish(summaryFormat);
+    summarizeFromTranscript(summaryFormat);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, meeting.translation, meeting.summary]);
+  }, [meeting.id, meeting.final_transcript, meeting.summary]);
 
   async function toggleRecord() {
     if (recorder.recording) {
@@ -220,19 +230,17 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   }
 
   const canStart = detailsReady && recorder.status !== "finalizing";
-  const hasEnglish = Boolean((translation || "").trim());
-
-  async function runSummarize() {
-    if (!hasEnglish) {
-      setSummaryError("Wait for the English translation to finish first.");
-      return;
-    }
-    await summarizeFromEnglish(summaryFormat);
-  }
-
   const isRefined = status === "finalized" && finalTranscript;
   const hasTranscript = Boolean(finalTranscript);
   const showLive = recorder.recording || recorder.status === "finalizing";
+
+  async function runSummarize() {
+    if (!hasTranscript) {
+      setSummaryError("Finalize a transcript first.");
+      return;
+    }
+    await summarizeFromTranscript(summaryFormat);
+  }
 
   return (
     <div className="content">
@@ -331,12 +339,12 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       </div>
 
       <div className="cards bottom-cards">
-        {/* Summary card (BART) — from English translation */}
+        {/* Summary card (BART) — from finalized transcript */}
         <div className="card">
           <div className="card-head">
             <h3>Summary</h3>
             <span className="card-tag">
-              BART · from English{summaryEngine ? ` · ${summaryEngine}` : ""}
+              BART · from transcript{summaryEngine ? ` · ${summaryEngine}` : ""}
             </span>
           </div>
           <div className="card-head" style={{ borderTop: "none", paddingTop: 0 }}>
@@ -357,7 +365,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             <button
               className="btn"
               onClick={runSummarize}
-              disabled={!hasEnglish || summarizing || translating}
+              disabled={!hasTranscript || summarizing}
             >
               {summarizing ? <span className="spinner" /> : "Summarize"}
             </button>
@@ -366,7 +374,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             {summaryError && <div className="error-banner">{summaryError}</div>}
             {summarizing ? (
               <div className="center-spin">
-                <span className="spinner" /> Summarizing English translation…
+                <span className="spinner" /> Summarizing transcript…
               </div>
             ) : summary ? (
               summary
@@ -374,9 +382,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
               <div className="placeholder">
                 {!hasTranscript
                   ? "Finalize a transcript first."
-                  : translating || !hasEnglish
-                    ? "Waiting for English translation, then summary runs automatically."
-                    : "Choose a format and click Summarize."}
+                  : "Summary runs automatically after transcription."}
               </div>
             )}
           </div>

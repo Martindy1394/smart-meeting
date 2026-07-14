@@ -36,18 +36,6 @@ def _require_transcript(meeting: Meeting) -> str:
     return text
 
 
-def _require_english_translation(meeting: Meeting) -> str:
-    """BART summarizes from the English translation for higher accuracy."""
-    text = (meeting.translation or "").strip()
-    if not text:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="English translation is required before summarizing. "
-            "Wait for auto-translation to finish, then try again.",
-        )
-    return text
-
-
 @router.post(
     "/summarize",
     response_model=SummarizeResponse,
@@ -59,15 +47,14 @@ def summarize(
     db: Session = Depends(get_db),
 ):
     meeting = _get_owned_meeting(payload.meeting_id, current_user, db)
-    # Prefer the English translation over the raw transcript so BART works on
-    # cleaner, grammatical text and retains points more accurately.
-    source = _require_english_translation(meeting)
+    # Summarize the finalized transcript directly (BART runs after transcription).
+    source = _require_transcript(meeting)
     try:
         summary, engine = llm.invoke_llm(
             "summarize",
             source,
             output_format=payload.output_format,
-            source_kind="english_translation",
+            source_kind="transcript",
         )
     except llm.LLMUnavailable as exc:
         raise HTTPException(
