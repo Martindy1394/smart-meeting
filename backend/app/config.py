@@ -55,10 +55,12 @@ class Settings(BaseSettings):
     audio_channels: int = 1
 
     # Whisper model sizes for the two-pass pipeline.
+    # Defaults favour machines without a GPU: int8 keeps memory under control so
+    # the API process is not OOM-killed while loading the finalization model.
     whisper_live_model: str = "base"
-    whisper_final_model: str = "large-v3"
-    whisper_device: str = "auto"           # auto | cpu | cuda
-    whisper_compute_type: str = "default"  # default | int8 | float16 | float32
+    whisper_final_model: str = "medium"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
     # Dialect / language handling. "hil" == Hiligaynon.
     whisper_default_language: str = "hil"
 
