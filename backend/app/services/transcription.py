@@ -20,6 +20,7 @@ when the (multi-gigabyte) model weights / package are not installed.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 
@@ -31,6 +32,21 @@ logger = logging.getLogger("smart_meeting.transcription")
 
 # Closest supported language when the requested dialect is unavailable.
 _LANGUAGE_FALLBACK = {"hil": "tl"}
+
+_JUNK_CAPTION_RE = re.compile(
+    r"^[\s\.\,\!\?…\-–—\"'“”‘’]*$"
+    r"|^(thanks for watching|thank you for watching|subscribe|bye\.?)$",
+    re.IGNORECASE,
+)
+
+
+def _is_junk_caption(text: str) -> bool:
+    if not text:
+        return True
+    if _JUNK_CAPTION_RE.match(text.strip()):
+        return True
+    letters = sum(ch.isalpha() for ch in text)
+    return letters < 2
 
 
 class TranscriptionUnavailable(RuntimeError):
@@ -142,14 +158,22 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
         condition_on_previous_text=False,
         without_timestamps=True,
         # Suppress hallucinations on near-silence / noise.
-        no_speech_threshold=0.6,
+        no_speech_threshold=0.5,
         compression_ratio_threshold=2.4,
+        log_prob_threshold=-0.8,
     )
     out: list[Segment] = []
     for s in segments:
         text = (s.text or "").strip()
-        if text:
-            out.append(Segment(text=text, start=float(s.start or 0.0), end=float(s.end or 0.0)))
+        if _is_junk_caption(text):
+            continue
+        out.append(
+            Segment(
+                text=text,
+                start=float(getattr(s, "start", 0.0) or 0.0),
+                end=float(getattr(s, "end", 0.0) or 0.0),
+            )
+        )
     return out
 
 
