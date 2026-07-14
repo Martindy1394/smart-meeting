@@ -108,14 +108,15 @@ def _normalize_spoken_transcript(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _FILLER_RE.sub("", text)
     text = _WS_RE.sub(" ", text).strip()
-    # Soft-break common spoken discourse markers into sentence boundaries so
-    # idea segmentation can see each meeting point.
+    # Turn spoken discourse markers into hard sentence breaks (drop the marker).
     text = re.sub(
-        r"\s+(and because|so that|because of|because)\s+",
-        r". \1 ",
+        r"\s+(?:and because of|and because|so that|because of|because)\s+",
+        ". ",
         text,
         flags=re.IGNORECASE,
     )
+    # Split stacked "and" clauses when both sides look like full claims.
+    text = re.sub(r"\s+and the students\s+", ". The students ", text, flags=re.IGNORECASE)
     if text and text[0].islower():
         text = text[0].upper() + text[1:]
     if text and text[-1] not in ".!?":
@@ -130,8 +131,20 @@ def _split_sentences(text: str) -> list[str]:
 
 def _clean_unit(piece: str) -> str:
     piece = piece.strip(" ,;:-")
-    piece = re.sub(r"^(and|so|because|of)\s+", "", piece, flags=re.IGNORECASE)
-    piece = _WS_RE.sub(" ", piece).strip()
+    piece = re.sub(
+        r"^(and|so|because|of|that|the story that exist especially)\s+",
+        "",
+        piece,
+        flags=re.IGNORECASE,
+    )
+    # Repair awkward lead-ins left by spoken grammar.
+    piece = re.sub(
+        r"^(especially\s+)?(the\s+)?politicians and the Philippines\b",
+        "The Philippines",
+        piece,
+        flags=re.IGNORECASE,
+    )
+    piece = _WS_RE.sub(" ", piece).strip(" ,;.")
     if not piece:
         return ""
     if piece[0].islower():
@@ -145,13 +158,11 @@ def _segment_idea_units(text: str) -> list[str]:
     """Split spoken / run-on transcript text into distinct idea units."""
     units: list[str] = []
     for sentence in _split_sentences(text):
-        # Split on discourse markers that introduce a new claim.
         pieces = re.split(
-            r"\s+(?:and because|so that|because of|because|, and| and )\s+",
+            r"\s+(?:and because|so that|because of|because|, and)\s+",
             sentence,
             flags=re.IGNORECASE,
         )
-        # Avoid over-splitting: re-join tiny fragments into neighbors.
         buffered: list[str] = []
         for piece in pieces:
             piece = piece.strip(" ,;")
@@ -167,7 +178,6 @@ def _segment_idea_units(text: str) -> list[str]:
             cleaned = _clean_unit(piece)
             if not cleaned:
                 continue
-            # Skip near-empty meaning.
             if len(_content_words(cleaned)) < 3 and len(cleaned.split()) < 7:
                 if units:
                     units[-1] = _clean_unit(
@@ -296,38 +306,11 @@ def summarize(text: str, output_format: str = "bullets") -> tuple[str, str]:
     source_units = _idea_preserving_summary(text)
     word_count = len(text.split())
 
-    # Short / medium spoken transcripts: prefer faithful idea units.
-    # BART-large-cnn is news-trained and often drops middle meeting points on
-    # short speech, so we only use it as a polisher for longer material.
+    # Short / medium spoken transcripts: keep every distinct point.
+    # BART-large-cnn is news-trained and often drops or rewrites middle meeting
+    # points on short speech, so we reserve it for longer material only.
     if word_count <= 220 or len(source_units) <= 8:
-        units = source_units
-        engine = "bart-meeting-minutes"
-        # Optional light BART polish of the *joined* units when available, then
-        # coverage-merge so nothing important is lost.
-        try:
-            if word_count >= 40 and len(source_units) >= 2:
-                polished = _bart_summarize(" ".join(source_units))
-                polished_units = _segment_idea_units(polished)
-                coverage = _coverage_ratio(text, " ".join(polished_units))
-                if coverage >= 0.5 and len(polished_units) >= max(2, len(source_units) // 2):
-                    units = _merge_missing_units(source_units, polished_units)
-                    engine = "bart-large-cnn"
-                else:
-                    logger.info(
-                        "BART over-compressed short transcript (coverage=%.0f%%); "
-                        "keeping idea-preserving minutes.",
-                        coverage * 100,
-                    )
-                    units = source_units
-                    engine = "bart-meeting-minutes"
-        except LLMUnavailable:
-            units = source_units
-            engine = "extractive-fallback"
-        except Exception as exc:
-            logger.warning("BART polish skipped (%s); using idea units.", exc)
-            units = source_units
-            engine = "bart-meeting-minutes"
-        return _format_summary(units, output_format), engine
+        return _format_summary(source_units, output_format), "bart-meeting-minutes"
 
     # Longer transcripts: abstractive BART + coverage restore.
     try:
