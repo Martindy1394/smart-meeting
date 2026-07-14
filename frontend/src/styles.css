@@ -357,10 +357,38 @@ button {
 }
 
 /* ---------------- Cards grid ---------------- */
+.top-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 18px;
+  align-items: stretch;
+}
+.top-row .details-card,
+.top-row .transcript-card {
+  margin-bottom: 0;
+  min-height: 380px;
+  height: 100%;
+}
+.top-row .details-card {
+  display: flex;
+  flex-direction: column;
+}
+.top-row .details-grid {
+  grid-template-columns: 1fr;
+  flex: 1;
+}
+.top-row .title-field,
+.top-row .attendees-field {
+  grid-column: auto;
+}
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 18px;
+}
+.bottom-cards {
+  grid-template-columns: 1fr 1fr;
 }
 .card {
   background: var(--surface);
@@ -370,6 +398,9 @@ button {
   flex-direction: column;
   min-height: 320px;
   overflow: hidden;
+}
+.transcript-card {
+  min-height: 380px;
 }
 .card-head {
   display: flex;
@@ -510,6 +541,7 @@ select.inline {
   border-radius: var(--radius);
   padding: 16px 18px;
   margin-bottom: 18px;
+  box-sizing: border-box;
 }
 .details-head {
   display: flex;
@@ -648,6 +680,10 @@ select.inline {
   }
   .menu-btn {
     display: inline-flex;
+  }
+  .top-row,
+  .bottom-cards {
+    grid-template-columns: 1fr;
   }
 }
 @media (min-width: 861px) {

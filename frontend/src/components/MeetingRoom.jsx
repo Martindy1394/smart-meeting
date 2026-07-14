@@ -145,12 +145,45 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
         <div className="error-banner">{recorder.message}</div>
       )}
 
-      <MeetingDetails
-        ref={detailsRef}
-        meeting={meeting}
-        onUpdated={onMeetingUpdated}
-        onValidityChange={setDetailsReady}
-      />
+      <div className="top-row">
+        <MeetingDetails
+          ref={detailsRef}
+          meeting={meeting}
+          onUpdated={onMeetingUpdated}
+          onValidityChange={setDetailsReady}
+        />
+
+        <div className="card transcript-card">
+          <div className="card-head">
+            <h3>
+              Transcript
+              {isRefined && <span className="badge refined">Refined</span>}
+              {showLive && (
+                <span className="badge live">
+                  <span className="dot-live" /> Live
+                </span>
+              )}
+            </h3>
+            <span className="card-tag">Whisper · {meeting.language}</span>
+          </div>
+          <div className="card-body">
+            {showLive && recorder.liveText ? (
+              <span className="transcript-live">{recorder.liveText}</span>
+            ) : hasTranscript ? (
+              finalTranscript
+            ) : showLive ? (
+              <span className="transcript-live">Listening…</span>
+            ) : (
+              <div className="placeholder">
+                <div style={{ fontSize: 32 }}>🎙️</div>
+                Press <strong>Start recording</strong> to begin live
+                transcription. The final transcript is refined to full accuracy
+                when you stop.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       <div className="recorder-bar">
         <button
@@ -199,39 +232,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
         </span>
       </div>
 
-      <div className="cards">
-        {/* Transcript card */}
-        <div className="card">
-          <div className="card-head">
-            <h3>
-              Transcript
-              {isRefined && <span className="badge refined">Refined</span>}
-              {showLive && (
-                <span className="badge live">
-                  <span className="dot-live" /> Live
-                </span>
-              )}
-            </h3>
-            <span className="card-tag">Whisper · {meeting.language}</span>
-          </div>
-          <div className="card-body">
-            {showLive && recorder.liveText ? (
-              <span className="transcript-live">{recorder.liveText}</span>
-            ) : hasTranscript ? (
-              finalTranscript
-            ) : showLive ? (
-              <span className="transcript-live">Listening…</span>
-            ) : (
-              <div className="placeholder">
-                <div style={{ fontSize: 32 }}>🎙️</div>
-                Press <strong>Start recording</strong> to begin live
-                transcription. The final transcript is refined to full accuracy
-                when you stop.
-              </div>
-            )}
-          </div>
-        </div>
-
+      <div className="cards bottom-cards">
         {/* Summary card (BART) */}
         <div className="card">
           <div className="card-head">
