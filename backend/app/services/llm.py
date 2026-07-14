@@ -116,7 +116,8 @@ def _format_summary(summary_text: str, output_format: str) -> str:
     if not sentences:
         return ""
     if output_format == "numbered":
-        return " ".join(f"{i}. {s}" for i, s in enumerate(sentences, start=1))
+        # One numbered sentence per line for readability.
+        return "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, start=1))
     # Default: bullet points, one per line.
     return "\n".join(f"- {s}" for s in sentences)
 
