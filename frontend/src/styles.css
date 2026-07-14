@@ -261,15 +261,17 @@ button {
 }
 .meeting-item-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
 }
 .meeting-action-btn {
   flex: 1;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
   font-weight: 600;
-  min-height: 30px;
+  min-height: 24px;
+  border-radius: 7px;
+  line-height: 1.2;
 }
 .meeting-remove-btn {
   color: #fca5a5;
