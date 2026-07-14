@@ -4,9 +4,10 @@ Both features are exposed through a single ``invoke_llm(task, ...)`` entry point
 so every AI integration in the codebase flows through one consistent surface.
 
 * ``task="summarize"`` builds meeting minutes that preserve distinct spoken
-  points. Short transcripts are segmented into idea units (so middle topics are
-  not dropped); longer transcripts use ``facebook/bart-large-cnn`` with generous
-  length settings plus a coverage merge that restores any missing points.
+  points. Short transcripts are segmented into idea units (so middle topics and
+  language/context shifts — e.g. English lyrics vs Filipino commentary — stay
+  on separate bullets). Longer transcripts use ``facebook/bart-large-cnn`` with
+  coverage merge that restores any missing points.
 * ``task="translate"`` uses ``facebook/mbart-large-50-many-to-many-mmt``.
 
 ``transformers``/``torch`` are imported lazily. Summarization degrades to the
@@ -38,7 +39,43 @@ _STOP = {
     "so", "also", "now", "then", "than", "from", "into", "about", "must",
     "who", "whom", "which", "what", "when", "where", "how", "very", "just",
     "exist", "especially", "currently", "always", "them", "their",
+    # Common Filipino function words (keep out of content-word overlap checks).
+    "ang", "mga", "ng", "nang", "sa", "ay", "na", "lang", "naman", "po",
+    "ba", "pala", "daw", "raw", "yung", "yun", "ito", "iyan", "iyon",
+    "ko", "mo", "niya", "nila", "natin", "namin", "kayo", "kami", "tayo",
+    "ako", "siya", "sila", "may", "mayroon", "meron", "wala", "para",
+    "kung", "kapag", "kasi", "kaya", "pero", "at", "o", "dahil",
 }
+
+# Filipino / Tagalog sentence starters often glued onto English in Whisper output.
+_FILIPINO_STARTER_RE = re.compile(
+    r"(?<=[A-Za-z0-9,\"'”’])\s+(?=("
+    r"Bakit|Kasi|Kaya|Pero|Hindi|Huag|Huwag|Ngayon|Tapos|Ganon|Ganun|"
+    r"Wala|Meron|Mayroon|Dapat|Sana|Ako|Ikaw|Kami|Tayo|Sila|Mga|"
+    r"Ang\s+mga|Sa\s+mga|Sa\s+to|Para\s+sa|Dahil|Kapag|Kung|"
+    r"Lagi|Talaga|Sige|Oo|Hindi\s+ba"
+    r")\b)",
+    re.IGNORECASE,
+)
+
+_FILIPINO_MARKERS = frozenset(
+    {
+        "ang", "mga", "nang", "ay", "ba", "po", "opo", "naman", "lang",
+        "kasi", "kaya", "pero", "bakit", "hindi", "wala", "meron", "mayroon",
+        "dapat", "sana", "tayo", "kami", "sila", "ako", "ikaw", "niya",
+        "nila", "natin", "yung", "iyan", "iyon", "dito", "doon", "roon",
+        "pilipino", "pilipinos", "politiko", "maging", "naging", "naginging",
+        "lagi", "talaga", "ganun", "ganon", "para", "dahil", "kapag",
+    }
+)
+_ENGLISH_MARKERS = frozenset(
+    {
+        "the", "and", "you", "that", "with", "this", "have", "from", "they",
+        "were", "was", "are", "is", "my", "your", "our", "when", "young",
+        "everybody", "watching", "reminds", "movie", "song", "sound", "check",
+        "things", "talk", "move", "hoping", "loves", "guy",
+    }
+)
 
 
 class LLMUnavailable(RuntimeError):
@@ -99,15 +136,67 @@ _pipelines = _Pipelines()
 def _content_words(text: str) -> set[str]:
     return {
         w
-        for w in re.findall(r"[a-zA-Z']+", text.lower())
+        for w in re.findall(r"[A-Za-zÀ-ÿ']+", text.lower())
         if w not in _STOP and len(w) > 2
     }
+
+
+def _language_scores(text: str) -> tuple[float, float]:
+    """Return (english_score, filipino_score) from simple marker hits."""
+    tokens = re.findall(r"[A-Za-zÀ-ÿ']+", text.lower())
+    if not tokens:
+        return 0.0, 0.0
+    en = sum(1 for t in tokens if t in _ENGLISH_MARKERS)
+    fi = sum(1 for t in tokens if t in _FILIPINO_MARKERS)
+    n = max(1, len(tokens))
+    return en / n, fi / n
+
+
+def _insert_context_breaks(text: str) -> str:
+    """Insert sentence breaks where Whisper glued different spoken contexts.
+
+    Walk left-to-right so an English→Filipino split becomes a new clause
+    boundary before later Filipino function words (ang/mga/lagi) are considered.
+    """
+    fil_func = _FILIPINO_MARKERS | {
+        "ba", "lang", "na", "ang", "mga", "ng", "sa", "ay", "po", "naman", "pa",
+    }
+    pieces: list[str] = []
+    cursor = 0
+    for match in _FILIPINO_STARTER_RE.finditer(text):
+        # Match is the whitespace between a prior token and a Filipino starter.
+        ws_start, ws_end = match.start(), match.end()
+        pieces.append(text[cursor:ws_start])
+        built = "".join(pieces)
+        clause = re.split(r"[.!?]\s*", built)[-1]
+        prev_tokens = re.findall(r"[A-Za-zÀ-ÿ']+", clause.lower())
+        last_tok = prev_tokens[-1] if prev_tokens else ""
+        if last_tok in fil_func:
+            pieces.append(text[ws_start:ws_end])
+        else:
+            en, fi = _language_scores(clause)
+            if prev_tokens and en >= fi and en > 0:
+                pieces.append(". ")
+            else:
+                pieces.append(text[ws_start:ws_end])
+        cursor = ws_end
+    pieces.append(text[cursor:])
+    text = "".join(pieces)
+    text = re.sub(
+        r"\s+(?:meanwhile|on another note|separately|next topic|"
+        r"moving on|another thing|also note that)\s+",
+        ". ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
 
 
 def _normalize_spoken_transcript(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _FILLER_RE.sub("", text)
     text = _WS_RE.sub(" ", text).strip()
+    text = _insert_context_breaks(text)
     # Turn spoken discourse markers into hard sentence breaks (drop the marker).
     text = re.sub(
         r"\s+(?:and because of|and because|so that|because of|because)\s+",
@@ -154,6 +243,59 @@ def _clean_unit(piece: str) -> str:
     return piece
 
 
+def _split_mixed_language_unit(unit: str) -> list[str]:
+    """Split one unit when English and Filipino contexts were concatenated."""
+    en, fi = _language_scores(unit)
+    # Only attempt when both languages are clearly present.
+    if en < 0.08 or fi < 0.08:
+        return [unit]
+
+    tokens = unit.split()
+    if len(tokens) < 8:
+        return [unit]
+
+    best_i = None
+    best_score = 0.0
+    starter_bonus = {
+        "bakit", "kasi", "kaya", "pero", "hindi", "ngayon", "tapos",
+        "ganun", "ganon", "wala", "meron", "dapat", "sana", "lagi",
+    }
+    for i in range(3, len(tokens) - 2):
+        left = " ".join(tokens[:i])
+        right = " ".join(tokens[i:])
+        len_, lif = _language_scores(left)
+        ren, rif = _language_scores(right)
+        # Prefer English→Filipino or Filipino→English contrast.
+        score = abs((len_ - lif) - (ren - rif))
+        if (len_ > lif and rif > ren) or (lif > len_ and ren > rif):
+            score += 0.35
+        head = tokens[i].lower().rstrip(".,!?")
+        if head in starter_bonus:
+            score += 0.55
+        if score > best_score:
+            best_score = score
+            best_i = i
+
+    if best_i is None or best_score < 0.55:
+        return [unit]
+
+    left = _clean_unit(" ".join(tokens[:best_i]))
+    right = _clean_unit(" ".join(tokens[best_i:]))
+    out = [u for u in (left, right) if u]
+    # Recurse once in case more than two contexts were glued.
+    if len(out) == 2:
+        more: list[str] = []
+        for part in out:
+            split = _split_mixed_language_unit(part)
+            # Guard against infinite recursion on tiny leftovers.
+            if split == [part] or len(part.split()) < 10:
+                more.append(part)
+            else:
+                more.extend(split)
+        return more
+    return out or [unit]
+
+
 def _segment_idea_units(text: str) -> list[str]:
     """Split spoken / run-on transcript text into distinct idea units."""
     units: list[str] = []
@@ -169,7 +311,14 @@ def _segment_idea_units(text: str) -> list[str]:
             if not piece:
                 continue
             words = piece.split()
-            if buffered and len(words) < 6:
+            en, fi = _language_scores(piece)
+            language_shift = False
+            if buffered:
+                prev_en, prev_fi = _language_scores(buffered[-1])
+                language_shift = (prev_en > prev_fi and fi > en + 0.05) or (
+                    prev_fi > prev_en and en > fi + 0.05
+                )
+            if buffered and len(words) < 6 and not language_shift:
                 buffered[-1] = f"{buffered[-1].rstrip('.')} {piece}"
             else:
                 buffered.append(piece)
@@ -178,13 +327,23 @@ def _segment_idea_units(text: str) -> list[str]:
             cleaned = _clean_unit(piece)
             if not cleaned:
                 continue
-            if len(_content_words(cleaned)) < 3 and len(cleaned.split()) < 7:
-                if units:
-                    units[-1] = _clean_unit(
-                        f"{units[-1].rstrip('.')} {cleaned.rstrip('.')}"
-                    )
-                continue
-            units.append(cleaned)
+            for part in _split_mixed_language_unit(cleaned):
+                if len(_content_words(part)) < 3 and len(part.split()) < 7:
+                    if units:
+                        u_en, u_fi = _language_scores(units[-1])
+                        p_en, p_fi = _language_scores(part)
+                        if (u_en > u_fi and p_fi > p_en) or (
+                            u_fi > u_en and p_en > p_fi
+                        ):
+                            units.append(part)
+                        else:
+                            units[-1] = _clean_unit(
+                                f"{units[-1].rstrip('.')} {part.rstrip('.')}"
+                            )
+                    else:
+                        units.append(part)
+                    continue
+                units.append(part)
     return _dedupe_units(units)
 
 
