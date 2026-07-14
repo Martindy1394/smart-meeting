@@ -187,7 +187,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       : "";
     revokeAudioUrl();
     // Load whenever the meeting may already have a saved WAV.
-    if (meeting.has_audio || meeting.status === "finalized" || meeting.audio_path) {
+    if (meeting.has_audio || meeting.status === "finalized") {
       loadAudio(meeting.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
