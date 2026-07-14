@@ -62,6 +62,7 @@ export const api = {
   signup: (payload) => request("/auth/signup", { method: "POST", body: payload, auth: false }),
   login: (payload) => request("/auth/login", { method: "POST", body: payload, auth: false }),
   me: () => request("/auth/me"),
+  updateProfile: (payload) => request("/auth/me", { method: "PATCH", body: payload }),
 
   // Meetings
   listMeetings: (search) =>

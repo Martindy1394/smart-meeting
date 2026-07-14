@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import MeetingRoom from "../components/MeetingRoom.jsx";
+import SettingsPanel from "../components/SettingsPanel.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 
 export default function Workspace() {
+  const [section, setSection] = useState("history");
   const [meetings, setMeetings] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [search, setSearch] = useState("");
@@ -38,6 +40,7 @@ export default function Workspace() {
   }, [search, loadMeetings]);
 
   const selectMeeting = useCallback(async (id) => {
+    setSection("history");
     setActiveId(id);
     setSaveControls(null);
     setLoadingMeeting(true);
@@ -58,6 +61,7 @@ export default function Workspace() {
         language: "hil",
         meeting_date: new Date().toISOString(),
       });
+      setSection("history");
       setSaveControls(null);
       setActiveId(detail.id);
       setActiveMeeting(detail);
@@ -102,9 +106,13 @@ export default function Workspace() {
     [activeId, loadMeetings, search]
   );
 
+  const showSettings = section === "settings";
+
   return (
     <div className="app-shell">
       <Sidebar
+        section={section}
+        onSectionChange={setSection}
         meetings={meetings}
         loading={loadingList}
         activeId={activeId}
@@ -127,12 +135,14 @@ export default function Workspace() {
               ☰
             </button>
             <h1>
-              {activeMeeting
-                ? activeMeeting.title || "Untitled meeting"
-                : "Smart Meeting"}
+              {showSettings
+                ? "Settings"
+                : activeMeeting
+                  ? activeMeeting.title || "Untitled meeting"
+                  : "Smart Meeting"}
             </h1>
           </div>
-          {activeMeeting && saveControls && (
+          {!showSettings && activeMeeting && saveControls && (
             <div className="topbar-right">
               <button
                 className="btn"
@@ -145,7 +155,9 @@ export default function Workspace() {
           )}
         </div>
 
-        {loadingMeeting ? (
+        {showSettings ? (
+          <SettingsPanel />
+        ) : loadingMeeting ? (
           <div className="center-spin">
             <span className="spinner" /> Loading meeting…
           </div>
@@ -162,7 +174,8 @@ export default function Workspace() {
             <h2>Welcome to Smart Meeting</h2>
             <p>
               Create a new meeting to start live transcription, then summarize
-              and translate the results.
+              and translate the results. Open History anytime to revisit saved
+              records.
             </p>
             <button className="btn" onClick={createMeeting}>
               + New meeting

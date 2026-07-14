@@ -63,12 +63,65 @@ def _apply_lightweight_migrations() -> None:
         "meeting_date": "TIMESTAMP NULL",
         "attendees": "TEXT DEFAULT '[]'",
     }
+    user_columns = {
+        "username": "VARCHAR(64) DEFAULT ''",
+        "first_name": "VARCHAR(128) DEFAULT ''",
+        "last_name": "VARCHAR(128) DEFAULT ''",
+        "position": "VARCHAR(128) DEFAULT ''",
+        "workplace": "VARCHAR(255) DEFAULT ''",
+    }
 
     inspector = inspect(engine)
-    if "meetings" not in inspector.get_table_names():
-        return
-    existing = {col["name"] for col in inspector.get_columns("meetings")}
-    with engine.begin() as conn:
-        for name, ddl in meeting_columns.items():
-            if name not in existing:
-                conn.execute(text(f"ALTER TABLE meetings ADD COLUMN {name} {ddl}"))
+    tables = set(inspector.get_table_names())
+
+    if "meetings" in tables:
+        existing = {col["name"] for col in inspector.get_columns("meetings")}
+        with engine.begin() as conn:
+            for name, ddl in meeting_columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE meetings ADD COLUMN {name} {ddl}"))
+
+    if "users" in tables:
+        existing = {col["name"] for col in inspector.get_columns("users")}
+        with engine.begin() as conn:
+            for name, ddl in user_columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl}"))
+            # Backfill usernames for legacy email-only accounts.
+            rows = conn.execute(
+                text(
+                    "SELECT id, email, username, full_name FROM users "
+                    "WHERE username IS NULL OR username = ''"
+                )
+            ).fetchall()
+            used: set[str] = {
+                r[0]
+                for r in conn.execute(
+                    text("SELECT username FROM users WHERE username IS NOT NULL AND username != ''")
+                ).fetchall()
+            }
+            for user_id, email, _username, full_name in rows:
+                base = (email or "user").split("@")[0].lower()
+                base = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in base) or "user"
+                candidate = base[:64]
+                n = 1
+                while candidate in used:
+                    suffix = f"_{n}"
+                    candidate = f"{base[: max(1, 64 - len(suffix))]}{suffix}"
+                    n += 1
+                used.add(candidate)
+                first = ""
+                last = ""
+                if full_name:
+                    parts = str(full_name).strip().split(None, 1)
+                    first = parts[0] if parts else ""
+                    last = parts[1] if len(parts) > 1 else ""
+                conn.execute(
+                    text(
+                        "UPDATE users SET username = :u, "
+                        "first_name = COALESCE(NULLIF(first_name, ''), :f), "
+                        "last_name = COALESCE(NULLIF(last_name, ''), :l) "
+                        "WHERE id = :id"
+                    ),
+                    {"u": candidate, "f": first, "l": last, "id": user_id},
+                )

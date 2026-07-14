@@ -12,10 +12,36 @@ _PASSWORD_RE = re.compile(r"^(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$")
 
 
 # ----------------------------- Auth ----------------------------------------
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,64}$")
+
+
 class SignupRequest(BaseModel):
-    email: EmailStr
+    first_name: str = Field(..., min_length=1, max_length=128)
+    last_name: str = Field(..., min_length=1, max_length=128)
+    position: str = Field(..., min_length=1, max_length=128)
+    workplace: str = Field(..., min_length=1, max_length=255)
+    email: EmailStr  # working email address
+    username: str = Field(..., min_length=3, max_length=64)
     password: str
-    full_name: str = Field(default="", max_length=255)
+
+    @field_validator("username")
+    @classmethod
+    def _validate_username(cls, v: str) -> str:
+        v = v.strip()
+        if not _USERNAME_RE.match(v):
+            raise ValueError(
+                "Username must be 3–64 characters and use only letters, "
+                "numbers, dots, underscores, or hyphens."
+            )
+        return v.lower()
+
+    @field_validator("first_name", "last_name", "position", "workplace")
+    @classmethod
+    def _strip_required(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("This field is required.")
+        return v
 
     @field_validator("password")
     @classmethod
@@ -29,8 +55,43 @@ class SignupRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    username: str = Field(..., min_length=1, max_length=64)
     password: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    first_name: str | None = Field(default=None, max_length=128)
+    last_name: str | None = Field(default=None, max_length=128)
+    position: str | None = Field(default=None, max_length=128)
+    workplace: str | None = Field(default=None, max_length=255)
+    email: EmailStr | None = None
+    username: str | None = Field(default=None, min_length=3, max_length=64)
+    password: str | None = None
+
+    @field_validator("username")
+    @classmethod
+    def _validate_username(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not _USERNAME_RE.match(v):
+            raise ValueError(
+                "Username must be 3–64 characters and use only letters, "
+                "numbers, dots, underscores, or hyphens."
+            )
+        return v.lower()
+
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        if not _PASSWORD_RE.match(v):
+            raise ValueError(
+                "Password must be at least 8 characters and include at least "
+                "one number and one special character."
+            )
+        return v
 
 
 class TokenResponse(BaseModel):
@@ -41,8 +102,13 @@ class TokenResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: str
+    username: str
     email: EmailStr
-    full_name: str
+    first_name: str = ""
+    last_name: str = ""
+    position: str = ""
+    workplace: str = ""
+    full_name: str = ""
     created_at: datetime
 
     class Config:

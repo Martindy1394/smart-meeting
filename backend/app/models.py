@@ -30,7 +30,14 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    # Login credential (unique). Working email is separate contact info.
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    first_name: Mapped[str] = mapped_column(String(128), default="")
+    last_name: Mapped[str] = mapped_column(String(128), default="")
+    position: Mapped[str] = mapped_column(String(128), default="")
+    workplace: Mapped[str] = mapped_column(String(255), default="")
+    # Kept for older clients / display convenience.
     full_name: Mapped[str] = mapped_column(String(255), default="")
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -39,6 +46,10 @@ class User(Base):
     meetings: Mapped[list["Meeting"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
+
+    def display_name(self) -> str:
+        name = f"{self.first_name} {self.last_name}".strip()
+        return name or self.full_name or self.username
 
 
 class Meeting(Base):

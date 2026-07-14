@@ -29,18 +29,24 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login = useCallback(async (email, password) => {
-    const res = await api.login({ email, password });
+  const login = useCallback(async (username, password) => {
+    const res = await api.login({ username, password });
     setToken(res.access_token);
     setUser(res.user);
     return res.user;
   }, []);
 
-  const signup = useCallback(async (email, password, fullName) => {
-    const res = await api.signup({ email, password, full_name: fullName });
+  const signup = useCallback(async (payload) => {
+    const res = await api.signup(payload);
     setToken(res.access_token);
     setUser(res.user);
     return res.user;
+  }, []);
+
+  const updateProfile = useCallback(async (payload) => {
+    const user = await api.updateProfile(payload);
+    setUser(user);
+    return user;
   }, []);
 
   const logout = useCallback(() => {
@@ -49,7 +55,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, signup, updateProfile, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );
