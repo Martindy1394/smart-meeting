@@ -13,6 +13,16 @@ function fmtTime(sec) {
   return `${m}:${s}`;
 }
 
+function isDetailsComplete(meeting) {
+  return Boolean(
+    meeting?.title?.trim() &&
+      meeting?.venue?.trim() &&
+      meeting?.meeting_date &&
+      Array.isArray(meeting?.attendees) &&
+      meeting.attendees.length > 0
+  );
+}
+
 export default function MeetingRoom({ meeting, onMeetingUpdated }) {
   const [finalTranscript, setFinalTranscript] = useState(meeting.final_transcript || "");
   const [status, setStatus] = useState(meeting.status);
@@ -67,15 +77,19 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
   async function toggleRecord() {
     if (recorder.recording) {
       recorder.stop();
-    } else {
-      try {
-        await recorder.start(meeting.id);
-        setStatus("recording");
-      } catch {
-        /* handled inside hook via message */
-      }
+      return;
+    }
+    if (!isDetailsComplete(meeting)) return;
+    try {
+      await recorder.start(meeting.id);
+      setStatus("recording");
+    } catch {
+      /* handled inside hook via message */
     }
   }
+
+  const detailsReady = isDetailsComplete(meeting);
+  const canStart = detailsReady && recorder.status !== "finalizing";
 
   async function runSummarize() {
     setSummarizing(true);
@@ -132,10 +146,20 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
         <button
           className={`btn record ${recorder.recording ? "active" : ""}`}
           onClick={toggleRecord}
-          disabled={recorder.status === "finalizing"}
+          disabled={recorder.recording ? recorder.status === "finalizing" : !canStart}
+          title={
+            !detailsReady && !recorder.recording
+              ? "Fill in and save all meeting details first"
+              : undefined
+          }
         >
           {recorder.recording ? "■ Stop recording" : "● Start recording"}
         </button>
+        {!detailsReady && !recorder.recording && (
+          <span className="card-tag">
+            Save title, venue, date &amp; time, and attendees first
+          </span>
+        )}
         {recorder.recording && (
           <>
             <span className="dot-live" />
