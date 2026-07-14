@@ -28,13 +28,14 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState("");
 
-  // Translation state
-  const [languages, setLanguages] = useState([]);
-  const [targetLang, setTargetLang] = useState("es");
+  // Translation state — always auto-translates the transcript into English.
   const [translation, setTranslation] = useState(meeting.translation || "");
-  const [translationLang, setTranslationLang] = useState(meeting.translation_language || "");
+  const [translationLang, setTranslationLang] = useState(
+    meeting.translation_language || "English"
+  );
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState("");
+  const autoTranslateRef = useRef("");
 
   const saveDetails = useCallback(async ({ silent = false } = {}) => {
     if (!detailsRef.current) return false;
@@ -46,15 +47,46 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     }
   }, []);
 
+  const translateToEnglish = useCallback(
+    async (transcriptText) => {
+      const text = (transcriptText || "").trim();
+      if (!text) return;
+      // Avoid re-running for the same transcript content.
+      if (autoTranslateRef.current === text) return;
+      autoTranslateRef.current = text;
+      setTranslating(true);
+      setTranslateError("");
+      try {
+        const res = await api.translate({
+          meeting_id: meeting.id,
+          target_language: "en",
+        });
+        setTranslation(res.translation);
+        setTranslationLang(res.language_name || "English");
+        if (onMeetingUpdated) onMeetingUpdated();
+      } catch (err) {
+        // Allow retry on failure.
+        autoTranslateRef.current = "";
+        setTranslateError(err.message || "English translation failed.");
+      } finally {
+        setTranslating(false);
+      }
+    },
+    [meeting.id, onMeetingUpdated]
+  );
+
   const onFinalTranscript = useCallback(
     async (data) => {
-      setFinalTranscript(data.text || "");
+      const text = data.text || "";
+      setFinalTranscript(text);
       setStatus("finalized");
       // Automatically persist meeting details after recording finishes.
       await saveDetails({ silent: true });
       if (onMeetingUpdated) onMeetingUpdated();
+      // Automatically translate the finalized transcript into English.
+      await translateToEnglish(text);
     },
-    [onMeetingUpdated, saveDetails]
+    [onMeetingUpdated, saveDetails, translateToEnglish]
   );
 
   const recorder = useRecorder({ onFinalTranscript });
@@ -82,19 +114,22 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     setSummary(meeting.summary || "");
     setSummaryFormat(meeting.summary_format || "bullets");
     setTranslation(meeting.translation || "");
-    setTranslationLang(meeting.translation_language || "");
+    setTranslationLang(meeting.translation_language || "English");
     setSummaryError("");
     setTranslateError("");
     setSummaryEngine("");
+    autoTranslateRef.current = meeting.translation ? meeting.final_transcript || "" : "";
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
 
+  // Auto-translate existing finalized transcripts that don't have English yet.
   useEffect(() => {
-    api
-      .languages()
-      .then(setLanguages)
-      .catch(() => setLanguages([]));
-  }, []);
+    const text = (meeting.final_transcript || "").trim();
+    if (!text) return;
+    if (meeting.translation) return;
+    translateToEnglish(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meeting.id, meeting.final_transcript, meeting.translation]);
 
   async function toggleRecord() {
     if (recorder.recording) {
@@ -127,24 +162,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       setSummaryError(err.message || "Summarization failed.");
     } finally {
       setSummarizing(false);
-    }
-  }
-
-  async function runTranslate() {
-    setTranslating(true);
-    setTranslateError("");
-    try {
-      const res = await api.translate({
-        meeting_id: meeting.id,
-        target_language: targetLang,
-      });
-      setTranslation(res.translation);
-      setTranslationLang(res.language_name);
-      if (onMeetingUpdated) onMeetingUpdated();
-    } catch (err) {
-      setTranslateError(err.message || "Translation failed.");
-    } finally {
-      setTranslating(false);
     }
   }
 
@@ -281,45 +298,27 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
           </div>
         </div>
 
-        {/* Translation card (mBART) */}
+        {/* Translation card (mBART) — auto English */}
         <div className="card">
           <div className="card-head">
-            <h3>Translation</h3>
+            <h3>English translation</h3>
             <span className="card-tag">
-              mBART{translationLang ? ` · ${translationLang}` : ""}
+              mBART · {translationLang || "English"}
             </span>
-          </div>
-          <div className="card-head" style={{ borderTop: "none", paddingTop: 0 }}>
-            <div className="controls-row">
-              <select
-                className="inline"
-                value={targetLang}
-                onChange={(e) => setTargetLang(e.target.value)}
-              >
-                {languages.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="btn"
-                onClick={runTranslate}
-                disabled={!hasTranscript || translating}
-              >
-                {translating ? <span className="spinner" /> : "Translate"}
-              </button>
-            </div>
           </div>
           <div className="card-body">
             {translateError && <div className="error-banner">{translateError}</div>}
-            {translation ? (
+            {translating ? (
+              <div className="center-spin">
+                <span className="spinner" /> Translating to English…
+              </div>
+            ) : translation ? (
               translation
             ) : (
               <div className="placeholder">
                 {hasTranscript
-                  ? "Pick a language and click Translate."
-                  : "Finalize a transcript first, then translate."}
+                  ? "English translation will appear here automatically."
+                  : "Finalize a transcript to auto-translate into English."}
               </div>
             )}
           </div>
