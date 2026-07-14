@@ -76,7 +76,7 @@ def create_meeting(
 ):
     meeting = Meeting(
         owner_id=current_user.id,
-        title=payload.title.strip() or "Untitled meeting",
+        title=payload.title.strip(),
         language=payload.language or "hil",
         venue=payload.venue.strip(),
         meeting_date=payload.meeting_date,

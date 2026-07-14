@@ -109,7 +109,7 @@ export default function MeetingDetails({ meeting, onUpdated }) {
           </label>
           <input
             type="text"
-            placeholder="Meeting title"
+            placeholder="Enter meeting title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             required

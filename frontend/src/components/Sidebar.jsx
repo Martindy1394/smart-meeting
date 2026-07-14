@@ -76,7 +76,7 @@ export default function Sidebar({
                   onClose && onClose();
                 }}
               >
-                <div className="title">{m.title}</div>
+                <div className="title">{m.title || "Untitled meeting"}</div>
                 <div className="meta">
                   <span>{fmtDate(m.meeting_date || m.created_at)}</span>
                   {m.status === "finalized" && (

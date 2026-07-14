@@ -52,7 +52,7 @@ export default function Workspace() {
   const createMeeting = useCallback(async () => {
     try {
       const detail = await api.createMeeting({
-        title: `Meeting ${new Date().toLocaleString()}`,
+        title: "",
         language: "hil",
       });
       setActiveId(detail.id);
@@ -114,7 +114,11 @@ export default function Workspace() {
             >
               ☰
             </button>
-            <h1>{activeMeeting ? activeMeeting.title : "Smart Meeting"}</h1>
+            <h1>
+              {activeMeeting
+                ? activeMeeting.title || "Untitled meeting"
+                : "Smart Meeting"}
+            </h1>
           </div>
         </div>
 

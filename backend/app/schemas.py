@@ -51,7 +51,7 @@ class UserResponse(BaseModel):
 
 # --------------------------- Meetings --------------------------------------
 class MeetingCreate(BaseModel):
-    title: str = Field(default="Untitled meeting", max_length=255)
+    title: str = Field(default="", max_length=255)
     language: str = Field(default="hil", max_length=16)
     venue: str = Field(default="", max_length=255)
     meeting_date: datetime | None = None
