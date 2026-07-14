@@ -527,27 +527,173 @@ def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
     if not tgt:
         raise LLMUnavailable(f"Unsupported target language: {tgt_code}")
 
+    # Identity English→English is unreliable on this checkpoint (emits te_IN etc.).
+    if src == "en_XX" and tgt == "en_XX":
+        return text.strip()
+
+    bos_id = tokenizer.lang_code_to_id.get(tgt)
+    if bos_id is None:
+        bos_id = tokenizer.convert_tokens_to_ids(tgt)
+
     outputs: list[str] = []
     for chunk in _chunk_text(text):
         tokenizer.src_lang = src
         encoded = tokenizer(chunk, return_tensors="pt", truncation=True, max_length=1024)
         generated = model.generate(
             **encoded,
-            forced_bos_token_id=tokenizer.lang_code_to_id[tgt],
-            max_length=1024,
+            forced_bos_token_id=bos_id,
+            max_new_tokens=min(512, max(48, int(len(chunk.split()) * 2.5))),
             num_beams=5,
+            early_stopping=True,
+            no_repeat_ngram_size=4,
         )
-        outputs.append(
-            tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
-        )
+        raw = tokenizer.batch_decode(generated, skip_special_tokens=False)[0]
+        # Drop any leaked language-code tokens the decoder may prepend after BOS.
+        cleaned = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
+        cleaned = _strip_leaked_lang_codes(cleaned)
+        cleaned = _collapse_translation_loops(cleaned)
+        if tgt == "en_XX" and not _looks_like_latin_script(cleaned):
+            logger.warning(
+                "mBART %s→%s produced non-Latin output (%s…); will retry upstream.",
+                src,
+                tgt,
+                cleaned[:40],
+            )
+            logger.debug("Raw decode: %s", raw[:120])
+            raise _NonEnglishTranslation(cleaned)
+        outputs.append(cleaned)
     return " ".join(outputs).strip()
+
+
+class _NonEnglishTranslation(RuntimeError):
+    """Internal signal that mBART failed to emit English script."""
+
+
+_LANG_CODE_LEAK_RE = re.compile(
+    r"^(?:en_XX|es_XX|fr_XX|de_DE|it_IT|pt_XX|ar_AR|hi_IN|ja_XX|zh_CN|ru_RU|"
+    r"nl_XX|ko_KR|id_ID|tl_XX|ps_AF|te_IN|ur_PK|fa_IR)+\s*",
+    re.IGNORECASE,
+)
+_REPEAT_PHRASE_RE = re.compile(r"\b(.{2,24}?)(?:\s+\1){3,}\b", re.IGNORECASE)
+
+
+def _strip_leaked_lang_codes(text: str) -> str:
+    return _LANG_CODE_LEAK_RE.sub("", text).strip()
+
+
+def _collapse_translation_loops(text: str) -> str:
+    prev = None
+    while prev != text:
+        prev = text
+        text = _REPEAT_PHRASE_RE.sub(r"\1", text)
+    return _WS_RE.sub(" ", text).strip()
+
+
+def _looks_like_latin_script(text: str) -> bool:
+    """True when the text is predominantly Latin letters (English output check)."""
+    if not text or not text.strip():
+        return False
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    latin = sum(1 for c in letters if ("a" <= c.lower() <= "z") or ("A" <= c <= "Z"))
+    return (latin / len(letters)) >= 0.75
+
+
+def _is_mostly_english_sentence(sentence: str) -> bool:
+    en, fi = _language_scores(sentence)
+    # Strong Filipino signal → needs translation.
+    if fi >= 0.12 and fi > en:
+        return False
+    tokens = re.findall(r"[A-Za-zÀ-ÿ']+", sentence)
+    if not tokens:
+        return _looks_like_latin_script(sentence)
+    # Default: Latin meeting speech without Filipino markers stays as English.
+    return en >= fi
+
+
+def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
+    """Translate meeting transcript into English only.
+
+    Strategy:
+    1. Keep already-English sentences as-is (avoids broken en→en / tl→en paths).
+    2. Translate non-English sentences with a reliable mBART source (id_ID for hil/tl).
+    3. Validate Latin script; retry with Indonesian source if needed.
+    """
+    sentences = _split_sentences(_WS_RE.sub(" ", text).strip())
+    if not sentences:
+        return "", "none"
+
+    kept: list[str] = []
+    to_translate: list[tuple[int, str]] = []
+    for i, sent in enumerate(sentences):
+        if _is_mostly_english_sentence(sent):
+            kept.append(sent)
+        else:
+            kept.append("")  # placeholder
+            to_translate.append((i, sent))
+
+    if not to_translate:
+        return " ".join(s for s in kept if s).strip(), "passthrough-english"
+
+    # Prefer Indonesian source for Philippine languages — tl_XX emits Pashto.
+    src_candidates = []
+    primary = (source_language or "en").strip().lower()
+    if primary in {"hil", "tl", "id"}:
+        src_candidates = ["id", "en"]
+    elif primary == "en":
+        src_candidates = ["id", "en"]
+    else:
+        src_candidates = [primary, "id"]
+
+    translated_map: dict[int, str] = {}
+    # Batch non-English sentences for fewer model calls.
+    bundle = " ".join(s for _, s in to_translate)
+    last_err = None
+    for src in src_candidates:
+        try:
+            out = _mbart_translate(bundle, src, "en")
+            if not _looks_like_latin_script(out):
+                raise _NonEnglishTranslation(out)
+            # If one sentence, map directly; if many, re-translate per sentence
+            # for alignment fidelity.
+            if len(to_translate) == 1:
+                translated_map[to_translate[0][0]] = out
+            else:
+                for idx, sent in to_translate:
+                    piece = _mbart_translate(sent, src, "en")
+                    if not _looks_like_latin_script(piece):
+                        raise _NonEnglishTranslation(piece)
+                    translated_map[idx] = piece
+            break
+        except _NonEnglishTranslation as exc:
+            last_err = exc
+            logger.warning("English translation via src=%s failed script check.", src)
+            continue
+
+    if len(translated_map) != len(to_translate):
+        # Last resort: leave untranslated Filipino text rather than wrong script.
+        logger.error(
+            "mBART could not produce English (last=%s); keeping source clauses.",
+            last_err,
+        )
+        for idx, sent in to_translate:
+            translated_map.setdefault(idx, sent)
+
+    merged = []
+    for i, sent in enumerate(kept):
+        merged.append(translated_map.get(i, sent))
+    return " ".join(s for s in merged if s).strip(), "mbart-large-50"
 
 
 def translate(text: str, target_language: str, source_language: str = "en") -> tuple[str, str]:
     text = (text or "").strip()
     if not text:
         return "", "none"
-    return _mbart_translate(text, source_language, target_language), "mbart-large-50"
+    tgt = (target_language or "en").strip().lower()
+    if tgt == "en":
+        return _translate_to_english(text, source_language)
+    return _mbart_translate(text, source_language, tgt), "mbart-large-50"
 
 
 def invoke_llm(task: str, text: str, **kwargs):
