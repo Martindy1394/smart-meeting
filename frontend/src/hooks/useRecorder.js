@@ -52,6 +52,42 @@ export function useRecorder({ onFinalTranscript } = {}) {
     streamRef.current = null;
   }, []);
 
+  /** Flush remaining PCM from the worklet, then tear down capture. */
+  const flushAndCleanupAudio = useCallback(() => {
+    return new Promise((resolve) => {
+      const node = workletNodeRef.current;
+      if (!node) {
+        cleanupAudio();
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanupAudio();
+        resolve();
+      };
+      const prevHandler = node.port.onmessage;
+      const timeout = setTimeout(finish, 300);
+      node.port.onmessage = (event) => {
+        if (event.data && event.data.type === "flushed") {
+          clearTimeout(timeout);
+          finish();
+          return;
+        }
+        // Keep forwarding PCM while flush completes.
+        if (prevHandler) prevHandler(event);
+      };
+      try {
+        node.port.postMessage({ type: "flush" });
+      } catch {
+        clearTimeout(timeout);
+        finish();
+      }
+    });
+  }, [cleanupAudio]);
+
   const buildWsUrl = useCallback((meetingId) => {
     const token = getToken();
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -142,7 +178,9 @@ export function useRecorder({ onFinalTranscript } = {}) {
           audio: {
             channelCount: 1,
             echoCancellation: true,
-            noiseSuppression: true,
+            // Browser noise suppression can smear consonants Whisper needs.
+            noiseSuppression: false,
+            autoGainControl: true,
           },
         });
       } catch (err) {
@@ -176,14 +214,18 @@ export function useRecorder({ onFinalTranscript } = {}) {
       const node = new AudioWorkletNode(audioCtx, "pcm-worklet");
       workletNodeRef.current = node;
       node.port.onmessage = (event) => {
+        if (event.data && event.data.type === "flushed") return;
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(event.data);
         }
       };
       source.connect(node);
-      // Keep the node processing without routing audio to speakers.
-      node.connect(audioCtx.destination);
+      // Keep the worklet in the graph without audible playback (avoids AEC feedback).
+      const silent = audioCtx.createGain();
+      silent.gain.value = 0;
+      node.connect(silent);
+      silent.connect(audioCtx.destination);
 
       // 2) WebSocket stream.
       openSocket(meetingId);
@@ -196,7 +238,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
     [cleanupAudio, openSocket]
   );
 
-  const stop = useCallback(() => {
+  const stop = useCallback(async () => {
     stoppingRef.current = true;
     reconnectRef.current.active = false;
     if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
@@ -206,12 +248,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
     }
     setRecording(false);
     setStatus("finalizing");
-    cleanupAudio();
+    // Flush trailing PCM (~up to 0.25s) before tearing down the mic graph.
+    await flushAndCleanupAudio();
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop" }));
     }
-  }, [cleanupAudio]);
+  }, [flushAndCleanupAudio]);
 
   useEffect(() => {
     return () => {

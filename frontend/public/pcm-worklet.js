@@ -3,7 +3,7 @@
 // thread. Using an AudioWorklet (rather than MediaRecorder) gives us raw PCM
 // with no server-side WebM/Opus decoding and minimal latency.
 class PCMWorkletProcessor extends AudioWorkletProcessor {
-  constructor(options) {
+  constructor() {
     super();
     this.targetSampleRate = 16000;
     this.inputSampleRate = sampleRate; // global provided by AudioWorkletGlobalScope
@@ -11,25 +11,48 @@ class PCMWorkletProcessor extends AudioWorkletProcessor {
     this._buffer = [];
     // Emit roughly every ~0.25s worth of 16k samples to keep chunks small.
     this._emitEvery = 4096;
+    this.port.onmessage = (event) => {
+      if (event.data && event.data.type === "flush") {
+        this._flush();
+      }
+    };
   }
 
+  _emit(samples) {
+    if (!samples.length) return;
+    const pcm = new Int16Array(samples.length);
+    for (let i = 0; i < samples.length; i++) {
+      let s = Math.max(-1, Math.min(1, samples[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    this.port.postMessage(pcm.buffer, [pcm.buffer]);
+  }
+
+  _flush() {
+    if (this._buffer.length === 0) {
+      this.port.postMessage({ type: "flushed" });
+      return;
+    }
+    const slice = this._buffer.splice(0, this._buffer.length);
+    this._emit(slice);
+    this.port.postMessage({ type: "flushed" });
+  }
+
+  // Linear-interpolation resampler — more accurate than block averaging when
+  // the hardware rate is not an integer multiple of 16 kHz (e.g. 44.1 kHz).
   _downsample(input) {
     if (this.ratio <= 1) {
       return input;
     }
     const outLength = Math.floor(input.length / this.ratio);
+    if (outLength <= 0) return new Float32Array(0);
     const out = new Float32Array(outLength);
-    let pos = 0;
     for (let i = 0; i < outLength; i++) {
-      const start = Math.floor(i * this.ratio);
-      const end = Math.floor((i + 1) * this.ratio);
-      let sum = 0;
-      let count = 0;
-      for (let j = start; j < end && j < input.length; j++) {
-        sum += input[j];
-        count++;
-      }
-      out[pos++] = count > 0 ? sum / count : 0;
+      const src = i * this.ratio;
+      const i0 = Math.floor(src);
+      const i1 = Math.min(i0 + 1, input.length - 1);
+      const frac = src - i0;
+      out[i] = input[i0] * (1 - frac) + input[i1] * frac;
     }
     return out;
   }
@@ -49,12 +72,7 @@ class PCMWorkletProcessor extends AudioWorkletProcessor {
     }
     while (this._buffer.length >= this._emitEvery) {
       const slice = this._buffer.splice(0, this._emitEvery);
-      const pcm = new Int16Array(slice.length);
-      for (let i = 0; i < slice.length; i++) {
-        let s = Math.max(-1, Math.min(1, slice[i]));
-        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      this.port.postMessage(pcm.buffer, [pcm.buffer]);
+      this._emit(slice);
     }
     return true;
   }
