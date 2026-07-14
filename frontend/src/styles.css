@@ -663,6 +663,21 @@ select.inline {
   font-weight: 700;
   font-size: 18px;
 }
+.mic-meter {
+  width: 88px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: inline-block;
+}
+.mic-meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--success);
+  transition: width 0.1s linear;
+}
 
 /* Mobile responsive */
 @media (max-width: 860px) {

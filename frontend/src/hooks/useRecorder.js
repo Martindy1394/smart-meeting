@@ -11,10 +11,12 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const [transcriptionAvailable, setTranscriptionAvailable] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [connectionState, setConnectionState] = useState("disconnected");
+  const [micLevel, setMicLevel] = useState(0);
 
   const wsRef = useRef(null);
   const audioCtxRef = useRef(null);
   const workletNodeRef = useRef(null);
+  const silentGainRef = useRef(null);
   const sourceRef = useRef(null);
   const streamRef = useRef(null);
   const liveSegmentsRef = useRef({});
@@ -22,6 +24,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const meetingIdRef = useRef(null);
   const reconnectRef = useRef({ attempts: 0, timer: null, active: false });
   const stoppingRef = useRef(false);
+  const lowLevelSinceRef = useRef(0);
 
   const composeLive = useCallback(() => {
     const keys = Object.keys(liveSegmentsRef.current)
@@ -36,6 +39,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         workletNodeRef.current.port.onmessage = null;
         workletNodeRef.current.disconnect();
       }
+      if (silentGainRef.current) silentGainRef.current.disconnect();
       if (sourceRef.current) sourceRef.current.disconnect();
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
         audioCtxRef.current.close();
@@ -47,6 +51,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
       /* ignore */
     }
     workletNodeRef.current = null;
+    silentGainRef.current = null;
     sourceRef.current = null;
     audioCtxRef.current = null;
     streamRef.current = null;
@@ -83,13 +88,15 @@ export function useRecorder({ onFinalTranscript } = {}) {
         if (data.type === "status") {
           setTranscriptionAvailable(data.transcription_available);
           setMessage(data.message || "");
+        } else if (data.type === "warning") {
+          setMessage(data.message || "");
         } else if (data.type === "live_segment") {
           liveSegmentsRef.current[data.seq] = data.text;
           setLiveText(composeLive());
+          setMessage("");
         } else if (data.type === "finalizing") {
           setStatus("finalizing");
         } else if (data.type === "final_transcript") {
-          // Two-pass: clear live fragments, surface the finalized transcript.
           liveSegmentsRef.current = {};
           setLiveText("");
           setStatus("idle");
@@ -102,7 +109,6 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
       ws.onclose = () => {
         setConnectionState("disconnected");
-        // Reconnect only if we are actively recording (unexpected drop).
         if (reconnectRef.current.active && !stoppingRef.current) {
           const attempts = ++reconnectRef.current.attempts;
           if (attempts <= 5) {
@@ -130,19 +136,21 @@ export function useRecorder({ onFinalTranscript } = {}) {
     async (meetingId) => {
       setMessage("");
       setLiveText("");
+      setMicLevel(0);
       liveSegmentsRef.current = {};
       meetingIdRef.current = meetingId;
       stoppingRef.current = false;
+      lowLevelSinceRef.current = 0;
       reconnectRef.current = { attempts: 0, timer: null, active: true };
 
-      // 1) Microphone + AudioWorklet.
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
             echoCancellation: true,
-            noiseSuppression: true,
+            noiseSuppression: false,
+            autoGainControl: true,
           },
         });
       } catch (err) {
@@ -153,10 +161,19 @@ export function useRecorder({ onFinalTranscript } = {}) {
       streamRef.current = stream;
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx();
+      const audioCtx = new AudioCtx({ sampleRate: 48000 });
       audioCtxRef.current = audioCtx;
+      if (audioCtx.state === "suspended") {
+        try {
+          await audioCtx.resume();
+        } catch {
+          /* ignore */
+        }
+      }
+
       try {
-        await audioCtx.audioWorklet.addModule("/pcm-worklet.js");
+        // Cache-bust so worklet updates are always picked up.
+        await audioCtx.audioWorklet.addModule(`/pcm-worklet.js?v=${Date.now()}`);
       } catch (err) {
         setStatus("error");
         setMessage("Failed to initialize audio processor.");
@@ -168,17 +185,38 @@ export function useRecorder({ onFinalTranscript } = {}) {
       sourceRef.current = source;
       const node = new AudioWorkletNode(audioCtx, "pcm-worklet");
       workletNodeRef.current = node;
+
+      // Keep the graph alive without playing mic audio through speakers.
+      const silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0;
+      silentGainRef.current = silentGain;
+
       node.port.onmessage = (event) => {
+        const payload = event.data;
+        if (payload && payload.type === "level") {
+          setMicLevel(payload.rms || 0);
+          if ((payload.rms || 0) < 0.002) {
+            if (!lowLevelSinceRef.current) lowLevelSinceRef.current = Date.now();
+            else if (Date.now() - lowLevelSinceRef.current > 2500) {
+              setMessage(
+                "Mic level is very low — check the correct input device and permissions."
+              );
+            }
+          } else {
+            lowLevelSinceRef.current = 0;
+          }
+          return;
+        }
         const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(event.data);
+        if (ws && ws.readyState === WebSocket.OPEN && payload) {
+          ws.send(payload);
         }
       };
-      source.connect(node);
-      // Keep the node processing without routing audio to speakers.
-      node.connect(audioCtx.destination);
 
-      // 2) WebSocket stream.
+      source.connect(node);
+      node.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
+
       openSocket(meetingId);
 
       setRecording(true);
@@ -225,6 +263,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
     transcriptionAvailable,
     elapsed,
     connectionState,
+    micLevel,
     start,
     stop,
   };

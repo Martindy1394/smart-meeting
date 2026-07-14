@@ -38,8 +38,12 @@ logger = logging.getLogger("smart_meeting.ws")
 
 router = APIRouter()
 
-# Process live captions once we have accumulated ~2 seconds of audio.
-_LIVE_WINDOW_SECONDS = 2.0
+# Process live captions in sequential windows (no overlap) so the UI can
+# append each caption without repeating the same speech twice.
+_LIVE_WINDOW_SECONDS = 2.5
+_LIVE_HOP_SECONDS = 2.5
+# Warn the client when the mic signal is effectively silent.
+_SILENCE_RMS = 5e-4
 
 
 async def _send(ws: WebSocket, payload: dict) -> None:
@@ -144,6 +148,9 @@ async def transcribe_ws(websocket: WebSocket):
     window = bytearray()
     seq = 0
     bytes_per_window = int(_LIVE_WINDOW_SECONDS * settings.audio_sample_rate * 2)
+    bytes_per_hop = int(_LIVE_HOP_SECONDS * settings.audio_sample_rate * 2)
+    silence_warned = False
+    last_live_text = ""
 
     try:
         while True:
@@ -158,28 +165,47 @@ async def transcribe_ws(websocket: WebSocket):
                 window.extend(data)
                 if live_available and len(window) >= bytes_per_window:
                     chunk = bytes(window)
-                    window.clear()
+                    # Keep overlap for the next live pass.
+                    keep = max(0, len(window) - bytes_per_hop)
+                    window[:] = window[-keep:] if keep else b""
                     seq += 1
                     current_seq = seq
                     try:
                         samples = audio.pcm16_to_float32(chunk)
-                        segs = await asyncio.to_thread(
-                            transcription.transcribe_live, samples, language
-                        )
-                        text = " ".join(s.text for s in segs).strip()
-                        if text:
-                            await _send(
-                                websocket,
-                                {
-                                    "type": "live_segment",
-                                    "seq": current_seq,
-                                    "text": text,
-                                    "start": segs[0].start if segs else 0.0,
-                                    "end": segs[-1].end if segs else 0.0,
-                                },
+                        rms = audio.rms_level(samples)
+                        if rms < _SILENCE_RMS:
+                            if not silence_warned:
+                                silence_warned = True
+                                await _send(
+                                    websocket,
+                                    {
+                                        "type": "warning",
+                                        "message": (
+                                            "Microphone signal is very quiet or silent. "
+                                            "Check mic permissions, input device, and volume."
+                                        ),
+                                    },
+                                )
+                        else:
+                            silence_warned = False
+                            segs = await asyncio.to_thread(
+                                transcription.transcribe_live, samples, language
                             )
-                            # Persist the live caption for resilience.
-                            _persist_live_segment(meeting_id, current_seq, text)
+                            text = " ".join(s.text for s in segs).strip()
+                            # Skip duplicate captions from overlapping windows.
+                            if text and text != last_live_text:
+                                last_live_text = text
+                                await _send(
+                                    websocket,
+                                    {
+                                        "type": "live_segment",
+                                        "seq": current_seq,
+                                        "text": text,
+                                        "start": segs[0].start if segs else 0.0,
+                                        "end": segs[-1].end if segs else 0.0,
+                                    },
+                                )
+                                _persist_live_segment(meeting_id, current_seq, text)
                     except Exception as exc:  # keep the stream alive on model errors
                         logger.exception("Live transcription error: %s", exc)
                 continue

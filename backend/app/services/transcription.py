@@ -121,20 +121,36 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     """Fast, low-latency transcription of a short audio window (live captions).
 
     ``pcm`` must be mono float32 in [-1, 1] at ``settings.audio_sample_rate``.
+    Live mode disables VAD (too aggressive on short/quiet windows) and
+    peak-normalizes the chunk first so captions keep flowing.
     """
+    from . import audio as audio_util
+
     model = _cache.get(settings.whisper_live_model)
     lang = _cache.resolve_language(language or settings.whisper_default_language)
+    samples = audio_util.normalize_audio(np.asarray(pcm, dtype=np.float32))
+    if audio_util.rms_level(samples) < 1e-4:
+        return []
     segments, _info = model.transcribe(
-        pcm,
+        samples,
         language=lang,
         beam_size=1,
         best_of=1,
         temperature=0.0,
-        vad_filter=True,
+        # Short live windows + quiet mics: VAD often wipes the entire chunk.
+        vad_filter=False,
         condition_on_previous_text=False,
-        without_timestamps=False,
+        without_timestamps=True,
+        # Suppress hallucinations on near-silence / noise.
+        no_speech_threshold=0.6,
+        compression_ratio_threshold=2.4,
     )
-    return [Segment(text=s.text.strip(), start=s.start, end=s.end) for s in segments]
+    out: list[Segment] = []
+    for s in segments:
+        text = (s.text or "").strip()
+        if text:
+            out.append(Segment(text=text, start=float(s.start or 0.0), end=float(s.end or 0.0)))
+    return out
 
 
 def transcribe_final(audio_source, language: str | None) -> list[Segment]:
@@ -142,8 +158,14 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
 
     ``audio_source`` may be a file path (str) or a float32 numpy array.
     """
+    from . import audio as audio_util
+
     model = _cache.get(settings.whisper_final_model)
     lang = _cache.resolve_language(language or settings.whisper_default_language)
+
+    if isinstance(audio_source, np.ndarray):
+        audio_source = audio_util.normalize_audio(np.asarray(audio_source, dtype=np.float32))
+
     segments, _info = model.transcribe(
         audio_source,
         language=lang,
@@ -151,7 +173,18 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
         best_of=5,
         temperature=0.0,
         vad_filter=True,
+        # Softer VAD so quieter speech is kept after normalization.
+        vad_parameters={
+            "threshold": 0.35,
+            "min_speech_duration_ms": 150,
+            "min_silence_duration_ms": 400,
+            "speech_pad_ms": 400,
+        },
         condition_on_previous_text=True,
         without_timestamps=False,
     )
-    return [Segment(text=s.text.strip(), start=s.start, end=s.end) for s in segments]
+    return [
+        Segment(text=s.text.strip(), start=s.start, end=s.end)
+        for s in segments
+        if (s.text or "").strip()
+    ]

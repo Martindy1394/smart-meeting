@@ -200,6 +200,9 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       {!recorder.transcriptionAvailable && recorder.message && (
         <div className="banner-warn">{recorder.message}</div>
       )}
+      {recorder.transcriptionAvailable && recorder.message && recorder.recording && (
+        <div className="banner-warn">{recorder.message}</div>
+      )}
       {recorder.status === "error" && recorder.message && (
         <div className="error-banner">{recorder.message}</div>
       )}
@@ -266,6 +269,17 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
           <>
             <span className="dot-live" />
             <span className="timer">{fmtTime(recorder.elapsed)}</span>
+            <span
+              className="mic-meter"
+              title={`Mic level ${(recorder.micLevel * 100).toFixed(1)}%`}
+            >
+              <span
+                className="mic-meter-fill"
+                style={{
+                  width: `${Math.min(100, Math.max(4, recorder.micLevel * 400))}%`,
+                }}
+              />
+            </span>
           </>
         )}
         {recorder.status === "finalizing" && (
