@@ -1,0 +1,13 @@
+# Heavy ML dependencies for the real Whisper / BART / mBART pipeline.
+# Installed separately from core requirements so the application can boot and be
+# exercised (auth, meetings, websockets, UI) even on machines that cannot host
+# multi-gigabyte model weights. Every ML import in the codebase is lazy, so the
+# app degrades gracefully when these packages are absent.
+
+# Whisper transcription (live + full-accuracy finalization pass)
+faster-whisper==1.1.0
+
+# BART summarization + mBART translation
+transformers==4.47.1
+torch==2.5.1
+sentencepiece==0.2.0
