@@ -198,6 +198,8 @@ export default function MeetingRoom({ meeting, onMeetingUpdated }) {
           Details also save automatically when recording finishes
         </span>
       </div>
+
+      <div className="cards">
         {/* Transcript card */}
         <div className="card">
           <div className="card-head">
