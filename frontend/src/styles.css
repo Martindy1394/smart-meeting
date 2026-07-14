@@ -228,9 +228,10 @@ button {
   padding: 12px;
   border-radius: 10px;
   border: 1px solid transparent;
-  cursor: pointer;
-  margin-bottom: 4px;
-  position: relative;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 .meeting-item:hover {
   background: var(--surface-2);
@@ -239,13 +240,15 @@ button {
   background: var(--surface-2);
   border-color: var(--border);
 }
+.meeting-item-body {
+  min-width: 0;
+}
 .meeting-item .title {
   font-weight: 600;
   font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 20px;
 }
 .meeting-item .meta {
   font-size: 12px;
@@ -254,26 +257,27 @@ button {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
-.meeting-item .del {
-  position: absolute;
-  top: 10px;
-  right: 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 16px;
-  line-height: 1;
-  padding: 2px 6px;
-  border-radius: 6px;
-  opacity: 0;
+.meeting-item-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
-.meeting-item:hover .del {
-  opacity: 1;
+.meeting-action-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 30px;
 }
-.meeting-item .del:hover {
+.meeting-remove-btn {
   color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.25);
+}
+.meeting-remove-btn:hover {
   background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
 }
 .sidebar-footer {
   border-top: 1px solid var(--border);

@@ -71,34 +71,41 @@ export default function Sidebar({
               <div
                 key={m.id}
                 className={`meeting-item ${m.id === activeId ? "active" : ""}`}
-                onClick={() => {
-                  onSelect(m.id);
-                  onClose && onClose();
-                }}
               >
-                <div className="title">{m.title || "Untitled meeting"}</div>
-                <div className="meta">
-                  <span>{fmtDate(m.meeting_date || m.created_at)}</span>
-                  {m.status === "finalized" && (
-                    <span className="badge refined">Refined</span>
-                  )}
-                  {m.status === "processing" && (
-                    <span className="badge processing">Processing</span>
-                  )}
-                  {m.status === "recording" && (
-                    <span className="badge">Draft</span>
-                  )}
+                <div className="meeting-item-body">
+                  <div className="title">{m.title || "Untitled meeting"}</div>
+                  <div className="meta">
+                    <span>{fmtDate(m.meeting_date || m.created_at)}</span>
+                    {m.status === "finalized" && (
+                      <span className="badge refined">Refined</span>
+                    )}
+                    {m.status === "processing" && (
+                      <span className="badge processing">Processing</span>
+                    )}
+                    {m.status === "recording" && (
+                      <span className="badge">Draft</span>
+                    )}
+                  </div>
                 </div>
-                <button
-                  className="del"
-                  title="Delete meeting"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(m.id);
-                  }}
-                >
-                  ×
-                </button>
+                <div className="meeting-item-actions">
+                  <button
+                    type="button"
+                    className="btn secondary meeting-action-btn"
+                    onClick={() => {
+                      onSelect(m.id);
+                      onClose && onClose();
+                    }}
+                  >
+                    Open
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost meeting-action-btn meeting-remove-btn"
+                    onClick={() => onDelete(m.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             ))
           )}

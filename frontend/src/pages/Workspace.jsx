@@ -69,7 +69,7 @@ export default function Workspace() {
 
   const deleteMeeting = useCallback(
     async (id) => {
-      if (!window.confirm("Delete this meeting permanently?")) return;
+      if (!window.confirm("Remove this meeting permanently?")) return;
       try {
         await api.deleteMeeting(id);
         if (id === activeId) {
