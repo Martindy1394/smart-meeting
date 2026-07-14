@@ -454,6 +454,47 @@ button {
   gap: 8px;
   align-items: center;
 }
+.recordings-panel .recording-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  flex-wrap: wrap;
+}
+.recording-row-main {
+  min-width: 0;
+  flex: 1;
+}
+.recording-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+.recording-player {
+  margin-top: 12px;
+  max-width: 420px;
+}
+.recording-transcript-preview {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.recording-transcript-preview p {
+  margin: 6px 0 0;
+  color: var(--text);
+}
 
 .main {
   overflow-y: auto;

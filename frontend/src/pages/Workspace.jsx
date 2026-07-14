@@ -2,20 +2,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import HistoryPanel from "../components/HistoryPanel.jsx";
 import MeetingRoom from "../components/MeetingRoom.jsx";
+import RecordingsPanel from "../components/RecordingsPanel.jsx";
 import SettingsPanel from "../components/SettingsPanel.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 
 export default function Workspace() {
   const [section, setSection] = useState("history");
   const [meetings, setMeetings] = useState([]);
+  const [recordings, setRecordings] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [loadingRecordings, setLoadingRecordings] = useState(false);
   const [search, setSearch] = useState("");
+  const [recordingSearch, setRecordingSearch] = useState("");
   const [activeId, setActiveId] = useState(null);
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loadingMeeting, setLoadingMeeting] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [saveControls, setSaveControls] = useState(null);
   const searchTimer = useRef(null);
+  const recordingSearchTimer = useRef(null);
 
   const loadMeetings = useCallback(async (q) => {
     setLoadingList(true);
@@ -29,16 +34,45 @@ export default function Workspace() {
     }
   }, []);
 
+  const loadRecordings = useCallback(async (q) => {
+    setLoadingRecordings(true);
+    try {
+      const list = await api.listMeetings(q, { hasAudio: true });
+      setRecordings(list);
+    } catch {
+      setRecordings([]);
+    } finally {
+      setLoadingRecordings(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadMeetings("");
   }, [loadMeetings]);
 
-  // Debounced search.
+  useEffect(() => {
+    if (section === "recordings") {
+      loadRecordings(recordingSearch);
+    }
+  }, [section, loadRecordings]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced search for history.
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => loadMeetings(search), 300);
     return () => clearTimeout(searchTimer.current);
   }, [search, loadMeetings]);
+
+  // Debounced search for recordings.
+  useEffect(() => {
+    if (section !== "recordings") return undefined;
+    if (recordingSearchTimer.current) clearTimeout(recordingSearchTimer.current);
+    recordingSearchTimer.current = setTimeout(
+      () => loadRecordings(recordingSearch),
+      300
+    );
+    return () => clearTimeout(recordingSearchTimer.current);
+  }, [recordingSearch, loadRecordings, section]);
 
   const selectMeeting = useCallback(async (id) => {
     setSection("meeting");
@@ -67,10 +101,11 @@ export default function Workspace() {
       setActiveId(detail.id);
       setActiveMeeting(detail);
       loadMeetings(search);
+      loadRecordings(recordingSearch);
     } catch {
       /* ignore */
     }
-  }, [loadMeetings, search]);
+  }, [loadMeetings, loadRecordings, search, recordingSearch]);
 
   const deleteMeeting = useCallback(
     async (id) => {
@@ -84,11 +119,12 @@ export default function Workspace() {
           setSection("history");
         }
         loadMeetings(search);
+        loadRecordings(recordingSearch);
       } catch {
         /* ignore */
       }
     },
-    [activeId, loadMeetings, search]
+    [activeId, loadMeetings, loadRecordings, search, recordingSearch]
   );
 
   const refreshActive = useCallback(
@@ -104,18 +140,20 @@ export default function Workspace() {
         }
       }
       loadMeetings(search);
+      loadRecordings(recordingSearch);
     },
-    [activeId, loadMeetings, search]
+    [activeId, loadMeetings, loadRecordings, search, recordingSearch]
   );
 
   const showSettings = section === "settings";
   const showHistory = section === "history";
+  const showRecordings = section === "recordings";
   const showMeeting = section === "meeting";
 
   return (
     <div className="app-shell">
       <Sidebar
-        section={section === "meeting" ? "history" : section}
+        section={section}
         onSectionChange={setSection}
         onCreate={createMeeting}
         open={sidebarOpen}
@@ -136,9 +174,11 @@ export default function Workspace() {
                 ? "Settings"
                 : showHistory
                   ? "History"
-                  : activeMeeting
-                    ? activeMeeting.title || "Untitled meeting"
-                    : "Smart Meeting"}
+                  : showRecordings
+                    ? "Recordings"
+                    : activeMeeting
+                      ? activeMeeting.title || "Untitled meeting"
+                      : "Smart Meeting"}
             </h1>
           </div>
           {showMeeting && activeMeeting && saveControls && (
@@ -167,6 +207,16 @@ export default function Workspace() {
             onDelete={deleteMeeting}
             onCreate={createMeeting}
           />
+        ) : showRecordings ? (
+          <RecordingsPanel
+            recordings={recordings}
+            loading={loadingRecordings}
+            search={recordingSearch}
+            onSearch={setRecordingSearch}
+            onOpen={selectMeeting}
+            onDelete={deleteMeeting}
+            onRefresh={() => loadRecordings(recordingSearch)}
+          />
         ) : loadingMeeting ? (
           <div className="center-spin">
             <span className="spinner" /> Loading meeting…
@@ -184,8 +234,8 @@ export default function Workspace() {
             <h2>Welcome to Smart Meeting</h2>
             <p>
               Create a new meeting to start live transcription, then summarize
-              and translate the results. Open History anytime to revisit saved
-              records.
+              and translate the results. Open History or Recordings anytime to
+              revisit saved work.
             </p>
             <button className="btn" onClick={createMeeting}>
               + New meeting

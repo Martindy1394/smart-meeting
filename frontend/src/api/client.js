@@ -65,12 +65,20 @@ export const api = {
   updateProfile: (payload) => request("/auth/me", { method: "PATCH", body: payload }),
 
   // Meetings
-  listMeetings: (search) =>
-    request(`/meetings${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  listMeetings: (search, { hasAudio } = {}) => {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (hasAudio === true) params.set("has_audio", "true");
+    if (hasAudio === false) params.set("has_audio", "false");
+    const qs = params.toString();
+    return request(`/meetings${qs ? `?${qs}` : ""}`);
+  },
   createMeeting: (payload) => request("/meetings", { method: "POST", body: payload }),
   getMeeting: (id) => request(`/meetings/${id}`),
   updateMeeting: (id, payload) => request(`/meetings/${id}`, { method: "PATCH", body: payload }),
   deleteMeeting: (id) => request(`/meetings/${id}`, { method: "DELETE" }),
+  retranscribeMeeting: (id) =>
+    request(`/meetings/${id}/retranscribe`, { method: "POST" }),
   /**
    * Fetch meeting audio as a blob URL for <audio> playback.
    * Returns null when no recording exists yet.
@@ -86,6 +94,24 @@ export const api = {
     }
     const blob = await res.blob();
     return URL.createObjectURL(blob);
+  },
+  downloadMeetingAudio: async (id, filename = "recording.wav") => {
+    const token = getToken();
+    const res = await fetch(`/api/meetings/${id}/audio?download=true`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      throw new ApiError("Could not download meeting audio.", res.status);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename.endsWith(".wav") ? filename : `${filename}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 
   // AI

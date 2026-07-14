@@ -71,6 +71,7 @@ def _to_detail(m: Meeting) -> MeetingDetail:
 @router.get("", response_model=list[MeetingSummary])
 def list_meetings(
     search: str | None = Query(default=None),
+    has_audio: bool | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -79,7 +80,12 @@ def list_meetings(
         pattern = f"%{search.strip()}%"
         query = query.filter(or_(Meeting.title.ilike(pattern)))
     meetings = query.order_by(Meeting.created_at.desc()).all()
-    return [_to_summary(m) for m in meetings]
+    summaries = [_to_summary(m) for m in meetings]
+    if has_audio is True:
+        summaries = [s for s in summaries if s.has_audio]
+    elif has_audio is False:
+        summaries = [s for s in summaries if not s.has_audio]
+    return summaries
 
 
 @router.post("", response_model=MeetingDetail, status_code=status.HTTP_201_CREATED)
@@ -116,10 +122,11 @@ def get_meeting(
 @router.get("/{meeting_id}/audio")
 def get_meeting_audio(
     meeting_id: str,
+    download: bool = Query(default=False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Stream the saved WAV recording for playback in the UI."""
+    """Stream the saved WAV recording for playback or download."""
     meeting = _get_owned_meeting(meeting_id, current_user, db)
     if not _has_audio(meeting):
         raise HTTPException(
@@ -127,12 +134,83 @@ def get_meeting_audio(
             detail="No audio recording is available for this meeting yet.",
         )
     path = os.path.abspath(meeting.audio_path)
+    safe_title = (meeting.title or "meeting").strip() or "meeting"
+    safe_title = "".join(ch if ch.isalnum() or ch in " -_" else "_" for ch in safe_title)
     return FileResponse(
         path=path,
         media_type="audio/wav",
-        filename=f"{meeting.title or 'meeting'}.wav",
-        content_disposition_type="inline",
+        filename=f"{safe_title}.wav",
+        content_disposition_type="attachment" if download else "inline",
     )
+
+
+@router.post("/{meeting_id}/retranscribe", response_model=MeetingDetail)
+def retranscribe_meeting(
+    meeting_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-run Whisper final transcription on the saved WAV recording."""
+    from ..models import TranscriptSegment
+    from ..services import transcription
+
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    if not _has_audio(meeting):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No audio recording is available to transcribe.",
+        )
+    if not transcription.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Whisper is not available on this server.",
+        )
+
+    meeting.status = "processing"
+    db.commit()
+
+    path = os.path.abspath(meeting.audio_path)
+    try:
+        segments = transcription.transcribe_final(path, meeting.language or "hil")
+    except transcription.TranscriptionUnavailable as exc:
+        meeting.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        )
+    except Exception as exc:
+        meeting.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Transcription failed: {exc}",
+        )
+
+    full_text = " ".join(s.text for s in segments).strip()
+    db.query(TranscriptSegment).filter(
+        TranscriptSegment.meeting_id == meeting_id
+    ).delete()
+    for i, seg in enumerate(segments):
+        db.add(
+            TranscriptSegment(
+                meeting_id=meeting_id,
+                kind="final",
+                text=seg.text,
+                start_time=seg.start,
+                end_time=seg.end,
+                seq=i,
+            )
+        )
+    meeting.final_transcript = full_text
+    # Transcript changed — clear derived AI outputs so they can be regenerated.
+    meeting.summary = ""
+    meeting.summary_format = ""
+    meeting.translation = ""
+    meeting.translation_language = ""
+    meeting.status = "finalized"
+    db.commit()
+    db.refresh(meeting)
+    return _to_detail(meeting)
 
 
 @router.patch("/{meeting_id}", response_model=MeetingDetail)

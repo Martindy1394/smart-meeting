@@ -14,6 +14,9 @@ export default function Sidebar({
     user?.username ||
     "";
 
+  const menuSection =
+    section === "meeting" ? "history" : section;
+
   return (
     <>
       {open && <div className="backdrop" onClick={onClose} />}
@@ -37,7 +40,7 @@ export default function Sidebar({
         <nav className="side-menu" aria-label="Main menu">
           <button
             type="button"
-            className={`side-menu-item ${section === "history" ? "active" : ""}`}
+            className={`side-menu-item ${menuSection === "history" ? "active" : ""}`}
             onClick={() => {
               onSectionChange("history");
               onClose && onClose();
@@ -47,7 +50,17 @@ export default function Sidebar({
           </button>
           <button
             type="button"
-            className={`side-menu-item ${section === "settings" ? "active" : ""}`}
+            className={`side-menu-item ${menuSection === "recordings" ? "active" : ""}`}
+            onClick={() => {
+              onSectionChange("recordings");
+              onClose && onClose();
+            }}
+          >
+            Recordings
+          </button>
+          <button
+            type="button"
+            className={`side-menu-item ${menuSection === "settings" ? "active" : ""}`}
             onClick={() => {
               onSectionChange("settings");
               onClose && onClose();
@@ -58,19 +71,24 @@ export default function Sidebar({
         </nav>
 
         <div className="sidebar-settings-note">
-          {section === "history" ? (
+          {menuSection === "history" ? (
             <p>
               Open <strong>History</strong> in the main panel to browse, search,
               open, or remove all saved meeting records.
             </p>
-          ) : section === "settings" ? (
+          ) : menuSection === "recordings" ? (
+            <p>
+              Open <strong>Recordings</strong> to play, download, or re-transcribe
+              every saved meeting audio file.
+            </p>
+          ) : menuSection === "settings" ? (
             <p>
               View and edit your profile details in the main panel — name,
               position, workplace, working email, username, and password.
             </p>
           ) : (
             <p>
-              Use the menu to switch between saved meeting history and account
+              Use the menu to switch between history, recordings, and account
               settings.
             </p>
           )}
