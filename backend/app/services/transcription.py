@@ -37,9 +37,10 @@ _FINAL_VAD_PARAMS = {
 _WHISPER_TASK = "transcribe"
 _WHISPER_LANGUAGE = "tl"
 
+# Keep this short and non-imperative — Whisper sometimes echoes prompts
+# that look like transcript instructions (e.g. "Transcribe the spoken words…").
 _INITIAL_PROMPT = (
-    "Meeting minutes in Hiligaynon, Filipino, or English. "
-    "Transcribe the spoken words accurately."
+    "Board meeting discussion in Hiligaynon, Filipino, or English."
 )
 
 
@@ -176,7 +177,8 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
         no_speech_threshold=0.2,
         compression_ratio_threshold=3.2,
         log_prob_threshold=-1.5,
-        initial_prompt=_INITIAL_PROMPT,
+        # No initial_prompt on live windows — short/noisy chunks often echo it.
+        initial_prompt=None,
     )
     out: list[Segment] = []
     for s in segments:

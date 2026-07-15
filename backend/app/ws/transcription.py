@@ -310,31 +310,34 @@ async def transcribe_ws(websocket: WebSocket):
             )
             total = redis_store.get_pcm_length(meeting_id)
 
-    async def _keepalive_loop() -> None:
-        interval = max(10.0, float(settings.ws_keepalive_seconds))
-        try:
-            while True:
-                await asyncio.sleep(interval)
-                await _send(
-                    websocket,
-                    {
-                        "type": "ping",
-                        "ts": time.time(),
-                        "pcm_bytes": (
-                            redis_store.get_pcm_length(meeting_id)
-                            if redis_ok
-                            else len(local_pcm)
-                        ),
-                    },
-                )
-        except Exception:
-            return
-
-    keepalive_task = asyncio.create_task(_keepalive_loop())
+    # Keepalive is done in the same task as receive() via wait_for timeout.
+    # A background send task previously raised CancelledError on stop and
+    # aborted finalization before the transcript could be produced.
+    keepalive_interval = max(10.0, float(settings.ws_keepalive_seconds))
 
     try:
         while True:
-            message = await websocket.receive()
+            try:
+                message = await asyncio.wait_for(
+                    websocket.receive(), timeout=keepalive_interval
+                )
+            except asyncio.TimeoutError:
+                try:
+                    await _send(
+                        websocket,
+                        {
+                            "type": "ping",
+                            "ts": time.time(),
+                            "pcm_bytes": (
+                                redis_store.get_pcm_length(meeting_id)
+                                if redis_ok
+                                else len(local_pcm)
+                            ),
+                        },
+                    )
+                except Exception:
+                    break
+                continue
 
             if message.get("type") == "websocket.disconnect":
                 break
@@ -425,12 +428,6 @@ async def transcribe_ws(websocket: WebSocket):
         logger.info("WebSocket disconnected for meeting %s", meeting_id)
     except Exception as exc:  # pragma: no cover - defensive
         logger.exception("WebSocket error: %s", exc)
-    finally:
-        keepalive_task.cancel()
-        try:
-            await keepalive_task
-        except Exception:
-            pass
 
     # Flush leftover live audio (from Redis offset or local window).
     if live_available:
