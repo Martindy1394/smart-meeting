@@ -87,6 +87,9 @@ def health():
         "whisper_live_hop_seconds": settings.whisper_live_hop_seconds,
         "redis_available": redis_ok,
         "redis_url": settings.redis_url if redis_ok else None,
+        "max_meeting_hours": settings.max_meeting_hours,
+        "redis_audio_ttl_seconds": settings.redis_audio_ttl_seconds,
+        "whisper_final_chunk_seconds": settings.whisper_final_chunk_seconds,
         "llm_available": llm.summarizer_available(),
         "environment": settings.environment,
     }

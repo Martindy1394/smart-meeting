@@ -54,7 +54,11 @@ class Settings(BaseSettings):
     # Redis holds live PCM + cached WAV in memory during/after recording.
     redis_url: str = "redis://127.0.0.1:6379/0"
     # TTL for meeting audio keys in Redis (seconds). 0 = no expiry.
-    redis_audio_ttl_seconds: int = 60 * 60 * 24
+    # Default 48h so all-day board meetings (8h+) plus wrap-up stay buffered.
+    redis_audio_ttl_seconds: int = 60 * 60 * 48
+    # Soft cap for a single live recording (hours). Used for warnings / docs;
+    # Redis continues buffering until this limit (0 = unlimited).
+    max_meeting_hours: float = 16.0
 
     # --- Audio / transcription ------------------------------------------
     audio_sample_rate: int = 16000
@@ -76,6 +80,14 @@ class Settings(BaseSettings):
     # Live caption windowing: 10s buffer overlapping by 5s (hop = 5s).
     whisper_live_window_seconds: float = 10.0
     whisper_live_hop_seconds: float = 5.0
+    # Final ASR chunk size for multi-hour recordings (seconds of audio per pass).
+    whisper_final_chunk_seconds: float = 600.0
+    whisper_final_chunk_overlap_seconds: float = 15.0
+    # How often to persist live segments to SQLite during long meetings.
+    # 1 = every window; 12 ≈ once per minute with a 5s hop.
+    live_segment_persist_every: int = 12
+    # WebSocket keepalive interval so proxies don't drop 8h+ sessions.
+    ws_keepalive_seconds: float = 25.0
 
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"

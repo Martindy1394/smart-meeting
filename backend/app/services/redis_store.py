@@ -43,11 +43,14 @@ def get_client():
         return None
 
     try:
+        # Longer socket timeout: multi-hour meetings can hold ~1GB PCM and
+        # need room for large GETRANGE / GET during finalization.
         client = redis.Redis.from_url(
             settings.redis_url,
             decode_responses=False,
             socket_connect_timeout=2.0,
-            socket_timeout=5.0,
+            socket_timeout=120.0,
+            health_check_interval=30,
         )
         client.ping()
         _client = client
@@ -106,16 +109,51 @@ def append_pcm(meeting_id: str, chunk: bytes) -> int:
 
 
 def get_pcm(meeting_id: str) -> bytes:
-    """Return the full recorded PCM for a meeting from Redis (or empty)."""
+    """Return the full recorded PCM for a meeting from Redis (or empty).
+
+    Uses chunked GETRANGE so multi-hour (~GB-scale) buffers do not rely on a
+    single giant GET that can time out.
+    """
     client = get_client()
     if client is None:
         return b""
     try:
-        data = client.get(_pcm_key(meeting_id))
-        return data or b""
+        total = int(client.strlen(_pcm_key(meeting_id)))
+        if total <= 0:
+            return b""
+        # 4 MiB slices — safe for long board-meeting buffers.
+        step = 4 * 1024 * 1024
+        parts: list[bytes] = []
+        start = 0
+        while start < total:
+            end = min(total, start + step) - 1
+            chunk = client.getrange(_pcm_key(meeting_id), start, end)
+            if not chunk:
+                break
+            parts.append(chunk)
+            start += len(chunk)
+        return b"".join(parts)
     except Exception as exc:
         logger.exception("Redis GET pcm failed for meeting %s: %s", meeting_id, exc)
         return b""
+
+
+def iter_pcm_chunks(meeting_id: str, chunk_bytes: int):
+    """Yield successive PCM slices from Redis (for chunked final ASR)."""
+    if chunk_bytes <= 0:
+        data = get_pcm(meeting_id)
+        if data:
+            yield data
+        return
+    total = get_pcm_length(meeting_id)
+    start = 0
+    while start < total:
+        end = min(total, start + chunk_bytes) - 1
+        piece = get_pcm_slice(meeting_id, start, end)
+        if not piece:
+            break
+        yield piece
+        start += len(piece)
 
 
 def get_pcm_length(meeting_id: str) -> int:

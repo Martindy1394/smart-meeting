@@ -274,6 +274,18 @@ def _novel_suffix_from_window(previous_window: str, current_window: str) -> str:
     return " ".join(cur_tokens[start:]).strip()
 
 
+# Only the caption/window *tail* is needed for overlap — critical for 8h+ meetings
+# where the full live caption can be tens of thousands of tokens.
+_CAPTION_TAIL_TOKENS = 80
+
+
+def _tail_text(text: str, max_tokens: int = _CAPTION_TAIL_TOKENS) -> str:
+    toks = _raw_tokens(text)
+    if len(toks) <= max_tokens:
+        return _clean_caption(text)
+    return " ".join(toks[-max_tokens:])
+
+
 def _append_novel(caption: str, novel: str) -> str:
     """Append novel words to the caption without eating earlier text."""
     prev = _clean_caption(caption)
@@ -283,8 +295,8 @@ def _append_novel(caption: str, novel: str) -> str:
     if not prev:
         return addition
 
-    # If the addition is already fully present at the end, keep caption as-is.
-    prev_n = _norm_tokens(prev)
+    # Compare only against the caption tail (keeps merge O(1) for long meetings).
+    prev_n = _norm_tokens(_tail_text(prev))
     add_tokens = _raw_tokens(addition)
     add_pairs: list[tuple[int, str]] = []
     for idx, tok in enumerate(add_tokens):
@@ -332,15 +344,15 @@ def merge_live_caption(
     else:
         novel = ""
 
-    # Fallback: treat the running caption as the overlap anchor.
+    # Fallback: only the caption *tail* — never scan multi-hour history.
     if not novel:
-        novel = _novel_suffix_from_window(prev, cur)
+        novel = _novel_suffix_from_window(_tail_text(prev), cur)
 
     # Last resort: if novel detection failed entirely, append the window only
-    # when it is not already contained in the caption (avoid wipe/replace).
+    # when it is not already at the caption end (avoid wipe/replace).
     if not novel:
         cur_n = _norm_tokens(cur)
-        prev_n = _norm_tokens(prev)
+        prev_n = _norm_tokens(_tail_text(prev))
         if cur_n and any(
             prev_n[i : i + len(cur_n)] == cur_n
             for i in range(0, max(1, len(prev_n) - len(cur_n) + 1))
@@ -458,13 +470,8 @@ def _looks_like_hf_repo(model_id: str) -> bool:
     return "/" in mid or mid.startswith(".") or mid.startswith("/")
 
 
-def transcribe_final(audio_source, language: str | None) -> list[Segment]:
-    """Full-accuracy transcription for Stop Recording / re-transcribe / upload.
-
-    Prefer the configured fine-tuned Hiligaynon (or PH-dialect) Hugging Face
-    Whisper model. Fall back to faster-whisper if that checkpoint cannot load.
-    Always forces ``language="tl"`` and ``task="transcribe"``.
-    """
+def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
+    """Single-shot final ASR (HF fine-tune preferred, faster-whisper fallback)."""
     model_id = hiligaynon_model_id()
     if _looks_like_hf_repo(model_id):
         try:
@@ -479,5 +486,105 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
                 exc,
                 settings.whisper_final_model,
             )
-
     return _transcribe_final_faster_whisper(audio_source, language)
+
+
+def _merge_chunk_segments(
+    all_segments: list[Segment],
+    chunk_segments: list[Segment],
+    *,
+    time_offset: float,
+) -> list[Segment]:
+    """Append chunk segments with timeline offset, dropping overlap duplicates."""
+    shifted = [
+        Segment(text=s.text, start=s.start + time_offset, end=s.end + time_offset)
+        for s in chunk_segments
+        if (s.text or "").strip()
+    ]
+    if not all_segments:
+        return shifted
+    if not shifted:
+        return all_segments
+
+    # Drop leading shifted segments that largely repeat the previous chunk tail.
+    tail_text = " ".join(s.text for s in all_segments[-6:]).strip()
+    tail_n = _norm_tokens(_tail_text(tail_text, 40))
+    keep_from = 0
+    for i, seg in enumerate(shifted):
+        seg_n = _norm_tokens(seg.text)
+        if not seg_n:
+            keep_from = i + 1
+            continue
+        overlap = _token_overlap_size(tail_n, seg_n, min_size=min(3, len(seg_n)))
+        if overlap >= max(3, int(len(seg_n) * 0.7)):
+            keep_from = i + 1
+            tail_n = _norm_tokens(
+                _tail_text(" ".join(s.text for s in all_segments[-6:] + shifted[: keep_from]), 40)
+            )
+            continue
+        break
+    return all_segments + shifted[keep_from:]
+
+
+def transcribe_final(audio_source, language: str | None) -> list[Segment]:
+    """Full-accuracy transcription for Stop Recording / re-transcribe / upload.
+
+    Prefer the configured fine-tuned Hiligaynon (or PH-dialect) Hugging Face
+    Whisper model. Fall back to faster-whisper if that checkpoint cannot load.
+    Always forces ``language="tl"`` and ``task="transcribe"``.
+
+    Long board-meeting audio (hours) is processed in overlapping chunks so the
+    final pass stays within model/memory limits.
+    """
+    samples = _audio_to_float32(audio_source)
+    if samples.size == 0:
+        return []
+
+    sr = int(settings.audio_sample_rate)
+    duration = float(samples.size) / float(sr)
+    chunk_s = max(60.0, float(settings.whisper_final_chunk_seconds))
+    overlap_s = max(0.0, min(float(settings.whisper_final_chunk_overlap_seconds), chunk_s / 2))
+
+    # Short recordings: single pass.
+    if duration <= chunk_s * 1.25:
+        return _transcribe_final_once(samples, language)
+
+    hop_s = max(1.0, chunk_s - overlap_s)
+    chunk_samples = int(chunk_s * sr)
+    hop_samples = int(hop_s * sr)
+    logger.info(
+        "Chunked final ASR for %.1f min audio (chunk=%.0fs overlap=%.0fs)",
+        duration / 60.0,
+        chunk_s,
+        overlap_s,
+    )
+
+    all_segments: list[Segment] = []
+    offset = 0
+    chunk_idx = 0
+    while offset < samples.size:
+        end = min(samples.size, offset + chunk_samples)
+        piece = samples[offset:end]
+        if piece.size < int(0.4 * sr):
+            break
+        chunk_idx += 1
+        time_offset = offset / float(sr)
+        logger.info(
+            "Final ASR chunk %d (%.1f–%.1f min)",
+            chunk_idx,
+            time_offset / 60.0,
+            end / float(sr) / 60.0,
+        )
+        try:
+            segs = _transcribe_final_once(piece, language)
+        except Exception:
+            logger.exception("Final ASR chunk %d failed; continuing", chunk_idx)
+            segs = []
+        all_segments = _merge_chunk_segments(
+            all_segments, segs, time_offset=time_offset
+        )
+        if end >= samples.size:
+            break
+        offset += hop_samples
+
+    return all_segments

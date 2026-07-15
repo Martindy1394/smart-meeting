@@ -28,6 +28,9 @@ behind a secure JWT authentication system with per-user meeting history.
 - **Redis audio memory** — every recorded PCM chunk is appended to Redis during
   capture; finalized WAV is cached in Redis too (disk archive kept for playback).
   Live caption offsets resume from Redis on reconnect.
+- **Multi-hour board meetings** — live transcription is designed for 8h+ sessions
+  (default soft cap 16h): 48h Redis TTL, WebSocket keepalives, chunked final
+  Whisper ASR, and caption-merge optimizations so long captions stay fast.
 - **Authentication** — signup with email + strong-password validation, login,
   JWT (7-day expiry), bcrypt hashing (12 rounds), protected routes, logout.
 - **Live transcription** — raw 16 kHz mono PCM captured with an `AudioWorklet`
@@ -141,7 +144,10 @@ See `backend/.env.example`. Key variables:
 | `WHISPER_LIVE_HOP_SECONDS` | `5.0` | Live ASR hop (10s window overlapping by 5s). |
 | `WHISPER_DEFAULT_LANGUAGE` | `hil` | Meeting label; Whisper decode uses `tl`. |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis memory store for recorded PCM/WAV. |
-| `REDIS_AUDIO_TTL_SECONDS` | `86400` | TTL for Redis audio keys (0 = no expiry). |
+| `REDIS_AUDIO_TTL_SECONDS` | `172800` | TTL for Redis audio keys (48h; 0 = no expiry). |
+| `MAX_MEETING_HOURS` | `16` | Soft cap for one live recording (board meetings). |
+| `WHISPER_FINAL_CHUNK_SECONDS` | `600` | Final ASR chunk size for multi-hour audio. |
+| `WS_KEEPALIVE_SECONDS` | `25` | WebSocket ping interval for long sessions. |
 | `BART_MODEL` | `facebook/bart-large-cnn` | Summarization. |
 | `MBART_MODEL` | `facebook/mbart-large-50-many-to-many-mmt` | Translation. |
 | `ALLOW_LLM_FALLBACK` | `true` | Enable extractive summary fallback. |

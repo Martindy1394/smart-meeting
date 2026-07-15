@@ -4,12 +4,16 @@ import { useRecorder } from "../hooks/useRecorder.js";
 import MeetingDetails from "./MeetingDetails.jsx";
 
 function fmtTime(sec) {
-  const m = Math.floor(sec / 60)
+  const total = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60)
     .toString()
     .padStart(2, "0");
-  const s = Math.floor(sec % 60)
-    .toString()
-    .padStart(2, "0");
+  const s = (total % 60).toString().padStart(2, "0");
+  // Board meetings often run past 4–8 hours — always show hours once >= 1h.
+  if (h > 0) {
+    return `${h}:${m}:${s}`;
+  }
   return `${m}:${s}`;
 }
 

@@ -22,6 +22,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const meetingIdRef = useRef(null);
   const reconnectRef = useRef({ attempts: 0, timer: null, active: false });
   const stoppingRef = useRef(false);
+  const keepaliveRef = useRef(null);
+  const audioWatchRef = useRef(null);
 
   const composeLive = useCallback(() => {
     const keys = Object.keys(liveSegmentsRef.current)
@@ -107,6 +109,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
         setConnectionState("connected");
         reconnectRef.current.attempts = 0;
         ws.send(JSON.stringify({ type: "start" }));
+        // Client keepalive — keeps proxies from idling out 8h+ board meetings.
+        if (keepaliveRef.current) clearInterval(keepaliveRef.current);
+        keepaliveRef.current = setInterval(() => {
+          const sock = wsRef.current;
+          if (sock && sock.readyState === WebSocket.OPEN) {
+            sock.send(JSON.stringify({ type: "ping", ts: Date.now() }));
+          }
+        }, 25000);
       };
 
       ws.onmessage = (evt) => {
@@ -116,6 +126,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
         } catch {
           return;
         }
+        if (data.type === "ping") {
+          // Answer server keepalive so the socket stays warm.
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
+          }
+          return;
+        }
         if (data.type === "status") {
           setTranscriptionAvailable(data.transcription_available);
           setMessage(data.message || "");
@@ -123,6 +140,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
           if (data.live_caption) {
             setLiveText((prev) => prev || data.live_caption);
           }
+        } else if (data.type === "info" || data.type === "warning") {
+          setMessage(data.message || "");
         } else if (data.type === "live_caption") {
           // Cumulative caption — never allow a shorter update to erase older words
           // (protects against aggressive overlap dedupe or WS reconnect resets).
@@ -172,11 +191,16 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
       ws.onclose = () => {
         setConnectionState("disconnected");
+        if (keepaliveRef.current) {
+          clearInterval(keepaliveRef.current);
+          keepaliveRef.current = null;
+        }
         // Reconnect only if we are actively recording (unexpected drop).
+        // Allow many retries — board meetings can run 8h+ and proxies flap.
         if (reconnectRef.current.active && !stoppingRef.current) {
           const attempts = ++reconnectRef.current.attempts;
-          if (attempts <= 5) {
-            const delay = Math.min(1000 * 2 ** (attempts - 1), 16000);
+          if (attempts <= 30) {
+            const delay = Math.min(1000 * 2 ** Math.min(attempts - 1, 5), 30000);
             setMessage(`Connection lost — reconnecting (attempt ${attempts})…`);
             reconnectRef.current.timer = setTimeout(
               () => openSocket(meetingId),
@@ -268,6 +292,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setStatus("recording");
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+      // Keep AudioContext alive during multi-hour sessions (browsers suspend it).
+      if (audioWatchRef.current) clearInterval(audioWatchRef.current);
+      audioWatchRef.current = setInterval(() => {
+        const ctx = audioCtxRef.current;
+        if (ctx && ctx.state === "suspended") {
+          ctx.resume().catch(() => {});
+        }
+      }, 15000);
     },
     [cleanupAudio, openSocket]
   );
@@ -279,6 +311,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
+    }
+    if (keepaliveRef.current) {
+      clearInterval(keepaliveRef.current);
+      keepaliveRef.current = null;
+    }
+    if (audioWatchRef.current) {
+      clearInterval(audioWatchRef.current);
+      audioWatchRef.current = null;
     }
     setRecording(false);
     setStatus("finalizing");
@@ -296,6 +336,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
       reconnectRef.current.active = false;
       if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
       if (timerRef.current) clearInterval(timerRef.current);
+      if (keepaliveRef.current) clearInterval(keepaliveRef.current);
+      if (audioWatchRef.current) clearInterval(audioWatchRef.current);
       cleanupAudio();
       if (wsRef.current) wsRef.current.close();
     };
