@@ -48,6 +48,17 @@ app.add_middleware(
 )
 
 
+@app.get("/", tags=["system"])
+def root():
+    return {
+        "app": settings.app_name,
+        "status": "ok",
+        "message": "API is running. Open the frontend at http://127.0.0.1:5173/",
+        "health": "/api/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/api/health", tags=["system"])
 def health():
     return {
