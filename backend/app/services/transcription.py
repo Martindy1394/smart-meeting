@@ -35,12 +35,26 @@ _FINAL_VAD_PARAMS = {
 
 # Forced Whisper decode settings (never leave language as None).
 _WHISPER_TASK = "transcribe"
-_WHISPER_LANGUAGE = "tl"
 
 # Keep this short and non-imperative — Whisper sometimes echoes prompts
 # that look like transcript instructions (e.g. "Transcribe the spoken words…").
 _INITIAL_PROMPT = (
     "Board meeting discussion in Hiligaynon, Filipino, or English."
+)
+
+# Common Whisper spam / silence hallucinations to drop entirely.
+_HALLUCINATION_PHRASES = (
+    "subscribe to my channel",
+    "thanks for watching",
+    "thank you for watching",
+    "please subscribe",
+    "like and subscribe",
+    "see you next time",
+    "transcribe the spoken words",
+    "i'm sorry, but it's okay",
+    "i'm sorry, but i can't do it",
+    "i don't want to see you again",
+    "i'm not sure if it's because of you",
 )
 
 
@@ -150,6 +164,7 @@ def hiligaynon_model_id() -> str:
 
 _REPEAT_WORD_RE = re.compile(r"\b(\w+)(?:\s+\1){3,}\b", re.IGNORECASE)
 _STUTTER_RE = re.compile(r"([A-Za-zÀ-ÿ])(?:-\1){3,}", re.IGNORECASE)
+_HYPHEN_LOOP_RE = re.compile(r"\b(\w+)(?:-\1){2,}\b", re.IGNORECASE)
 
 
 def _collapse_hallucinations(text: str) -> str:
@@ -159,45 +174,133 @@ def _collapse_hallucinations(text: str) -> str:
         prev = text
         text = _REPEAT_WORD_RE.sub(r"\1", text)
         text = _STUTTER_RE.sub(r"\1", text)
+        text = _HYPHEN_LOOP_RE.sub(r"\1", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
 def _forced_language(_requested: str | None) -> str:
-    """Always return Tagalog (``tl``) — never leave Whisper language as None."""
-    return _WHISPER_LANGUAGE
+    """Return configured Whisper language — never leave it as None."""
+    lang = (settings.whisper_decode_language or "tl").strip().lower()
+    return lang or "tl"
+
+
+def _is_junk_transcript(text: str) -> bool:
+    """True when Whisper output looks like silence/spam hallucination."""
+    cleaned = _collapse_hallucinations(text or "")
+    if not cleaned:
+        return True
+    low = cleaned.lower()
+    for phrase in _HALLUCINATION_PHRASES:
+        if phrase in low:
+            return True
+    # Sentence repeated 3+ times (classic Whisper silence loop).
+    parts = [p.strip() for p in re.split(r"[.!?]+", cleaned) if p.strip()]
+    if len(parts) >= 3 and len(set(p.lower() for p in parts)) == 1:
+        return True
+    tokens = re.findall(r"[a-zA-ZÀ-ÿ0-9]+", cleaned)
+    if not tokens:
+        return True
+    # Dominant repeated token (e.g. pag-pag-pag… after collapse still short).
+    if len(tokens) >= 4:
+        counts: dict[str, int] = {}
+        for t in tokens:
+            key = t.lower()
+            counts[key] = counts.get(key, 0) + 1
+        top_n = max(counts.values())
+        if top_n / len(tokens) >= 0.6:
+            return True
+    return False
+
+
+def _energy_ok(pcm: np.ndarray, *, min_rms: float = 0.008) -> bool:
+    """Skip near-silent windows that only produce Whisper hallucinations."""
+    if pcm is None or len(pcm) == 0:
+        return False
+    rms = float(np.sqrt(np.mean(np.square(pcm.astype(np.float32)))))
+    peak = float(np.max(np.abs(pcm)))
+    return rms >= min_rms or peak >= 0.02
 
 
 def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     """Low-latency transcription of a live audio window.
 
-    Uses overlapping windows upstream; decode is locked to Tagalog transcription.
+    Uses overlapping windows upstream; decode uses ``task=transcribe`` and a
+    configured language code (default ``tl``), never ``None``.
     """
     if pcm is None or len(pcm) == 0:
+        return []
+    if not _energy_ok(pcm):
         return []
 
     model = _cache.get_faster_whisper(settings.whisper_live_model)
     lang = _forced_language(language)
-    segments, _info = model.transcribe(
+    segments, info = model.transcribe(
         pcm,
         language=lang,
         task=_WHISPER_TASK,
         beam_size=3,
         best_of=3,
         temperature=0.0,
-        vad_filter=False,
+        # Light VAD reduces silence hallucinations on live windows.
+        vad_filter=True,
+        vad_parameters={
+            "onset": 0.45,
+            "offset": 0.35,
+            "min_speech_duration_ms": 120,
+            "min_silence_duration_ms": 400,
+            "speech_pad_ms": 200,
+        },
         condition_on_previous_text=False,
         without_timestamps=False,
-        no_speech_threshold=0.2,
-        compression_ratio_threshold=3.2,
-        log_prob_threshold=-1.5,
-        # No initial_prompt on live windows — short/noisy chunks often echo it.
+        no_speech_threshold=0.5,
+        compression_ratio_threshold=2.4,
+        log_prob_threshold=-1.0,
         initial_prompt=None,
     )
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
-        if text and any(ch.isalnum() for ch in text):
-            out.append(Segment(text=text, start=s.start, end=s.end))
+        if not text or not any(ch.isalnum() for ch in text):
+            continue
+        if _is_junk_transcript(text):
+            continue
+        out.append(Segment(text=text, start=s.start, end=s.end))
+
+    # If forced-language decode produced only junk, retry once with auto-detect
+    # so English / mixed board speech still captions.
+    if not out:
+        try:
+            segments, info = model.transcribe(
+                pcm,
+                language=None,
+                task=_WHISPER_TASK,
+                beam_size=3,
+                best_of=3,
+                temperature=0.0,
+                vad_filter=True,
+                vad_parameters={
+                    "onset": 0.45,
+                    "offset": 0.35,
+                    "min_speech_duration_ms": 120,
+                    "min_silence_duration_ms": 400,
+                    "speech_pad_ms": 200,
+                },
+                condition_on_previous_text=False,
+                without_timestamps=False,
+                no_speech_threshold=0.5,
+                compression_ratio_threshold=2.4,
+                log_prob_threshold=-1.0,
+                initial_prompt=None,
+            )
+            detected = getattr(info, "language", None)
+            if detected:
+                logger.info("Live auto-detect retry language=%s", detected)
+            for s in segments:
+                text = _collapse_hallucinations((s.text or "").strip())
+                if text and any(ch.isalnum() for ch in text) and not _is_junk_transcript(text):
+                    out.append(Segment(text=text, start=s.start, end=s.end))
+        except Exception as exc:
+            logger.debug("Live auto-detect retry failed: %s", exc)
     return out
 
 
@@ -392,7 +495,7 @@ def _segments_to_list(segments) -> list[Segment]:
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
-        if text:
+        if text and not _is_junk_transcript(text):
             out.append(Segment(text=text, start=s.start, end=s.end))
     return out
 
@@ -486,21 +589,32 @@ def _looks_like_hf_repo(model_id: str) -> bool:
 
 
 def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
-    """Single-shot final ASR (HF fine-tune preferred, faster-whisper fallback)."""
-    model_id = hiligaynon_model_id()
-    if _looks_like_hf_repo(model_id):
-        try:
-            return _transcribe_final_hf(audio_source, language)
-        except TranscriptionUnavailable:
-            raise
-        except Exception as exc:
-            logger.exception(
-                "Fine-tuned Hiligaynon Whisper '%s' failed (%s); "
-                "falling back to faster-whisper '%s'.",
-                model_id,
-                exc,
-                settings.whisper_final_model,
-            )
+    """Single-shot final ASR.
+
+    Default backend is faster-whisper (stable on CPU). Set
+    ``WHISPER_FINAL_BACKEND=huggingface`` to use the fine-tuned HF checkpoint.
+    """
+    backend = (settings.whisper_final_backend or "faster-whisper").strip().lower()
+    if backend in {"huggingface", "hf", "transformers"}:
+        model_id = hiligaynon_model_id()
+        if _looks_like_hf_repo(model_id):
+            try:
+                segs = _transcribe_final_hf(audio_source, language)
+                # If the fine-tune returns only junk, fall back.
+                joined = " ".join(s.text for s in segs)
+                if segs and not _is_junk_transcript(joined):
+                    return segs
+                logger.warning(
+                    "HF final ASR looked like hallucination; falling back to faster-whisper."
+                )
+            except TranscriptionUnavailable:
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "Fine-tuned Whisper '%s' failed (%s); falling back to faster-whisper.",
+                    model_id,
+                    exc,
+                )
     return _transcribe_final_faster_whisper(audio_source, language)
 
 

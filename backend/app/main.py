@@ -90,6 +90,9 @@ def health():
         "asr_engine": asr.engine_name(),
         "whisper_available": whisper_ok,
         "whisper_live_model": settings.whisper_live_model,
+        "whisper_final_model": settings.whisper_final_model,
+        "whisper_final_backend": settings.whisper_final_backend,
+        "whisper_decode_language": settings.whisper_decode_language,
         "whisper_hiligaynon_model": transcription_svc.hiligaynon_model_id(),
         "whisper_live_window_seconds": settings.whisper_live_window_seconds,
         "whisper_live_hop_seconds": settings.whisper_live_hop_seconds,
@@ -101,6 +104,38 @@ def health():
         "llm_available": llm.summarizer_available(),
         "environment": settings.environment,
     }
+
+
+@app.get("/api/health/transcription", tags=["system"])
+def health_transcription():
+    """Lightweight live-ASR probe so operators can verify transcription works."""
+    import time
+
+    import numpy as np
+
+    from .services import transcription as transcription_svc
+
+    if not transcription_svc.is_available():
+        return {
+            "ok": False,
+            "detail": "faster-whisper is not installed",
+        }
+    # 1s of low-level noise — should return empty (filtered), not crash.
+    pcm = (np.random.randn(settings.audio_sample_rate).astype(np.float32) * 0.002)
+    t0 = time.time()
+    try:
+        segs = transcription_svc.transcribe_live(pcm, settings.whisper_default_language)
+        return {
+            "ok": True,
+            "latency_ms": int((time.time() - t0) * 1000),
+            "live_model": settings.whisper_live_model,
+            "decode_language": settings.whisper_decode_language,
+            "task": "transcribe",
+            "segments": len(segs),
+            "backend": settings.whisper_final_backend,
+        }
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)}
 
 
 app.include_router(auth.router)

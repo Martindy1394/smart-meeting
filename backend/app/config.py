@@ -65,18 +65,20 @@ class Settings(BaseSettings):
     audio_channels: int = 1
 
     # Whisper model sizes for the two-pass pipeline.
-    # Live uses a stock Whisper model with overlapping windows.
-    # Final Stop-Recording pass uses a fine-tuned Hiligaynon / PH Whisper checkpoint.
+    # Live + final default to faster-whisper (reliable on CPU). Optional HF
+    # fine-tune can be enabled with WHISPER_FINAL_BACKEND=huggingface.
     whisper_live_model: str = "small"
     whisper_final_model: str = "medium"
-    # Hugging Face id (or local path) for the fine-tuned final ASR model.
-    # Default is the closest public PH-dialect Whisper fine-tune; override with
-    # your own Hiligaynon fine-tune via WHISPER_HILIGAYNON_MODEL.
+    # Hugging Face id (or local path) for an optional fine-tuned final ASR model.
     whisper_hiligaynon_model: str = "rbcurzon/whisper-medium-ph"
+    # "faster-whisper" (default, stable) or "huggingface" (fine-tuned checkpoint).
+    whisper_final_backend: str = "faster-whisper"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    # Meeting language label (Hiligaynon). Whisper decode is locked to ``tl``.
+    # Meeting language label (Hiligaynon). Decode language for Whisper is ``tl``.
     whisper_default_language: str = "hil"
+    # Whisper decode language code — always set (never None). ``tl`` = Tagalog.
+    whisper_decode_language: str = "tl"
     # Live caption windowing: 10s buffer overlapping by 5s (hop = 5s).
     whisper_live_window_seconds: float = 10.0
     whisper_live_hop_seconds: float = 5.0

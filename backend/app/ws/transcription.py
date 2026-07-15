@@ -130,9 +130,8 @@ async def _emit_live_window(
     Returns ``(live_caption, window_text_used_as_previous)``.
     """
     samples = audio.pcm16_to_float32(chunk)
-    # Only skip completely empty / digital-silence frames. Quiet speech must
-    # still reach Whisper so live captions are not artificially restricted.
-    if samples.size == 0 or float(np.max(np.abs(samples))) < 0.0008:
+    # Skip near-silent frames — they only produce Whisper hallucinations.
+    if samples.size == 0 or float(np.max(np.abs(samples))) < 0.01:
         return live_caption, previous_window
 
     result = await asyncio.to_thread(asr.transcribe_pcm, samples, language, live=True)
