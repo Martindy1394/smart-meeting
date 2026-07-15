@@ -236,27 +236,44 @@ export default function RecordingsPanel({
             />
           </div>
 
-          {loading ? (
-            <div className="center-spin">
-              <span className="spinner" /> Loading…
+          <section
+            className="saved-meetings-container"
+            aria-label="Saved recorded meetings"
+          >
+            <div className="saved-meetings-container-head">
+              <h4 className="saved-meetings-container-title">
+                Saved recorded meetings
+              </h4>
+              <span className="saved-meetings-container-count">
+                {loading
+                  ? "Loading…"
+                  : `${recordings.length} recording${recordings.length === 1 ? "" : "s"}`}
+              </span>
             </div>
-          ) : recordings.length === 0 ? (
-            <div className="placeholder" style={{ height: "auto", padding: 32 }}>
-              No recordings yet. Stop a meeting recording to save audio here.
+            <div className="saved-meetings-container-body">
+              {loading ? (
+                <div className="center-spin">
+                  <span className="spinner" /> Loading…
+                </div>
+              ) : recordings.length === 0 ? (
+                <div className="history-list-empty">
+                  No recordings yet. End a meeting recording to save audio here.
+                </div>
+              ) : (
+                <div className="history-list">
+                  {recordings.map((m) => (
+                    <RecordingRow
+                      key={m.id}
+                      meeting={m}
+                      onOpen={onOpen}
+                      onDelete={onDelete}
+                      onTranscribed={() => onRefresh && onRefresh()}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="history-list">
-              {recordings.map((m) => (
-                <RecordingRow
-                  key={m.id}
-                  meeting={m}
-                  onOpen={onOpen}
-                  onDelete={onDelete}
-                  onTranscribed={() => onRefresh && onRefresh()}
-                />
-              ))}
-            </div>
-          )}
+          </section>
         </div>
       </div>
     </div>

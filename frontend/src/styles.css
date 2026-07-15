@@ -22,15 +22,25 @@ html,
 body,
 #root {
   height: 100%;
+  width: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
+  position: fixed;
+  inset: 0;
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
   background: radial-gradient(1200px 600px at 80% -10%, #1c2030 0%, var(--bg) 60%);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
 }
 
 a {
@@ -211,6 +221,9 @@ button {
   display: grid;
   grid-template-columns: 300px 1fr;
   height: 100%;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
 }
 .sidebar {
   background: var(--surface);
@@ -385,21 +398,23 @@ button {
   justify-content: flex-end;
 }
 .history-panel {
-  max-width: 960px;
+  max-width: 1040px;
   width: 100%;
   margin: 0 auto;
-  min-height: calc(100% - 0px);
+  height: 100%;
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 .history-card {
   margin-bottom: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
-  /* Override generic .card min-height so the list page fills the viewport cleanly. */
-  min-height: calc(100vh - 120px);
+  min-height: 0;
+  height: 100%;
 }
 .history-card > .card-body {
   display: flex;
@@ -437,14 +452,61 @@ button {
 .history-search:focus {
   border-color: var(--primary);
 }
+/* Scrollable container that holds every saved recorded meeting. */
+.saved-meetings-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.saved-meetings-container-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(15, 17, 23, 0.35);
+  flex-shrink: 0;
+}
+.saved-meetings-container-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+.saved-meetings-container-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.saved-meetings-container-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px;
+}
 .history-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding-right: 2px;
+}
+.history-list-empty {
+  height: 100%;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 32px 20px;
+  font-size: 14px;
 }
 .history-row {
   display: grid;
@@ -454,7 +516,7 @@ button {
   padding: 14px 16px;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: var(--surface);
   width: 100%;
 }
 .history-row.active {
@@ -533,14 +595,20 @@ button {
 }
 
 .main {
-  overflow-y: auto;
+  overflow: hidden;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 .main > .content {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+.main > .content:not(.history-panel) {
+  overflow-y: auto;
 }
 .topbar {
   display: flex;
@@ -548,12 +616,11 @@ button {
   justify-content: space-between;
   padding: 18px 28px;
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  background: rgba(15, 17, 23, 0.85);
-  backdrop-filter: blur(8px);
+  position: relative;
+  background: rgba(15, 17, 23, 0.95);
   z-index: 5;
   gap: 12px;
+  flex-shrink: 0;
 }
 .topbar-left {
   display: flex;
@@ -597,7 +664,7 @@ button {
   padding: 24px 28px 60px;
 }
 .content.history-panel {
-  padding-bottom: 28px;
+  padding: 20px 24px 20px;
 }
 /* History detail (opened from History): stack the body cleanly without the live bar gap. */
 .content.history-detail {
@@ -1120,8 +1187,8 @@ select.inline {
     width: 100%;
     justify-content: flex-start;
   }
-  .history-card {
-    min-height: calc(100vh - 100px);
+  .content.history-panel {
+    padding: 14px 14px 16px;
   }
 }
 @media (min-width: 861px) {

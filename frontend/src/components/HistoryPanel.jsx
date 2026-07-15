@@ -171,6 +171,8 @@ export default function HistoryPanel({
   onDelete,
   onCreate,
 }) {
+  const count = meetings.length;
+
   return (
     <div className="content history-panel">
       <div className="card history-card">
@@ -196,27 +198,42 @@ export default function HistoryPanel({
             </button>
           </div>
 
-          {loading ? (
-            <div className="center-spin">
-              <span className="spinner" /> Loading…
+          <section
+            className="saved-meetings-container"
+            aria-label="Saved recorded meetings"
+          >
+            <div className="saved-meetings-container-head">
+              <h4 className="saved-meetings-container-title">
+                Saved recorded meetings
+              </h4>
+              <span className="saved-meetings-container-count">
+                {loading ? "Loading…" : `${count} meeting${count === 1 ? "" : "s"}`}
+              </span>
             </div>
-          ) : meetings.length === 0 ? (
-            <div className="placeholder" style={{ height: "auto", padding: 32 }}>
-              No saved meetings yet.
+            <div className="saved-meetings-container-body">
+              {loading ? (
+                <div className="center-spin">
+                  <span className="spinner" /> Loading…
+                </div>
+              ) : count === 0 ? (
+                <div className="history-list-empty">
+                  No saved meetings yet. Create a new meeting to start recording.
+                </div>
+              ) : (
+                <div className="history-list">
+                  {meetings.map((m) => (
+                    <HistoryRow
+                      key={m.id}
+                      meeting={m}
+                      active={m.id === activeId}
+                      onSelect={onSelect}
+                      onDelete={onDelete}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="history-list">
-              {meetings.map((m) => (
-                <HistoryRow
-                  key={m.id}
-                  meeting={m}
-                  active={m.id === activeId}
-                  onSelect={onSelect}
-                  onDelete={onDelete}
-                />
-              ))}
-            </div>
-          )}
+          </section>
         </div>
       </div>
     </div>
