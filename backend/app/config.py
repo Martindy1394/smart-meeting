@@ -59,12 +59,16 @@ class Settings(BaseSettings):
     # Whisper model sizes for the two-pass pipeline.
     # Defaults favour machines without a GPU: int8 keeps memory under control so
     # the API process is not OOM-killed while loading the finalization model.
-    whisper_live_model: str = "base"
+    # Live uses ``small`` with overlapping windows for freer, more continuous captions.
+    whisper_live_model: str = "small"
     whisper_final_model: str = "medium"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
     # Dialect / language handling. "hil" == Hiligaynon.
     whisper_default_language: str = "hil"
+    # Live caption windowing (seconds). Longer window + shorter hop = fewer cut words.
+    whisper_live_window_seconds: float = 5.0
+    whisper_live_hop_seconds: float = 1.0
 
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"

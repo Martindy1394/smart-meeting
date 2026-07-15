@@ -119,9 +119,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
         if (data.type === "status") {
           setTranscriptionAvailable(data.transcription_available);
           setMessage(data.message || "");
+        } else if (data.type === "live_caption") {
+          // Cumulative caption from overlapping windows — show as-is.
+          setLiveText(data.text || "");
         } else if (data.type === "live_segment") {
+          // Legacy per-chunk segments (kept for compatibility / persistence).
           liveSegmentsRef.current[data.seq] = data.text;
-          setLiveText(composeLive());
+          // Only fall back to composed chunks if we have not received live_caption yet.
+          setLiveText((prev) => prev || composeLive());
         } else if (data.type === "finalizing") {
           setStatus("finalizing");
         } else if (data.type === "final_transcript") {

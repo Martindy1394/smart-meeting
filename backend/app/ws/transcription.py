@@ -11,6 +11,7 @@ Protocol (server -> client)
 ---------------------------
     {"type": "status", "transcription_available": bool, "message": str}
     {"type": "live_segment", "seq": int, "text": str, "start": float, "end": float}
+    {"type": "live_caption", "text": str, "seq": int}   cumulative live caption
     {"type": "finalizing"}            finalization pass started
     {"type": "final_transcript", "text": str, "segments": [...]}
     {"type": "error", "message": str}
@@ -37,9 +38,6 @@ from ..services import audio, transcription
 logger = logging.getLogger("smart_meeting.ws")
 
 router = APIRouter()
-
-# Process live captions once we have accumulated ~2 seconds of audio.
-_LIVE_WINDOW_SECONDS = 2.0
 
 
 async def _send(ws: WebSocket, payload: dict) -> None:
@@ -100,6 +98,54 @@ def _finalize_blocking(meeting_id: str, pcm_bytes: bytes, language: str) -> dict
         db.close()
 
 
+async def _emit_live_window(
+    websocket: WebSocket,
+    *,
+    meeting_id: str,
+    chunk: bytes,
+    language: str,
+    seq: int,
+    live_caption: str,
+) -> str:
+    """Transcribe one live window and merge into the cumulative caption."""
+    samples = audio.pcm16_to_float32(chunk)
+    # Only skip completely empty / digital-silence frames. Quiet speech must
+    # still reach Whisper so live captions are not artificially restricted.
+    if samples.size == 0 or float(np.max(np.abs(samples))) < 0.0008:
+        return live_caption
+
+    segs = await asyncio.to_thread(transcription.transcribe_live, samples, language)
+    window_text = " ".join(s.text for s in segs).strip()
+    if not window_text:
+        return live_caption
+
+    merged = transcription.merge_live_caption(live_caption, window_text)
+    if merged == live_caption:
+        return live_caption
+
+    await _send(
+        websocket,
+        {
+            "type": "live_caption",
+            "seq": seq,
+            "text": merged,
+        },
+    )
+    # Also keep legacy live_segment for older clients / persistence.
+    await _send(
+        websocket,
+        {
+            "type": "live_segment",
+            "seq": seq,
+            "text": window_text,
+            "start": segs[0].start if segs else 0.0,
+            "end": segs[-1].end if segs else 0.0,
+        },
+    )
+    _persist_live_segment(meeting_id, seq, window_text)
+    return merged
+
+
 @router.websocket("/ws/transcribe")
 async def transcribe_ws(websocket: WebSocket):
     token = websocket.query_params.get("token")
@@ -132,7 +178,7 @@ async def transcribe_ws(websocket: WebSocket):
             "type": "status",
             "transcription_available": live_available,
             "message": (
-                "Live transcription active."
+                "Live transcription active — continuous unrestricted captions."
                 if live_available
                 else "Whisper backend not installed — audio will still be saved "
                 "and can be finalized once ML dependencies are available."
@@ -143,7 +189,18 @@ async def transcribe_ws(websocket: WebSocket):
     all_pcm = bytearray()
     window = bytearray()
     seq = 0
-    bytes_per_window = int(_LIVE_WINDOW_SECONDS * settings.audio_sample_rate * 2)
+    live_caption = ""
+
+    window_seconds = max(2.0, float(settings.whisper_live_window_seconds))
+    hop_seconds = max(0.5, float(settings.whisper_live_hop_seconds))
+    if hop_seconds > window_seconds:
+        hop_seconds = window_seconds
+
+    bytes_per_sample_frame = 2  # int16 mono
+    bytes_per_window = int(window_seconds * settings.audio_sample_rate * bytes_per_sample_frame)
+    bytes_per_hop = int(hop_seconds * settings.audio_sample_rate * bytes_per_sample_frame)
+    # Keep overlap so words spanning hop boundaries are not cut off.
+    bytes_overlap = max(0, bytes_per_window - bytes_per_hop)
 
     try:
         while True:
@@ -156,30 +213,25 @@ async def transcribe_ws(websocket: WebSocket):
             if data is not None:
                 all_pcm.extend(data)
                 window.extend(data)
-                if live_available and len(window) >= bytes_per_window:
-                    chunk = bytes(window)
-                    window.clear()
+                # Fire as soon as we have a full window; then advance by hop,
+                # keeping overlap audio for the next pass.
+                while live_available and len(window) >= bytes_per_window:
+                    chunk = bytes(window[:bytes_per_window])
+                    # Retain overlap for continuity; drop the consumed hop.
+                    if bytes_overlap > 0:
+                        window[:] = window[bytes_per_hop:]
+                    else:
+                        window.clear()
                     seq += 1
-                    current_seq = seq
                     try:
-                        samples = audio.pcm16_to_float32(chunk)
-                        segs = await asyncio.to_thread(
-                            transcription.transcribe_live, samples, language
+                        live_caption = await _emit_live_window(
+                            websocket,
+                            meeting_id=meeting_id,
+                            chunk=chunk,
+                            language=language,
+                            seq=seq,
+                            live_caption=live_caption,
                         )
-                        text = " ".join(s.text for s in segs).strip()
-                        if text:
-                            await _send(
-                                websocket,
-                                {
-                                    "type": "live_segment",
-                                    "seq": current_seq,
-                                    "text": text,
-                                    "start": segs[0].start if segs else 0.0,
-                                    "end": segs[-1].end if segs else 0.0,
-                                },
-                            )
-                            # Persist the live caption for resilience.
-                            _persist_live_segment(meeting_id, current_seq, text)
                     except Exception as exc:  # keep the stream alive on model errors
                         logger.exception("Live transcription error: %s", exc)
                 continue
@@ -197,6 +249,22 @@ async def transcribe_ws(websocket: WebSocket):
         logger.info("WebSocket disconnected for meeting %s", meeting_id)
     except Exception as exc:  # pragma: no cover - defensive
         logger.exception("WebSocket error: %s", exc)
+
+    # Flush any leftover live audio before the final pass so trailing words
+    # still appear in live captions (final pass will refine everything).
+    if live_available and len(window) >= int(0.4 * settings.audio_sample_rate * 2):
+        seq += 1
+        try:
+            live_caption = await _emit_live_window(
+                websocket,
+                meeting_id=meeting_id,
+                chunk=bytes(window),
+                language=language,
+                seq=seq,
+                live_caption=live_caption,
+            )
+        except Exception as exc:
+            logger.exception("Live flush transcription error: %s", exc)
 
     # ---- Finalization (two-pass) -------------------------------------------
     try:

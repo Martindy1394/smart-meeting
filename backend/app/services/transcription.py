@@ -149,32 +149,86 @@ def _collapse_hallucinations(text: str) -> str:
 
 
 def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
-    """Fast, low-latency transcription of a short audio window (live captions).
+    """Low-latency transcription of a live audio window.
 
-    ``pcm`` must be mono float32 in [-1, 1] at ``settings.audio_sample_rate``.
+    Tuned for continuous captions with minimal filtering so spoken words are
+    not dropped for being short, numeric, or mid-phrase.
     """
+    if pcm is None or len(pcm) == 0:
+        return []
+
     model = _cache.get(settings.whisper_live_model)
     lang = _cache.resolve_language(language or settings.whisper_default_language)
     segments, _info = model.transcribe(
         pcm,
         language=lang,
-        beam_size=1,
-        best_of=1,
+        # Slightly wider beam than pure greedy — still fast enough for live.
+        beam_size=3,
+        best_of=3,
         temperature=0.0,
         # Live windows are short; VAD often drops the whole chunk.
         vad_filter=False,
         condition_on_previous_text=False,
         without_timestamps=False,
-        no_speech_threshold=0.6,
-        compression_ratio_threshold=2.4,
-        log_prob_threshold=-1.0,
+        # Very permissive thresholds so quiet / quick / mixed-language words
+        # are not discarded during live capture.
+        no_speech_threshold=0.2,
+        compression_ratio_threshold=3.2,
+        log_prob_threshold=-1.5,
+        initial_prompt=_INITIAL_PROMPT if lang is None else None,
     )
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
-        if text and any(ch.isalpha() for ch in text):
+        # Keep any non-empty spoken content (letters, digits, or mixed).
+        if text and any(ch.isalnum() for ch in text):
             out.append(Segment(text=text, start=s.start, end=s.end))
     return out
+
+
+def merge_live_caption(previous: str, window_text: str) -> str:
+    """Merge an overlapping-window transcript into the running live caption.
+
+    Finds the longest word overlap between the end of ``previous`` and the start
+    of ``window_text``, then appends only the new suffix so words are not cut or
+    duplicated when windows overlap. Never replaces earlier caption history.
+    """
+    prev = re.sub(r"\s+", " ", (previous or "").strip())
+    cur = re.sub(r"\s+", " ", (window_text or "").strip())
+    if not cur:
+        return prev
+    if not prev:
+        return cur
+    if cur.lower() in prev.lower():
+        return prev
+
+    prev_tokens = prev.split()
+    cur_tokens = cur.split()
+    max_overlap = min(len(prev_tokens), len(cur_tokens), 40)
+    overlap = 0
+    for size in range(max_overlap, 0, -1):
+        left = [t.lower() for t in prev_tokens[-size:]]
+        right = [t.lower() for t in cur_tokens[:size]]
+        if left == right:
+            overlap = size
+            break
+
+    if overlap == 0:
+        # Character fallback for short phrases / punctuation drift.
+        prev_l = prev.lower()
+        cur_l = cur.lower()
+        max_check = min(len(prev_l), len(cur_l), 80)
+        for n in range(max_check, 2, -1):
+            if prev_l.endswith(cur_l[:n]):
+                suffix = cur[n:].lstrip(" ,.;:-")
+                if not suffix:
+                    return prev
+                joiner = "" if prev.endswith((" ", "\n")) or suffix[:1].isspace() else " "
+                return f"{prev}{joiner}{suffix}".strip()
+        return f"{prev} {cur}".strip()
+
+    merged = prev_tokens + cur_tokens[overlap:]
+    return " ".join(merged).strip()
 
 
 def _run_final(model, audio_source, language: str | None, *, use_prompt: bool):
