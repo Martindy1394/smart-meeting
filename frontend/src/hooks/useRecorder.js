@@ -19,6 +19,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const streamRef = useRef(null);
   const liveSegmentsRef = useRef({});
   const timerRef = useRef(null);
+  const startedAtRef = useRef(null);
   const meetingIdRef = useRef(null);
   const reconnectRef = useRef({ attempts: 0, timer: null, active: false });
   const stoppingRef = useRef(false);
@@ -240,9 +241,15 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setStatus("starting");
       setMessage("Starting meeting and microphone…");
       setRecording(true);
+      startedAtRef.current = Date.now();
       setElapsed(0);
       if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+      // Wall-clock based so long board meetings stay accurate if the tab throttles.
+      timerRef.current = setInterval(() => {
+        const start = startedAtRef.current;
+        if (!start) return;
+        setElapsed(Math.floor((Date.now() - start) / 1000));
+      }, 250);
 
       // Open the WebSocket in parallel with mic setup (biggest perceived win).
       openSocket(meetingId);
@@ -353,6 +360,10 @@ export function useRecorder({ onFinalTranscript } = {}) {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
+    }
+    // Freeze the final elapsed time for the UI while Whisper finalizes.
+    if (startedAtRef.current) {
+      setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
     }
     if (keepaliveRef.current) {
       clearInterval(keepaliveRef.current);

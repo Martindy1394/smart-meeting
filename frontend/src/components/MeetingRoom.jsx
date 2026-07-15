@@ -5,16 +5,15 @@ import MeetingDetails from "./MeetingDetails.jsx";
 
 function fmtTime(sec) {
   const total = Math.max(0, Math.floor(Number(sec) || 0));
-  const h = Math.floor(total / 3600);
+  const h = Math.floor(total / 3600)
+    .toString()
+    .padStart(2, "0");
   const m = Math.floor((total % 3600) / 60)
     .toString()
     .padStart(2, "0");
   const s = (total % 60).toString().padStart(2, "0");
-  // Board meetings often run past 4–8 hours — always show hours once >= 1h.
-  if (h > 0) {
-    return `${h}:${m}:${s}`;
-  }
-  return `${m}:${s}`;
+  // Always H:MM:SS so long board meetings read clearly from the first second.
+  return `${h}:${m}:${s}`;
 }
 
 export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls }) {
@@ -362,7 +361,25 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
                 </span>
               )}
             </h3>
-            <span className="card-tag">Whisper ASR · {meeting.language}</span>
+            <div className="transcript-head-meta">
+              {(recorder.recording ||
+                recorder.status === "starting" ||
+                recorder.status === "finalizing") && (
+                <span
+                  className={`recording-timer ${recorder.recording || recorder.status === "starting" ? "active" : ""}`}
+                  aria-live="polite"
+                  aria-label={`Recording time ${fmtTime(recorder.elapsed)}`}
+                >
+                  <span className="recording-timer-label">
+                    {recorder.status === "finalizing" ? "Recorded" : "REC"}
+                  </span>
+                  <span className="recording-timer-value">
+                    {fmtTime(recorder.elapsed)}
+                  </span>
+                </span>
+              )}
+              <span className="card-tag">Whisper ASR · {meeting.language}</span>
+            </div>
           </div>
           <div className="card-body">
             {asrError && <div className="error-banner">{asrError}</div>}
@@ -473,11 +490,22 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             Fill in title, venue, date &amp; time, and attendees first
           </span>
         )}
-        {recorder.recording && (
-          <>
-            <span className="dot-live" />
-            <span className="timer">{fmtTime(recorder.elapsed)}</span>
-          </>
+        {(recorder.recording ||
+          recorder.status === "starting" ||
+          recorder.status === "finalizing") && (
+          <span
+            className={`recording-timer bar ${recorder.recording || recorder.status === "starting" ? "active" : ""}`}
+            aria-live="polite"
+            aria-label={`Recording time ${fmtTime(recorder.elapsed)}`}
+          >
+            {(recorder.recording || recorder.status === "starting") && (
+              <span className="dot-live" />
+            )}
+            <span className="recording-timer-label">
+              {recorder.status === "finalizing" ? "Recorded" : "Recording"}
+            </span>
+            <span className="recording-timer-value">{fmtTime(recorder.elapsed)}</span>
+          </span>
         )}
         {(recorder.status === "finalizing" || asrBusy) && (
           <span className="center-spin" style={{ padding: 0 }}>
