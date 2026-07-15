@@ -19,6 +19,8 @@ export default function Workspace() {
   const [loadingMeeting, setLoadingMeeting] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [saveControls, setSaveControls] = useState(null);
+  // True when opening an existing meeting from History/Recordings (review mode).
+  const [historyView, setHistoryView] = useState(false);
   const searchTimer = useRef(null);
   const recordingSearchTimer = useRef(null);
 
@@ -78,6 +80,7 @@ export default function Workspace() {
     setSection("meeting");
     setActiveId(id);
     setSaveControls(null);
+    setHistoryView(true);
     setLoadingMeeting(true);
     try {
       const detail = await api.getMeeting(id);
@@ -99,6 +102,7 @@ export default function Workspace() {
       // Show the room immediately — refresh lists in the background.
       setSection("meeting");
       setSaveControls(null);
+      setHistoryView(false);
       setActiveId(detail.id);
       setActiveMeeting(detail);
       setLoadingMeeting(false);
@@ -120,6 +124,7 @@ export default function Workspace() {
           setActiveId(null);
           setActiveMeeting(null);
           setSaveControls(null);
+          setHistoryView(false);
           setSection("history");
         }
         loadMeetings(search);
@@ -231,6 +236,7 @@ export default function Workspace() {
             meeting={activeMeeting}
             onMeetingUpdated={refreshActive}
             onSaveControls={setSaveControls}
+            historyView={historyView}
           />
         ) : (
           <div className="empty-state">

@@ -16,7 +16,12 @@ function fmtTime(sec) {
   return `${h}:${m}:${s}`;
 }
 
-export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls }) {
+export default function MeetingRoom({
+  meeting,
+  onMeetingUpdated,
+  onSaveControls,
+  historyView = false,
+}) {
   const detailsRef = useRef(null);
   const [detailsReady, setDetailsReady] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
@@ -325,10 +330,10 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     recorder.status === "finalizing" ||
     recorder.status === "starting";
   const isStarting = recorder.status === "starting";
-  // History detail with an existing transcript (see product screenshot):
-  // hide "Start live transcription" / "Upload audio"; keep Copy + Download.
+  // History / Recordings detail page: never show Start live transcription
+  // or Upload audio (product screenshot). New meetings keep those controls.
   const hideLiveUploadActions =
-    hasTranscript &&
+    historyView &&
     !recorder.recording &&
     recorder.status !== "starting" &&
     recorder.status !== "finalizing";
