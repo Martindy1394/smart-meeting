@@ -83,9 +83,16 @@ def transcribe_pcm_bytes(pcm_bytes: bytes, language: str | None = None, *, live:
     return transcribe_pcm(samples, language, live=live)
 
 
-def merge_live_caption(previous: str, window_text: str) -> str:
+def merge_live_caption(
+    previous: str,
+    window_text: str,
+    *,
+    previous_window: str | None = None,
+) -> str:
     """Merge overlapping live Whisper windows into a continuous caption."""
-    return transcription.merge_live_caption(previous, window_text)
+    return transcription.merge_live_caption(
+        previous, window_text, previous_window=previous_window
+    )
 
 
 def persist_transcript(db, meeting, result: ASRResult) -> None:

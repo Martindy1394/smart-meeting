@@ -186,43 +186,179 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     return out
 
 
-def merge_live_caption(previous: str, window_text: str) -> str:
-    """Merge an overlapping-window transcript into the running live caption."""
-    prev = re.sub(r"\s+", " ", (previous or "").strip())
-    cur = re.sub(r"\s+", " ", (window_text or "").strip())
+def _clean_caption(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _raw_tokens(text: str) -> list[str]:
+    return _clean_caption(text).split() if _clean_caption(text) else []
+
+
+def _norm_token(token: str) -> str:
+    """Lowercase token with punctuation stripped for overlap matching."""
+    return re.sub(r"[^\w]+", "", token, flags=re.UNICODE).lower()
+
+
+def _norm_tokens(text: str) -> list[str]:
+    out: list[str] = []
+    for tok in _raw_tokens(text):
+        n = _norm_token(tok)
+        if n:
+            out.append(n)
+    return out
+
+
+def _token_overlap_size(left: list[str], right: list[str], *, min_size: int = 3) -> int:
+    """Longest suffix(left) == prefix(right) overlap, requiring ``min_size`` tokens."""
+    max_overlap = min(len(left), len(right), 60)
+    for size in range(max_overlap, min_size - 1, -1):
+        if left[-size:] == right[:size]:
+            return size
+    return 0
+
+
+def _novel_suffix_from_window(previous_window: str, current_window: str) -> str:
+    """Return only the new words from an overlapping Whisper window.
+
+    With a 10s window / 5s hop, Whisper re-transcribes the shared half every
+    time. Using the previous window as the overlap anchor lets us append only
+    the hop's new words instead of replacing / truncating the caption.
+    """
+    cur_tokens = _raw_tokens(current_window)
+    if not cur_tokens:
+        return ""
+    prev_n = _norm_tokens(previous_window)
+    if not prev_n:
+        return _clean_caption(current_window)
+
+    # Parallel list of (original_index, norm) for current window tokens.
+    cur_pairs: list[tuple[int, str]] = []
+    for idx, tok in enumerate(cur_tokens):
+        n = _norm_token(tok)
+        if n:
+            cur_pairs.append((idx, n))
+    if not cur_pairs:
+        return ""
+
+    cur_n = [n for _, n in cur_pairs]
+    overlap = _token_overlap_size(prev_n, cur_n, min_size=3)
+
+    if overlap == 0:
+        # Fuzzy: align with SequenceMatcher and keep a block near the end of
+        # the previous window (typical of sliding-window re-transcription).
+        from difflib import SequenceMatcher
+
+        matcher = SequenceMatcher(a=prev_n, b=cur_n, autojunk=False)
+        best_b_end = 0
+        best_size = 0
+        for block in matcher.get_matching_blocks():
+            if block.size < 3:
+                continue
+            # Prefer matches that touch the end of the previous window.
+            if block.a + block.size >= len(prev_n) - 2 and block.size >= best_size:
+                best_size = block.size
+                best_b_end = block.b + block.size
+        if best_size >= 3:
+            if best_b_end >= len(cur_pairs):
+                return ""
+            start = cur_pairs[best_b_end][0]
+            return " ".join(cur_tokens[start:]).strip()
+        # No reliable overlap — keep roughly the newest half (the hop region)
+        # so we still grow instead of re-pasting the whole window.
+        cut = max(1, int(round(len(cur_tokens) * 0.5)))
+        return " ".join(cur_tokens[-cut:]).strip()
+
+    if overlap >= len(cur_pairs):
+        return ""
+    start = cur_pairs[overlap][0]
+    return " ".join(cur_tokens[start:]).strip()
+
+
+def _append_novel(caption: str, novel: str) -> str:
+    """Append novel words to the caption without eating earlier text."""
+    prev = _clean_caption(caption)
+    addition = _clean_caption(novel)
+    if not addition:
+        return prev
+    if not prev:
+        return addition
+
+    # If the addition is already fully present at the end, keep caption as-is.
+    prev_n = _norm_tokens(prev)
+    add_tokens = _raw_tokens(addition)
+    add_pairs: list[tuple[int, str]] = []
+    for idx, tok in enumerate(add_tokens):
+        n = _norm_token(tok)
+        if n:
+            add_pairs.append((idx, n))
+    add_n = [n for _, n in add_pairs]
+    if add_n and _token_overlap_size(prev_n, add_n, min_size=1) >= len(add_n):
+        return prev
+
+    overlap = _token_overlap_size(prev_n, add_n, min_size=1)
+    if overlap and overlap < len(add_pairs):
+        start = add_pairs[overlap][0]
+        rest = " ".join(add_tokens[start:]).strip()
+        if not rest:
+            return prev
+        return f"{prev} {rest}".strip()
+    if overlap >= len(add_pairs):
+        return prev
+    return f"{prev} {addition}".strip()
+
+
+def merge_live_caption(
+    previous: str,
+    window_text: str,
+    *,
+    previous_window: str | None = None,
+) -> str:
+    """Merge an overlapping-window transcript into the running live caption.
+
+    Invariant: the returned caption never shrinks versus ``previous``. Overlap
+    audio is deduplicated by comparing against the previous window (preferred)
+    or the caption tail, then only new words are appended.
+    """
+    prev = _clean_caption(previous)
+    cur = _clean_caption(window_text)
     if not cur:
         return prev
     if not prev:
         return cur
-    if cur.lower() in prev.lower():
+
+    # Prefer window-to-window novel extraction (correct for 10s/5s overlap).
+    if previous_window:
+        novel = _novel_suffix_from_window(previous_window, cur)
+    else:
+        novel = ""
+
+    # Fallback: treat the running caption as the overlap anchor.
+    if not novel:
+        novel = _novel_suffix_from_window(prev, cur)
+
+    # Last resort: if novel detection failed entirely, append the window only
+    # when it is not already contained in the caption (avoid wipe/replace).
+    if not novel:
+        cur_n = _norm_tokens(cur)
+        prev_n = _norm_tokens(prev)
+        if cur_n and any(
+            prev_n[i : i + len(cur_n)] == cur_n
+            for i in range(0, max(1, len(prev_n) - len(cur_n) + 1))
+        ):
+            return prev
+        novel = cur
+
+    merged = _append_novel(prev, novel)
+
+    # Hard monotonic guard — never let dedupe erase earlier speech.
+    if len(_raw_tokens(merged)) < len(_raw_tokens(prev)):
+        logger.warning(
+            "Live caption merge tried to shrink (%d -> %d tokens); keeping previous.",
+            len(_raw_tokens(prev)),
+            len(_raw_tokens(merged)),
+        )
         return prev
-
-    prev_tokens = prev.split()
-    cur_tokens = cur.split()
-    max_overlap = min(len(prev_tokens), len(cur_tokens), 40)
-    overlap = 0
-    for size in range(max_overlap, 0, -1):
-        left = [t.lower() for t in prev_tokens[-size:]]
-        right = [t.lower() for t in cur_tokens[:size]]
-        if left == right:
-            overlap = size
-            break
-
-    if overlap == 0:
-        prev_l = prev.lower()
-        cur_l = cur.lower()
-        max_check = min(len(prev_l), len(cur_l), 80)
-        for n in range(max_check, 2, -1):
-            if prev_l.endswith(cur_l[:n]):
-                suffix = cur[n:].lstrip(" ,.;:-")
-                if not suffix:
-                    return prev
-                joiner = "" if prev.endswith((" ", "\n")) or suffix[:1].isspace() else " "
-                return f"{prev}{joiner}{suffix}".strip()
-        return f"{prev} {cur}".strip()
-
-    merged = prev_tokens + cur_tokens[overlap:]
-    return " ".join(merged).strip()
+    return merged
 
 
 def _segments_to_list(segments) -> list[Segment]:

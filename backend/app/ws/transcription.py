@@ -44,7 +44,12 @@ async def _send(ws: WebSocket, payload: dict) -> None:
     await ws.send_text(json.dumps(payload))
 
 
-def _finalize_blocking(meeting_id: str, pcm_bytes: bytes, language: str) -> dict:
+def _finalize_blocking(
+    meeting_id: str,
+    pcm_bytes: bytes,
+    language: str,
+    live_caption: str = "",
+) -> dict:
     """Run the full-accuracy finalization pass and persist results (blocking)."""
     db = SessionLocal()
     try:
@@ -63,9 +68,40 @@ def _finalize_blocking(meeting_id: str, pcm_bytes: bytes, language: str) -> dict
             # Whisper ASR full-accuracy pass on the complete recording.
             result = asr.transcribe_pcm_bytes(pcm_bytes, language, live=False)
         except asr.ASRUnavailable as exc:
-            meeting.status = "failed"
-            db.commit()
-            return {"ok": False, "message": str(exc)}
+            # Fall back to the accumulated live caption rather than losing speech.
+            live = (live_caption or "").strip()
+            if live:
+                result = asr.ASRResult(
+                    text=live,
+                    segments=[asr.Segment(text=live, start=0.0, end=meeting.duration_seconds or 0.0)],
+                    engine="whisper-live-fallback",
+                    language=language,
+                )
+            else:
+                meeting.status = "failed"
+                db.commit()
+                return {"ok": False, "message": str(exc)}
+
+        # If the final pass is markedly shorter than live captions, keep the
+        # richer live text so the finalized transcript is not incomplete.
+        live = (live_caption or "").strip()
+        final_text = (result.text or "").strip()
+        live_words = len(live.split()) if live else 0
+        final_words = len(final_text.split()) if final_text else 0
+        if live_words > 0 and final_words < max(1, int(live_words * 0.6)):
+            logger.warning(
+                "Final ASR (%d words) shorter than live caption (%d words); "
+                "preferring live caption for meeting %s",
+                final_words,
+                live_words,
+                meeting_id,
+            )
+            result = asr.ASRResult(
+                text=live,
+                segments=[asr.Segment(text=live, start=0.0, end=meeting.duration_seconds or 0.0)],
+                engine=f"{result.engine}+live-caption",
+                language=language,
+            )
 
         asr.persist_transcript(db, meeting, result)
         db.commit()
@@ -90,47 +126,56 @@ async def _emit_live_window(
     language: str,
     seq: int,
     live_caption: str,
-) -> str:
-    """Transcribe one live window and merge into the cumulative caption."""
+    previous_window: str = "",
+) -> tuple[str, str]:
+    """Transcribe one live window and merge into the cumulative caption.
+
+    Returns ``(live_caption, window_text_used_as_previous)``.
+    """
     samples = audio.pcm16_to_float32(chunk)
     # Only skip completely empty / digital-silence frames. Quiet speech must
     # still reach Whisper so live captions are not artificially restricted.
     if samples.size == 0 or float(np.max(np.abs(samples))) < 0.0008:
-        return live_caption
+        return live_caption, previous_window
 
     result = await asyncio.to_thread(asr.transcribe_pcm, samples, language, live=True)
     window_text = result.text
     if not window_text:
-        return live_caption
+        return live_caption, previous_window
 
-    merged = asr.merge_live_caption(live_caption, window_text)
-    if merged == live_caption:
-        return live_caption
-
-    await _send(
-        websocket,
-        {
-            "type": "live_caption",
-            "seq": seq,
-            "text": merged,
-            "engine": "whisper",
-        },
+    merged = asr.merge_live_caption(
+        live_caption,
+        window_text,
+        previous_window=previous_window,
     )
-    # Also keep legacy live_segment for older clients / persistence.
-    segs = result.segments
-    await _send(
-        websocket,
-        {
-            "type": "live_segment",
-            "seq": seq,
-            "text": window_text,
-            "start": segs[0].start if segs else 0.0,
-            "end": segs[-1].end if segs else 0.0,
-            "engine": "whisper",
-        },
-    )
-    _persist_live_segment(meeting_id, seq, window_text)
-    return merged
+    # Monotonic guard at the socket layer too.
+    if len(merged.split()) < len((live_caption or "").split()):
+        merged = live_caption
+    if merged != live_caption:
+        await _send(
+            websocket,
+            {
+                "type": "live_caption",
+                "seq": seq,
+                "text": merged,
+                "engine": "whisper",
+            },
+        )
+        # Also keep legacy live_segment for older clients / persistence.
+        segs = result.segments
+        await _send(
+            websocket,
+            {
+                "type": "live_segment",
+                "seq": seq,
+                "text": window_text,
+                "start": segs[0].start if segs else 0.0,
+                "end": segs[-1].end if segs else 0.0,
+                "engine": "whisper",
+            },
+        )
+        _persist_live_segment(meeting_id, seq, window_text)
+    return merged, window_text
 
 
 @router.websocket("/ws/transcribe")
@@ -179,6 +224,7 @@ async def transcribe_ws(websocket: WebSocket):
     window = bytearray()
     seq = 0
     live_caption = ""
+    previous_window = ""
 
     window_seconds = max(2.0, float(settings.whisper_live_window_seconds))
     hop_seconds = max(0.5, float(settings.whisper_live_hop_seconds))
@@ -213,13 +259,14 @@ async def transcribe_ws(websocket: WebSocket):
                         window.clear()
                     seq += 1
                     try:
-                        live_caption = await _emit_live_window(
+                        live_caption, previous_window = await _emit_live_window(
                             websocket,
                             meeting_id=meeting_id,
                             chunk=chunk,
                             language=language,
                             seq=seq,
                             live_caption=live_caption,
+                            previous_window=previous_window,
                         )
                     except Exception as exc:  # keep the stream alive on model errors
                         logger.exception("Live transcription error: %s", exc)
@@ -244,13 +291,14 @@ async def transcribe_ws(websocket: WebSocket):
     if live_available and len(window) >= int(0.4 * settings.audio_sample_rate * 2):
         seq += 1
         try:
-            live_caption = await _emit_live_window(
+            live_caption, previous_window = await _emit_live_window(
                 websocket,
                 meeting_id=meeting_id,
                 chunk=bytes(window),
                 language=language,
                 seq=seq,
                 live_caption=live_caption,
+                previous_window=previous_window,
             )
         except Exception as exc:
             logger.exception("Live flush transcription error: %s", exc)
@@ -262,11 +310,19 @@ async def transcribe_ws(websocket: WebSocket):
         pass
 
     if len(all_pcm) < 2:
+        # Prefer whatever live caption we accumulated over an empty final.
+        fallback = (live_caption or "").strip()
         _mark_status(meeting_id, "finalized")
         try:
             await _send(
                 websocket,
-                {"type": "final_transcript", "text": "", "segments": []},
+                {
+                    "type": "final_transcript",
+                    "text": fallback,
+                    "segments": (
+                        [{"text": fallback, "start": 0.0, "end": 0.0}] if fallback else []
+                    ),
+                },
             )
             await websocket.close()
         except Exception:
@@ -274,7 +330,11 @@ async def transcribe_ws(websocket: WebSocket):
         return
 
     result = await asyncio.to_thread(
-        _finalize_blocking, meeting_id, bytes(all_pcm), language
+        _finalize_blocking,
+        meeting_id,
+        bytes(all_pcm),
+        language,
+        live_caption,
     )
     try:
         if result.get("ok"):

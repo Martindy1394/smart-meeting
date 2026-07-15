@@ -120,8 +120,33 @@ export function useRecorder({ onFinalTranscript } = {}) {
           setTranscriptionAvailable(data.transcription_available);
           setMessage(data.message || "");
         } else if (data.type === "live_caption") {
-          // Cumulative caption from overlapping windows — show as-is.
-          setLiveText(data.text || "");
+          // Cumulative caption — never allow a shorter update to erase older words
+          // (protects against aggressive overlap dedupe or WS reconnect resets).
+          const incoming = (data.text || "").trim();
+          if (!incoming) return;
+          setLiveText((prev) => {
+            const current = (prev || "").trim();
+            if (!current) return incoming;
+            if (incoming === current) return prev;
+            if (incoming.startsWith(current)) return incoming;
+            if (current.startsWith(incoming)) return prev;
+            // Reconnect / reset case: server restarted from a short window.
+            if (incoming.length < current.length * 0.8) {
+              const curWords = current.toLowerCase().split(/\s+/);
+              const inWords = incoming.toLowerCase().split(/\s+/);
+              let overlap = 0;
+              const max = Math.min(curWords.length, inWords.length, 12);
+              for (let n = max; n >= 2; n -= 1) {
+                if (curWords.slice(-n).join(" ") === inWords.slice(0, n).join(" ")) {
+                  overlap = n;
+                  break;
+                }
+              }
+              const addition = incoming.split(/\s+/).slice(overlap).join(" ").trim();
+              return addition ? `${current} ${addition}`.trim() : current;
+            }
+            return incoming.length >= current.length ? incoming : prev;
+          });
         } else if (data.type === "live_segment") {
           // Legacy per-chunk segments (kept for compatibility / persistence).
           liveSegmentsRef.current[data.seq] = data.text;
