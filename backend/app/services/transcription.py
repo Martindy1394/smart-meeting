@@ -194,8 +194,12 @@ def _forced_language(_requested: str | None) -> str:
 
 def _is_junk_transcript(text: str) -> bool:
     """True when Whisper output looks like silence/spam hallucination."""
-    cleaned = _collapse_hallucinations(text or "")
+    raw = (text or "").strip()
+    cleaned = _collapse_hallucinations(raw)
     if not cleaned:
+        return True
+    # Mostly a repetition loop that collapsed away (e.g. Pag-papapapa… → Pag-pa).
+    if len(raw) >= 24 and len(cleaned) < max(8, int(len(raw) * 0.3)):
         return True
     low = cleaned.lower()
     for phrase in _HALLUCINATION_PHRASES:
