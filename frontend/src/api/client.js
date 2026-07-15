@@ -32,7 +32,10 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
-    throw new ApiError("Network error — is the server reachable?", 0);
+    throw new ApiError(
+      "Network error — cannot reach the API. Use http://127.0.0.1:8000/ and make sure port 8000 is Forwarded in Cursor → Ports.",
+      0
+    );
   }
 
   if (res.status === 204) return null;

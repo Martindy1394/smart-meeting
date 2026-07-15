@@ -43,14 +43,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS — in development, accept any localhost / Cursor preview origin so
+# port-forwarded browsers don't fail preflight when the tunnel host differs.
+if settings.debug:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|.*\.cursor\.sh|.*\.cursorapi\.com)(:\d+)?",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 @app.get("/api/health", tags=["system"])
