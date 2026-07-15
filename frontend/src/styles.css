@@ -942,7 +942,7 @@ select.inline {
   opacity: 0.9;
 }
 .recording-timer-value {
-  font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 1.05em;
 }
 .mic-meter {
