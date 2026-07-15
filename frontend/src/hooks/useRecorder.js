@@ -25,6 +25,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const stoppingRef = useRef(false);
   const keepaliveRef = useRef(null);
   const audioWatchRef = useRef(null);
+  const onFinalRef = useRef(onFinalTranscript);
+  const pendingPcmRef = useRef([]);
+  const bytesSentRef = useRef(0);
+
+  useEffect(() => {
+    onFinalRef.current = onFinalTranscript;
+  }, [onFinalTranscript]);
 
   const composeLive = useCallback(() => {
     const keys = Object.keys(liveSegmentsRef.current)
@@ -101,6 +108,19 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
   const openSocket = useCallback(
     (meetingId) => {
+      // Close a prior socket without triggering reconnect storms.
+      const prev = wsRef.current;
+      if (prev) {
+        try {
+          prev.onclose = null;
+          prev.onerror = null;
+          prev.onmessage = null;
+          prev.close();
+        } catch {
+          /* ignore */
+        }
+      }
+
       const ws = new WebSocket(buildWsUrl(meetingId));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
@@ -110,6 +130,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
         setConnectionState("connected");
         reconnectRef.current.attempts = 0;
         ws.send(JSON.stringify({ type: "start" }));
+        // Flush any PCM buffered while the socket was down.
+        const pending = pendingPcmRef.current;
+        while (pending.length && ws.readyState === WebSocket.OPEN) {
+          const chunk = pending.shift();
+          ws.send(chunk);
+          bytesSentRef.current += chunk.byteLength || chunk.length || 0;
+        }
         // Client keepalive — keeps proxies from idling out 8h+ board meetings.
         if (keepaliveRef.current) clearInterval(keepaliveRef.current);
         keepaliveRef.current = setInterval(() => {
@@ -117,7 +144,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
           if (sock && sock.readyState === WebSocket.OPEN) {
             sock.send(JSON.stringify({ type: "ping", ts: Date.now() }));
           }
-        }, 25000);
+        }, 20000);
       };
 
       ws.onmessage = (evt) => {
@@ -201,7 +228,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
           setLiveText("");
           setRecording(false);
           setStatus("idle");
-          if (onFinalTranscript) onFinalTranscript(data);
+          if (onFinalRef.current) onFinalRef.current(data);
         } else if (data.type === "error") {
           // Finished / fatal errors should not keep reconnecting.
           if (/already (finalized|processing|failed)/i.test(data.message || "")) {
@@ -216,6 +243,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
       };
 
       ws.onclose = () => {
+        // Ignore close events from superseded sockets.
+        if (wsRef.current && wsRef.current !== ws) return;
         setConnectionState("disconnected");
         if (keepaliveRef.current) {
           clearInterval(keepaliveRef.current);
@@ -227,7 +256,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         if (reconnectRef.current.active && !stoppingRef.current) {
           const attempts = ++reconnectRef.current.attempts;
           if (attempts <= 60) {
-            const delay = Math.min(1000 * 2 ** Math.min(attempts - 1, 5), 30000);
+            const delay = Math.min(1000 * 2 ** Math.min(attempts - 1, 4), 15000);
             setMessage(`Connection lost — reconnecting (attempt ${attempts})…`);
             reconnectRef.current.timer = setTimeout(
               () => openSocket(meetingId),
@@ -244,7 +273,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         // onclose handles reconnection logic.
       };
     },
-    [buildWsUrl, composeLive, onFinalTranscript]
+    [buildWsUrl, composeLive]
   );
 
   const start = useCallback(
@@ -260,12 +289,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setRecording(true);
       startedAtRef.current = Date.now();
       setElapsed(0);
+      pendingPcmRef.current = [];
+      bytesSentRef.current = 0;
       if (timerRef.current) clearInterval(timerRef.current);
       // Wall-clock based so long board meetings stay accurate if the tab throttles.
       timerRef.current = setInterval(() => {
-        const start = startedAtRef.current;
-        if (!start) return;
-        setElapsed(Math.floor((Date.now() - start) / 1000));
+        const started = startedAtRef.current;
+        if (!started) return;
+        setElapsed(Math.floor((Date.now() - started) / 1000));
       }, 250);
 
       // Open the WebSocket in parallel with mic setup (biggest perceived win).
@@ -273,11 +304,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
       let stream;
       try {
+        // echoCancellation OFF: wiring the worklet into the audio graph with AEC
+        // on can make Chromium mute the mic after a few seconds ("transcription
+        // stopped"). We also avoid connecting to audioCtx.destination below.
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
-            echoCancellation: true,
-            // Browser noise suppression can smear consonants Whisper needs.
+            echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: true,
           },
@@ -295,10 +328,29 @@ export function useRecorder({ onFinalTranscript } = {}) {
         throw err;
       }
       streamRef.current = stream;
+      const track = stream.getAudioTracks()[0];
+      if (track) {
+        track.onended = () => {
+          if (stoppingRef.current) return;
+          setStatus("error");
+          setMessage("Microphone stopped unexpectedly. Click Start recording to try again.");
+          setRecording(false);
+          reconnectRef.current.active = false;
+          if (wsRef.current) wsRef.current.close();
+        };
+        track.onmute = () => {
+          if (!stoppingRef.current) {
+            setMessage("Microphone muted — check browser / system mic settings.");
+          }
+        };
+        track.onunmute = () => {
+          if (!stoppingRef.current) setMessage("Listening…");
+        };
+      }
       setMessage("Connecting live transcription…");
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx();
+      const audioCtx = new AudioCtx({ sampleRate: 48000 });
       audioCtxRef.current = audioCtx;
       if (audioCtx.state === "suspended") {
         try {
@@ -307,6 +359,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
           /* ignore */
         }
       }
+      const resumeCtx = () => {
+        const ctx = audioCtxRef.current;
+        if (ctx && ctx.state === "suspended" && !stoppingRef.current) {
+          ctx.resume().catch(() => {});
+        }
+      };
+      audioCtx.addEventListener("statechange", resumeCtx);
       try {
         // Prefer a preloaded module; fall back to loading now.
         if (!window.__smWorkletReady) {
@@ -337,35 +396,51 @@ export function useRecorder({ onFinalTranscript } = {}) {
       sourceRef.current = source;
       const node = new AudioWorkletNode(audioCtx, "pcm-worklet");
       workletNodeRef.current = node;
-      // Buffer a few PCM chunks until the socket is open (parallel start).
-      const pending = [];
+      // Buffer PCM while the socket is connecting / reconnecting (~30s).
+      pendingPcmRef.current = [];
       node.port.onmessage = (event) => {
         if (event.data && event.data.type === "flushed") return;
+        const chunk = event.data;
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
-          while (pending.length) ws.send(pending.shift());
-          ws.send(event.data);
-        } else if (pending.length < 40) {
-          pending.push(event.data);
+          const pending = pendingPcmRef.current;
+          while (pending.length) {
+            const p = pending.shift();
+            ws.send(p);
+            bytesSentRef.current += p.byteLength || p.length || 0;
+          }
+          ws.send(chunk);
+          bytesSentRef.current += chunk.byteLength || chunk.length || 0;
+        } else if (pendingPcmRef.current.length < 120) {
+          // ~30s at 0.25s/chunk — covers reconnect backoff without dropping audio.
+          pendingPcmRef.current.push(chunk);
         }
       };
       source.connect(node);
-      // Keep the worklet in the graph without audible playback (avoids AEC feedback).
+      // Keep the worklet running WITHOUT connecting to speakers.
+      // Connecting a mic graph to destination + echoCancellation was muting
+      // capture after a few seconds in Chromium (captions looked "stopped").
       const silent = audioCtx.createGain();
       silent.gain.value = 0;
+      const sink = audioCtx.createMediaStreamDestination();
       node.connect(silent);
-      silent.connect(audioCtx.destination);
+      silent.connect(sink);
 
       setStatus("recording");
       setMessage("Listening…");
-      // Keep AudioContext alive during multi-hour sessions (browsers suspend it).
+      // Aggressively keep AudioContext alive (browsers suspend quiet contexts).
       if (audioWatchRef.current) clearInterval(audioWatchRef.current);
       audioWatchRef.current = setInterval(() => {
-        const ctx = audioCtxRef.current;
-        if (ctx && ctx.state === "suspended") {
-          ctx.resume().catch(() => {});
+        resumeCtx();
+        const t = streamRef.current?.getAudioTracks?.()[0];
+        if (t && t.readyState === "ended" && !stoppingRef.current) {
+          setStatus("error");
+          setMessage("Microphone stopped unexpectedly. Click Start recording to try again.");
+          setRecording(false);
+          reconnectRef.current.active = false;
+          if (wsRef.current) wsRef.current.close();
         }
-      }, 15000);
+      }, 1000);
     },
     [cleanupAudio, openSocket]
   );

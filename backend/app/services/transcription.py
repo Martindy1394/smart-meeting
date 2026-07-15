@@ -76,6 +76,8 @@ class _ModelCache:
         self._fw_models: dict[str, object] = {}
         self._hf_pipelines: dict[str, object] = {}
         self._lock = threading.Lock()
+        # faster-whisper models are not safe for concurrent transcribe() calls.
+        self._infer_lock = threading.Lock()
 
     def get_faster_whisper(self, model_size: str):
         try:
@@ -99,6 +101,9 @@ class _ModelCache:
                     compute_type=settings.whisper_compute_type,
                 )
             return self._fw_models[model_size]
+
+    def infer_lock(self) -> threading.Lock:
+        return self._infer_lock
 
     def get_hf_pipeline(self, model_id: str):
         """Load a Hugging Face fine-tuned Whisper ASR pipeline."""
@@ -165,6 +170,8 @@ def hiligaynon_model_id() -> str:
 _REPEAT_WORD_RE = re.compile(r"\b(\w+)(?:\s+\1){3,}\b", re.IGNORECASE)
 _STUTTER_RE = re.compile(r"([A-Za-zÀ-ÿ])(?:-\1){3,}", re.IGNORECASE)
 _HYPHEN_LOOP_RE = re.compile(r"\b(\w+)(?:-\1){2,}\b", re.IGNORECASE)
+# "papapapapa" / "nanananana" inside a single token.
+_SYLLABLE_LOOP_RE = re.compile(r"\b([A-Za-zÀ-ÿ]{1,4}?)\1{3,}\b", re.IGNORECASE)
 
 
 def _collapse_hallucinations(text: str) -> str:
@@ -175,6 +182,7 @@ def _collapse_hallucinations(text: str) -> str:
         text = _REPEAT_WORD_RE.sub(r"\1", text)
         text = _STUTTER_RE.sub(r"\1", text)
         text = _HYPHEN_LOOP_RE.sub(r"\1", text)
+        text = _SYLLABLE_LOOP_RE.sub(r"\1", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -197,8 +205,27 @@ def _is_junk_transcript(text: str) -> bool:
     parts = [p.strip() for p in re.split(r"[.!?]+", cleaned) if p.strip()]
     if len(parts) >= 3 and len(set(p.lower() for p in parts)) == 1:
         return True
-    tokens = re.findall(r"[a-zA-ZÀ-ÿ0-9]+", cleaned)
+    tokens = re.findall(r"[a-zA-ZÀ-ÿ0-9']+", cleaned)
     if not tokens:
+        return True
+
+    def _low_entropy_token(tok: str) -> bool:
+        if len(tok) < 10:
+            return False
+        low = tok.lower()
+        if len(set(low)) <= 3:
+            return True
+        for n in (1, 2, 3, 4):
+            unit = low[:n]
+            if not unit:
+                continue
+            repeats = len(low) // n
+            if repeats >= 4 and low.startswith(unit * repeats):
+                return True
+        return False
+
+    # Long nonsense tokens ("papapapapa…") often survive word-level filters.
+    if any(_low_entropy_token(t) for t in tokens):
         return True
     # Dominant repeated token (e.g. pag-pag-pag… after collapse still short).
     if len(tokens) >= 4:
@@ -207,8 +234,24 @@ def _is_junk_transcript(text: str) -> bool:
             key = t.lower()
             counts[key] = counts.get(key, 0) + 1
         top_n = max(counts.values())
-        if top_n / len(tokens) >= 0.6:
+        if top_n / len(tokens) >= 0.5:
             return True
+    # Repeated bigram/trigram loops: "hindi ko hindi ko hindi ko…"
+    # These freeze live captions after a couple of seconds if left unfiltered.
+    if len(tokens) >= 6:
+        norms = [t.lower() for t in tokens]
+        for n in (2, 3):
+            grams = [
+                " ".join(norms[i : i + n]) for i in range(0, len(norms) - n + 1)
+            ]
+            if not grams:
+                continue
+            freq: dict[str, int] = {}
+            for g in grams:
+                freq[g] = freq.get(g, 0) + 1
+            _top_g, top_c = max(freq.items(), key=lambda kv: kv[1])
+            if top_c >= 3 and (top_c * n) >= int(len(norms) * 0.5):
+                return True
     return False
 
 
@@ -234,49 +277,17 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
 
     model = _cache.get_faster_whisper(settings.whisper_live_model)
     lang = _forced_language(language)
-    segments, info = model.transcribe(
-        pcm,
-        language=lang,
-        task=_WHISPER_TASK,
-        beam_size=3,
-        best_of=3,
-        temperature=0.0,
-        # Light VAD reduces silence hallucinations on live windows.
-        vad_filter=True,
-        vad_parameters={
-            "onset": 0.45,
-            "offset": 0.35,
-            "min_speech_duration_ms": 120,
-            "min_silence_duration_ms": 400,
-            "speech_pad_ms": 200,
-        },
-        condition_on_previous_text=False,
-        without_timestamps=False,
-        no_speech_threshold=0.5,
-        compression_ratio_threshold=2.4,
-        log_prob_threshold=-1.0,
-        initial_prompt=None,
-    )
-    out: list[Segment] = []
-    for s in segments:
-        text = _collapse_hallucinations((s.text or "").strip())
-        if not text or not any(ch.isalnum() for ch in text):
-            continue
-        if _is_junk_transcript(text):
-            continue
-        out.append(Segment(text=text, start=s.start, end=s.end))
 
-    # If forced-language decode produced only junk, retry once with auto-detect
-    # so English / mixed board speech still captions.
-    if not out:
-        try:
-            segments, info = model.transcribe(
+    def _run(decode_language: str | None):
+        with _cache.infer_lock():
+            return model.transcribe(
                 pcm,
-                language=None,
+                language=decode_language,
                 task=_WHISPER_TASK,
                 beam_size=3,
                 best_of=3,
                 temperature=0.0,
+                # Light VAD reduces silence hallucinations on live windows.
                 vad_filter=True,
                 vad_parameters={
                     "onset": 0.45,
@@ -292,6 +303,22 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
                 log_prob_threshold=-1.0,
                 initial_prompt=None,
             )
+
+    segments, info = _run(lang)
+    out: list[Segment] = []
+    for s in segments:
+        text = _collapse_hallucinations((s.text or "").strip())
+        if not text or not any(ch.isalnum() for ch in text):
+            continue
+        if _is_junk_transcript(text):
+            continue
+        out.append(Segment(text=text, start=s.start, end=s.end))
+
+    # If forced-language decode produced only junk, retry once with auto-detect
+    # so English / mixed board speech still captions.
+    if not out:
+        try:
+            segments, info = _run(None)
             detected = getattr(info, "language", None)
             if detected:
                 logger.info("Live auto-detect retry language=%s", detected)
@@ -561,22 +588,28 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
     """Fallback final pass via faster-whisper (stock or converted model id)."""
     model = _cache.get_faster_whisper(settings.whisper_final_model)
     lang = _forced_language(language)
-    segments, info = model.transcribe(
-        audio_source if isinstance(audio_source, str) else _audio_to_float32(audio_source),
-        language=lang,
-        task=_WHISPER_TASK,
-        beam_size=5,
-        best_of=5,
-        temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-        vad_filter=True,
-        vad_parameters=_FINAL_VAD_PARAMS,
-        condition_on_previous_text=False,
-        without_timestamps=False,
-        initial_prompt=_INITIAL_PROMPT,
-        no_speech_threshold=0.55,
-        compression_ratio_threshold=2.4,
-        log_prob_threshold=-1.0,
+    audio_in = (
+        audio_source
+        if isinstance(audio_source, str)
+        else _audio_to_float32(audio_source)
     )
+    with _cache.infer_lock():
+        segments, info = model.transcribe(
+            audio_in,
+            language=lang,
+            task=_WHISPER_TASK,
+            beam_size=5,
+            best_of=5,
+            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            vad_filter=True,
+            vad_parameters=_FINAL_VAD_PARAMS,
+            condition_on_previous_text=False,
+            without_timestamps=False,
+            initial_prompt=_INITIAL_PROMPT,
+            no_speech_threshold=0.55,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
+        )
     detected = getattr(info, "language", None)
     if detected:
         logger.info("faster-whisper final language reported: %s", detected)
