@@ -376,7 +376,7 @@ export default function MeetingRoom({
   }
 
   return (
-    <div className="content">
+    <div className={`content ${historyView ? "history-detail" : ""}`}>
       {!recorder.transcriptionAvailable && recorder.message && (
         <div className="banner-warn">{recorder.message}</div>
       )}
@@ -424,7 +424,9 @@ export default function MeetingRoom({
                   </button>
                 </div>
               )}
-              <span className="card-tag">Whisper ASR · {meeting.language}</span>
+              {!historyView && (
+                <span className="card-tag">Whisper ASR · {meeting.language}</span>
+              )}
             </div>
           </div>
           <div className="card-body">

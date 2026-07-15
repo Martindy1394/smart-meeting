@@ -385,12 +385,35 @@ button {
   justify-content: flex-end;
 }
 .history-panel {
-  max-width: 920px;
+  max-width: 960px;
   width: 100%;
   margin: 0 auto;
+  min-height: calc(100% - 0px);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 .history-card {
-  margin-bottom: 20px;
+  margin-bottom: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* Override generic .card min-height so the list page fills the viewport cleanly. */
+  min-height: calc(100vh - 120px);
+}
+.history-card > .card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  flex: 1;
+  /* Generic .card-body uses pre-wrap for transcripts — that breaks History layout. */
+  white-space: normal;
+  overflow: hidden;
+}
+.history-card .settings-intro {
+  flex-shrink: 0;
+  margin: 0 0 14px;
 }
 .history-toolbar {
   display: flex;
@@ -398,6 +421,7 @@ button {
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .history-search {
   flex: 1;
@@ -417,29 +441,35 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 .history-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 14px 14px;
+  gap: 14px 16px;
+  padding: 14px 16px;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--surface-2);
-  flex-wrap: wrap;
+  width: 100%;
 }
 .history-row.active {
   border-color: var(--primary);
 }
 .history-row-main {
   min-width: 0;
-  flex: 1;
 }
 .history-row-title {
   font-weight: 700;
   font-size: 15px;
   margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .history-row-meta {
   display: flex;
@@ -455,6 +485,10 @@ button {
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+  flex-shrink: 0;
+}
+.recordings-panel .history-card > .card-body {
+  white-space: normal;
 }
 .recordings-panel .recording-row {
   display: flex;
@@ -500,6 +534,12 @@ button {
 
 .main {
   overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.main > .content {
+  flex: 1;
   min-height: 0;
 }
 .topbar {
@@ -555,6 +595,29 @@ button {
 }
 .content {
   padding: 24px 28px 60px;
+}
+.content.history-panel {
+  padding-bottom: 28px;
+}
+/* History detail (opened from History): stack the body cleanly without the live bar gap. */
+.content.history-detail {
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+}
+.content.history-detail .top-row {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  align-items: stretch;
+}
+.content.history-detail .top-row .details-card,
+.content.history-detail .top-row .transcript-card {
+  min-height: 420px;
+}
+.content.history-detail .bottom-cards {
+  margin-top: 4px;
+}
+.content.history-detail .history-audio-bar {
+  margin-top: 0;
 }
 
 /* ---------------- Badges / status ---------------- */
@@ -1045,8 +1108,20 @@ select.inline {
     display: inline-flex;
   }
   .top-row,
-  .bottom-cards {
+  .bottom-cards,
+  .content.history-detail .top-row {
     grid-template-columns: 1fr;
+  }
+  .history-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .history-row-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .history-card {
+    min-height: calc(100vh - 100px);
   }
 }
 @media (min-width: 861px) {
