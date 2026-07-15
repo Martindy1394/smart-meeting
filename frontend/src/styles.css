@@ -863,6 +863,52 @@ select.inline {
   margin-bottom: 20px;
   flex-wrap: wrap;
 }
+.record-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 168px;
+}
+.record-duration {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.record-duration.active {
+  color: #fecaca;
+  background: rgba(185, 28, 28, 0.18);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+.record-duration.finalizing {
+  color: var(--text);
+}
+.record-duration-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+.record-duration-value,
+.record-duration-idle {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 16px;
+  font-weight: 700;
+  color: inherit;
+}
+.record-duration-idle {
+  opacity: 0.75;
+}
 .audio-player-wrap {
   display: flex;
   align-items: center;

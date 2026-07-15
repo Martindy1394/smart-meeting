@@ -362,22 +362,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
               )}
             </h3>
             <div className="transcript-head-meta">
-              {(recorder.recording ||
-                recorder.status === "starting" ||
-                recorder.status === "finalizing") && (
-                <span
-                  className={`recording-timer ${recorder.recording || recorder.status === "starting" ? "active" : ""}`}
-                  aria-live="polite"
-                  aria-label={`Recording time ${fmtTime(recorder.elapsed)}`}
-                >
-                  <span className="recording-timer-label">
-                    {recorder.status === "finalizing" ? "Recorded" : "REC"}
-                  </span>
-                  <span className="recording-timer-value">
-                    {fmtTime(recorder.elapsed)}
-                  </span>
-                </span>
-              )}
               <span className="card-tag">Whisper ASR · {meeting.language}</span>
             </div>
           </div>
@@ -409,26 +393,62 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       </div>
 
       <div className="recorder-bar">
-        <button
-          className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
-          onClick={toggleRecord}
-          disabled={
-            asrBusy ||
-            isStarting ||
-            (recorder.recording ? recorder.status === "finalizing" : !canStart)
-          }
-          title={
-            !detailsReady && !recorder.recording
-              ? "Fill in all meeting details first"
-              : undefined
-          }
-        >
-          {isStarting
-            ? "Starting…"
-            : recorder.recording
-              ? "■ Stop recording"
-              : "● Start recording"}
-        </button>
+        <div className="record-control">
+          <button
+            className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
+            onClick={toggleRecord}
+            disabled={
+              asrBusy ||
+              isStarting ||
+              (recorder.recording ? recorder.status === "finalizing" : !canStart)
+            }
+            title={
+              !detailsReady && !recorder.recording
+                ? "Fill in all meeting details first"
+                : undefined
+            }
+          >
+            {isStarting
+              ? "Starting…"
+              : recorder.recording
+                ? "■ End meeting"
+                : "● Start recording"}
+          </button>
+          <div
+            className={`record-duration ${
+              recorder.recording || recorder.status === "starting"
+                ? "active"
+                : recorder.status === "finalizing"
+                  ? "finalizing"
+                  : ""
+            }`}
+            aria-live="polite"
+            aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
+          >
+            {(recorder.recording ||
+              recorder.status === "starting" ||
+              recorder.status === "finalizing" ||
+              recorder.elapsed > 0) && (
+              <>
+                {(recorder.recording || recorder.status === "starting") && (
+                  <span className="dot-live" />
+                )}
+                <span className="record-duration-label">
+                  {recorder.status === "finalizing" ? "Duration" : "Time"}
+                </span>
+                <span className="record-duration-value">
+                  {fmtTime(recorder.elapsed)}
+                </span>
+              </>
+            )}
+            {!recorder.recording &&
+              recorder.status !== "starting" &&
+              recorder.status !== "finalizing" &&
+              recorder.elapsed === 0 && (
+                <span className="record-duration-idle">00:00:00</span>
+              )}
+          </div>
+        </div>
 
         {!recorder.recording && (
           <div className="audio-player-wrap" title={audioUrl ? "Meeting recording" : "Recording available after you stop"}>
@@ -488,23 +508,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
         {!detailsReady && !recorder.recording && (
           <span className="card-tag">
             Fill in title, venue, date &amp; time, and attendees first
-          </span>
-        )}
-        {(recorder.recording ||
-          recorder.status === "starting" ||
-          recorder.status === "finalizing") && (
-          <span
-            className={`recording-timer bar ${recorder.recording || recorder.status === "starting" ? "active" : ""}`}
-            aria-live="polite"
-            aria-label={`Recording time ${fmtTime(recorder.elapsed)}`}
-          >
-            {(recorder.recording || recorder.status === "starting") && (
-              <span className="dot-live" />
-            )}
-            <span className="recording-timer-label">
-              {recorder.status === "finalizing" ? "Recorded" : "Recording"}
-            </span>
-            <span className="recording-timer-value">{fmtTime(recorder.elapsed)}</span>
           </span>
         )}
         {(recorder.status === "finalizing" || asrBusy) && (
