@@ -14,7 +14,7 @@ from . import __version__
 from .config import settings
 from .database import init_db
 from .routers import ai, auth, meetings
-from .services import llm, transcription
+from .services import asr, llm
 from .ws import transcription as ws_transcription
 
 logging.basicConfig(
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    description="Minute-making platform: live Whisper transcription, BART "
+    description="Minute-making platform: Whisper ASR transcription, BART "
     "summarization, and mBART translation.",
     lifespan=lifespan,
 )
@@ -65,10 +65,12 @@ else:
 
 @app.get("/api/health", tags=["system"])
 def health():
+    whisper_ok = asr.is_available()
     return {
         "status": "ok",
         "version": __version__,
-        "whisper_available": transcription.is_available(),
+        "asr_engine": asr.engine_name(),
+        "whisper_available": whisper_ok,
         "llm_available": llm.summarizer_available(),
         "environment": settings.environment,
     }

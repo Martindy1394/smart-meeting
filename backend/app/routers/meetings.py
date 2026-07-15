@@ -1,10 +1,11 @@
-"""Meeting management: list, create, read, update, delete, search, audio."""
+"""Meeting management: list, create, read, update, delete, search, audio, ASR."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -18,8 +19,14 @@ from ..schemas import (
     MeetingSummary,
     MeetingUpdate,
 )
+from ..services import asr, audio
+
+logger = logging.getLogger("smart_meeting.meetings")
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
+
+# Cap uploads so a single request cannot fill the disk (≈ 30 min of 16 kHz mono WAV).
+_MAX_UPLOAD_BYTES = 60 * 1024 * 1024
 
 
 def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
@@ -66,6 +73,52 @@ def _to_detail(m: Meeting) -> MeetingDetail:
     detail = MeetingDetail.model_validate(m)
     detail.has_audio = _has_audio(m)
     return detail
+
+
+def _run_whisper_on_meeting(meeting: Meeting, db: Session) -> MeetingDetail:
+    """Full-accuracy Whisper ASR on the meeting's saved audio file."""
+    if not _has_audio(meeting):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No audio recording is available to transcribe.",
+        )
+    if not asr.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Whisper ASR is not available on this server.",
+        )
+
+    meeting.status = "processing"
+    db.commit()
+
+    path = os.path.abspath(meeting.audio_path)
+    try:
+        result = asr.transcribe_file(path, meeting.language or "hil")
+    except asr.ASRUnavailable as exc:
+        meeting.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        )
+    except audio.AudioFormatError as exc:
+        meeting.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        )
+    except Exception as exc:
+        logger.exception("Whisper ASR failed for meeting %s", meeting.id)
+        meeting.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Whisper ASR failed: {exc}",
+        )
+
+    asr.persist_transcript(db, meeting, result)
+    db.commit()
+    db.refresh(meeting)
+    return _to_detail(meeting)
 
 
 @router.get("", response_model=list[MeetingSummary])
@@ -144,73 +197,64 @@ def get_meeting_audio(
     )
 
 
+@router.post("/{meeting_id}/audio", response_model=MeetingDetail)
+async def upload_meeting_audio(
+    meeting_id: str,
+    file: UploadFile = File(...),
+    transcribe: bool = Query(
+        default=True,
+        description="When true, run Whisper ASR on the uploaded audio immediately.",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload a WAV/PCM recording and optionally run Whisper ASR on it."""
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    data = await file.read()
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded audio file is empty.",
+        )
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Audio file is too large (max 60 MB).",
+        )
+
+    try:
+        path, duration = audio.save_uploaded_audio(
+            meeting_id, data, filename=file.filename or ""
+        )
+    except audio.AudioFormatError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    meeting.audio_path = path
+    meeting.duration_seconds = duration
+    # Clear previous transcript until Whisper re-processes (if requested).
+    if transcribe:
+        meeting.status = "processing"
+        meeting.final_transcript = ""
+    db.commit()
+
+    if not transcribe:
+        db.refresh(meeting)
+        return _to_detail(meeting)
+
+    return _run_whisper_on_meeting(meeting, db)
+
+
 @router.post("/{meeting_id}/retranscribe", response_model=MeetingDetail)
 def retranscribe_meeting(
     meeting_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Re-run Whisper final transcription on the saved WAV recording."""
-    from ..models import TranscriptSegment
-    from ..services import transcription
-
+    """Re-run Whisper ASR on the saved WAV recording."""
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    if not _has_audio(meeting):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No audio recording is available to transcribe.",
-        )
-    if not transcription.is_available():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Whisper is not available on this server.",
-        )
-
-    meeting.status = "processing"
-    db.commit()
-
-    path = os.path.abspath(meeting.audio_path)
-    try:
-        segments = transcription.transcribe_final(path, meeting.language or "hil")
-    except transcription.TranscriptionUnavailable as exc:
-        meeting.status = "failed"
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-        )
-    except Exception as exc:
-        meeting.status = "failed"
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Transcription failed: {exc}",
-        )
-
-    full_text = " ".join(s.text for s in segments).strip()
-    db.query(TranscriptSegment).filter(
-        TranscriptSegment.meeting_id == meeting_id
-    ).delete()
-    for i, seg in enumerate(segments):
-        db.add(
-            TranscriptSegment(
-                meeting_id=meeting_id,
-                kind="final",
-                text=seg.text,
-                start_time=seg.start,
-                end_time=seg.end,
-                seq=i,
-            )
-        )
-    meeting.final_transcript = full_text
-    # Transcript changed — clear derived AI outputs so they can be regenerated.
-    meeting.summary = ""
-    meeting.summary_format = ""
-    meeting.translation = ""
-    meeting.translation_language = ""
-    meeting.status = "finalized"
-    db.commit()
-    db.refresh(meeting)
-    return _to_detail(meeting)
+    return _run_whisper_on_meeting(meeting, db)
 
 
 @router.patch("/{meeting_id}", response_model=MeetingDetail)

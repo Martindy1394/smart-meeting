@@ -101,14 +101,18 @@ Open http://localhost:5173, create an account, click **New meeting**, and press
 > `requirements-ml.txt` (mBART). Install `requirements-ml.txt` and set the
 > Whisper model sizes in `.env` to enable the full high-accuracy pipeline.
 
-## The `InvokeLLM` / `TranscribeAudio` integrations
+## The `InvokeLLM` / Whisper ASR integrations
 
 All AI features flow through single, consistent integration surfaces:
 
 - `app/services/llm.py :: invoke_llm(task, text, **kwargs)` — `task="summarize"`
   routes to BART; `task="translate"` routes to mBART.
-- `app/services/transcription.py :: transcribe_live()` / `transcribe_final()` —
-  the fast and full-accuracy Whisper passes.
+- `app/services/asr.py` — **Whisper ASR** for all audio → text processing:
+  - `transcribe_pcm(..., live=True|False)` for live captions / full pass
+  - `transcribe_file(path)` for saved or uploaded WAV recordings
+  - `persist_transcript(...)` writes segments onto the meeting
+- `app/services/transcription.py` — lower-level faster-whisper live/final models
+  used by the ASR facade.
 
 ## Configuration
 
@@ -118,9 +122,11 @@ See `backend/.env.example`. Key variables:
 |---|---|---|
 | `JWT_SECRET_KEY` | dev value | **Change in production.** |
 | `DATABASE_URL` | `sqlite:///./smart_meeting.db` | Use a PostgreSQL DSN in prod. |
-| `WHISPER_LIVE_MODEL` | `base` | Fast live-caption model. |
-| `WHISPER_FINAL_MODEL` | `large-v3` | Full-accuracy finalization model. |
-| `WHISPER_DEFAULT_LANGUAGE` | `hil` | Hiligaynon. |
+| `WHISPER_LIVE_MODEL` | `small` | Fast live-caption Whisper model. |
+| `WHISPER_FINAL_MODEL` | `medium` | Full-accuracy Whisper ASR model. |
+| `WHISPER_LIVE_WINDOW_SECONDS` | `5.0` | Live ASR window length. |
+| `WHISPER_LIVE_HOP_SECONDS` | `1.0` | Live ASR hop / overlap step. |
+| `WHISPER_DEFAULT_LANGUAGE` | `hil` | Hiligaynon (auto-detect in Whisper). |
 | `BART_MODEL` | `facebook/bart-large-cnn` | Summarization. |
 | `MBART_MODEL` | `facebook/mbart-large-50-many-to-many-mmt` | Translation. |
 | `ALLOW_LLM_FALLBACK` | `true` | Enable extractive summary fallback. |
@@ -138,10 +144,13 @@ See `backend/.env.example`. Key variables:
 | GET | `/api/meetings/{id}` | ✓ | Detail (details + transcript/summary/translation) |
 | PATCH | `/api/meetings/{id}` | ✓ | Update title / venue / date / attendees |
 | DELETE | `/api/meetings/{id}` | ✓ | Delete |
+| GET | `/api/meetings/{id}/audio` | ✓ | Stream / download saved WAV |
+| POST | `/api/meetings/{id}/audio` | ✓ | Upload WAV/PCM (+ Whisper ASR) |
+| POST | `/api/meetings/{id}/retranscribe` | ✓ | Re-run Whisper ASR on saved audio |
 | GET | `/api/ai/languages` | ✓ | Supported languages |
 | POST | `/api/ai/summarize` | ✓ | BART summary (`bullets`/`numbered`) |
 | POST | `/api/ai/translate` | ✓ | mBART translation |
-| WS | `/ws/transcribe?token=&meeting_id=` | ✓ | Live PCM stream + finalization |
+| WS | `/ws/transcribe?token=&meeting_id=` | ✓ | Live PCM → Whisper ASR + finalize |
 
 ## Security notes
 

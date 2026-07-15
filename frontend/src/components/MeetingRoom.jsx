@@ -39,7 +39,11 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   const autoSummaryRef = useRef("");
   const [audioUrl, setAudioUrl] = useState(null);
   const [audioLoading, setAudioLoading] = useState(false);
+  const [asrBusy, setAsrBusy] = useState(false);
+  const [asrError, setAsrError] = useState("");
+  const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
   const audioUrlRef = useRef(null);
+  const uploadInputRef = useRef(null);
 
   const revokeAudioUrl = useCallback(() => {
     if (audioUrlRef.current) {
@@ -125,23 +129,30 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     [meeting.id, onMeetingUpdated]
   );
 
-  const onFinalTranscript = useCallback(
-    async (data) => {
-      const text = data.text || "";
+  const applyTranscriptResult = useCallback(
+    async (detailOrPayload, { persistDetails = false } = {}) => {
+      const text =
+        detailOrPayload.final_transcript ||
+        detailOrPayload.text ||
+        "";
       setFinalTranscript(text);
-      setStatus("finalized");
-      // Automatically persist meeting details after recording finishes.
-      await saveDetails({ silent: true });
+      setStatus(detailOrPayload.status || "finalized");
+      setHasAudio(Boolean(detailOrPayload.has_audio || text || audioUrl));
+      setAsrError("");
+      if (persistDetails) {
+        await saveDetails({ silent: true });
+      }
       if (onMeetingUpdated) onMeetingUpdated();
-      // Load the saved recording for playback beside the record button.
       await loadAudio(meeting.id);
-      // BART runs on the transcript immediately; English translation in parallel.
-      await Promise.all([
-        summarizeFromTranscript(summaryFormat),
-        translateToEnglish(text),
-      ]);
+      if (text.trim()) {
+        await Promise.all([
+          summarizeFromTranscript(summaryFormat),
+          translateToEnglish(text),
+        ]);
+      }
     },
     [
+      audioUrl,
       loadAudio,
       meeting.id,
       onMeetingUpdated,
@@ -150,6 +161,51 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       summaryFormat,
       translateToEnglish,
     ]
+  );
+
+  const onFinalTranscript = useCallback(
+    async (data) => {
+      // Live recording stop → Whisper ASR full-accuracy pass finished.
+      await applyTranscriptResult(
+        { text: data.text || "", status: "finalized", has_audio: true },
+        { persistDetails: true }
+      );
+    },
+    [applyTranscriptResult]
+  );
+
+  const runWhisperAsr = useCallback(async () => {
+    setAsrBusy(true);
+    setAsrError("");
+    try {
+      const detail = await api.retranscribeMeeting(meeting.id);
+      await applyTranscriptResult(detail);
+    } catch (err) {
+      setAsrError(err.message || "Whisper ASR failed.");
+    } finally {
+      setAsrBusy(false);
+    }
+  }, [applyTranscriptResult, meeting.id]);
+
+  const uploadForWhisper = useCallback(
+    async (file) => {
+      if (!file) return;
+      setAsrBusy(true);
+      setAsrError("");
+      try {
+        const detail = await api.uploadMeetingAudio(meeting.id, file, {
+          transcribe: true,
+        });
+        setHasAudio(true);
+        await applyTranscriptResult(detail);
+      } catch (err) {
+        setAsrError(err.message || "Audio upload / Whisper ASR failed.");
+      } finally {
+        setAsrBusy(false);
+        if (uploadInputRef.current) uploadInputRef.current.value = "";
+      }
+    },
+    [applyTranscriptResult, meeting.id]
   );
 
   const recorder = useRecorder({ onFinalTranscript });
@@ -180,7 +236,9 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     setTranslationLang(meeting.translation_language || "English");
     setSummaryError("");
     setTranslateError("");
+    setAsrError("");
     setSummaryEngine("");
+    setHasAudio(Boolean(meeting.has_audio));
     autoTranslateRef.current = meeting.translation ? meeting.final_transcript || "" : "";
     autoSummaryRef.current = meeting.summary
       ? `${meeting.id}:${meeting.summary_format || "bullets"}`
@@ -271,21 +329,25 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
                 </span>
               )}
             </h3>
-            <span className="card-tag">Whisper · {meeting.language}</span>
+            <span className="card-tag">Whisper ASR · {meeting.language}</span>
           </div>
           <div className="card-body">
+            {asrError && <div className="error-banner">{asrError}</div>}
             {showLive && recorder.liveText ? (
               <span className="transcript-live">{recorder.liveText}</span>
             ) : hasTranscript ? (
               finalTranscript
             ) : showLive ? (
               <span className="transcript-live">Listening…</span>
+            ) : asrBusy ? (
+              <div className="center-spin">
+                <span className="spinner" /> Running Whisper ASR on audio…
+              </div>
             ) : (
               <div className="placeholder">
-                <div style={{ fontSize: 32 }}>🎙️</div>
-                Press <strong>Start recording</strong> to begin live
-                transcription. The final transcript is refined to full accuracy
-                when you stop.
+                Press <strong>Start recording</strong> for live Whisper captions,
+                or upload a WAV to transcribe with Whisper ASR. Stopping a
+                recording runs the full-accuracy Whisper pass automatically.
               </div>
             )}
           </div>
@@ -296,7 +358,10 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
         <button
           className={`btn record ${recorder.recording ? "active" : ""}`}
           onClick={toggleRecord}
-          disabled={recorder.recording ? recorder.status === "finalizing" : !canStart}
+          disabled={
+            asrBusy ||
+            (recorder.recording ? recorder.status === "finalizing" : !canStart)
+          }
           title={
             !detailsReady && !recorder.recording
               ? "Fill in all meeting details first"
@@ -323,6 +388,44 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
           </div>
         )}
 
+        {!recorder.recording && (
+          <>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
+              hidden
+              onChange={(e) => uploadForWhisper(e.target.files?.[0])}
+            />
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
+              onClick={() => uploadInputRef.current?.click()}
+              title="Upload WAV/PCM and run Whisper ASR"
+            >
+              {asrBusy ? <span className="spinner" /> : "Upload audio"}
+            </button>
+            {(hasAudio || audioUrl) && (
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={asrBusy || recorder.status === "finalizing"}
+                onClick={runWhisperAsr}
+                title="Run Whisper ASR on the saved recording"
+              >
+                {asrBusy ? (
+                  <span className="spinner" />
+                ) : hasTranscript ? (
+                  "Re-transcribe"
+                ) : (
+                  "Transcribe with Whisper"
+                )}
+              </button>
+            )}
+          </>
+        )}
+
         {!detailsReady && !recorder.recording && (
           <span className="card-tag">
             Fill in title, venue, date &amp; time, and attendees first
@@ -334,9 +437,12 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             <span className="timer">{fmtTime(recorder.elapsed)}</span>
           </>
         )}
-        {recorder.status === "finalizing" && (
+        {(recorder.status === "finalizing" || asrBusy) && (
           <span className="center-spin" style={{ padding: 0 }}>
-            <span className="spinner" /> Finalizing full-accuracy transcript…
+            <span className="spinner" />{" "}
+            {asrBusy
+              ? "Whisper ASR processing audio…"
+              : "Finalizing full-accuracy Whisper transcript…"}
           </span>
         )}
         {recorder.connectionState === "connecting" && (

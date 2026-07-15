@@ -33,7 +33,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..deps import get_user_from_token
 from ..models import Meeting, TranscriptSegment
-from ..services import audio, transcription
+from ..services import asr, audio
 
 logger = logging.getLogger("smart_meeting.ws")
 
@@ -60,39 +60,23 @@ def _finalize_blocking(meeting_id: str, pcm_bytes: bytes, language: str) -> dict
         db.commit()
 
         try:
-            samples = audio.pcm16_to_float32(pcm_bytes)
-            segments = transcription.transcribe_final(samples, language)
-        except transcription.TranscriptionUnavailable as exc:
+            # Whisper ASR full-accuracy pass on the complete recording.
+            result = asr.transcribe_pcm_bytes(pcm_bytes, language, live=False)
+        except asr.ASRUnavailable as exc:
             meeting.status = "failed"
             db.commit()
             return {"ok": False, "message": str(exc)}
 
-        full_text = " ".join(s.text for s in segments).strip()
-
-        # Replace live segments with finalized, full-accuracy segments.
-        db.query(TranscriptSegment).filter(
-            TranscriptSegment.meeting_id == meeting_id
-        ).delete()
-        for i, seg in enumerate(segments):
-            db.add(
-                TranscriptSegment(
-                    meeting_id=meeting_id,
-                    kind="final",
-                    text=seg.text,
-                    start_time=seg.start,
-                    end_time=seg.end,
-                    seq=i,
-                )
-            )
-        meeting.final_transcript = full_text
-        meeting.status = "finalized"
+        asr.persist_transcript(db, meeting, result)
         db.commit()
         return {
             "ok": True,
-            "text": full_text,
+            "text": result.text,
             "segments": [
-                {"text": s.text, "start": s.start, "end": s.end} for s in segments
+                {"text": s.text, "start": s.start, "end": s.end}
+                for s in result.segments
             ],
+            "engine": result.engine,
         }
     finally:
         db.close()
@@ -114,12 +98,12 @@ async def _emit_live_window(
     if samples.size == 0 or float(np.max(np.abs(samples))) < 0.0008:
         return live_caption
 
-    segs = await asyncio.to_thread(transcription.transcribe_live, samples, language)
-    window_text = " ".join(s.text for s in segs).strip()
+    result = await asyncio.to_thread(asr.transcribe_pcm, samples, language, live=True)
+    window_text = result.text
     if not window_text:
         return live_caption
 
-    merged = transcription.merge_live_caption(live_caption, window_text)
+    merged = asr.merge_live_caption(live_caption, window_text)
     if merged == live_caption:
         return live_caption
 
@@ -129,9 +113,11 @@ async def _emit_live_window(
             "type": "live_caption",
             "seq": seq,
             "text": merged,
+            "engine": "whisper",
         },
     )
     # Also keep legacy live_segment for older clients / persistence.
+    segs = result.segments
     await _send(
         websocket,
         {
@@ -140,6 +126,7 @@ async def _emit_live_window(
             "text": window_text,
             "start": segs[0].start if segs else 0.0,
             "end": segs[-1].end if segs else 0.0,
+            "engine": "whisper",
         },
     )
     _persist_live_segment(meeting_id, seq, window_text)
@@ -171,17 +158,18 @@ async def transcribe_ws(websocket: WebSocket):
 
     await websocket.accept()
 
-    live_available = transcription.is_available()
+    live_available = asr.is_available()
     await _send(
         websocket,
         {
             "type": "status",
             "transcription_available": live_available,
+            "asr_engine": asr.engine_name(),
             "message": (
-                "Live transcription active — continuous unrestricted captions."
+                "Whisper ASR active — live captions with full-accuracy finalize."
                 if live_available
-                else "Whisper backend not installed — audio will still be saved "
-                "and can be finalized once ML dependencies are available."
+                else "Whisper ASR not installed — audio will still be saved "
+                "and can be transcribed once ML dependencies are available."
             ),
         },
     )

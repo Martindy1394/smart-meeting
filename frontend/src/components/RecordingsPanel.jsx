@@ -168,7 +168,7 @@ function RecordingRow({
           className="btn secondary meeting-action-btn"
           onClick={handleTranscribe}
           disabled={transcribing}
-          title="Run Whisper transcription on this recording"
+          title="Run Whisper ASR on this recording"
         >
           {transcribing ? (
             <span className="spinner" />

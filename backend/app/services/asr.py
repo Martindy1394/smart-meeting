@@ -1,0 +1,117 @@
+"""Whisper ASR — automatic speech recognition for meeting audio.
+
+This is the single integration surface for turning audio into text:
+
+* Live PCM windows → ``transcribe_pcm`` (fast captions)
+* Saved / uploaded WAV files → ``transcribe_file`` (full-accuracy pass)
+* Meeting pipeline → ``process_meeting_audio`` (persist segments + transcript)
+
+All paths use OpenAI Whisper via ``faster-whisper`` (see ``transcription.py``).
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+import numpy as np
+
+from . import audio, transcription
+
+logger = logging.getLogger("smart_meeting.asr")
+
+# Public alias so callers can treat ASR errors uniformly.
+ASRUnavailable = transcription.TranscriptionUnavailable
+Segment = transcription.Segment
+
+
+@dataclass
+class ASRResult:
+    """Normalized Whisper ASR output for a processed audio source."""
+
+    text: str
+    segments: list[Segment]
+    engine: str = "whisper"
+    language: str | None = None
+
+
+def is_available() -> bool:
+    """True when the Whisper ASR backend can be loaded."""
+    return transcription.is_available()
+
+
+def engine_name() -> str:
+    return "whisper" if is_available() else "unavailable"
+
+
+def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool = False) -> ASRResult:
+    """Run Whisper ASR on a float32 PCM buffer.
+
+    ``live=True`` uses the low-latency live model; otherwise the full-accuracy
+    finalization model is used (same quality as file transcription).
+    """
+    if not is_available():
+        raise ASRUnavailable(
+            "Whisper ASR is not installed. Install backend ML deps: "
+            "pip install -r requirements-ml.txt"
+        )
+    if pcm is None or len(pcm) == 0:
+        return ASRResult(text="", segments=[], engine="whisper", language=language)
+
+    if live:
+        segments = transcription.transcribe_live(pcm, language)
+    else:
+        segments = transcription.transcribe_final(pcm, language)
+
+    text = " ".join(s.text for s in segments).strip()
+    return ASRResult(text=text, segments=segments, engine="whisper", language=language)
+
+
+def transcribe_file(path: str, language: str | None = None) -> ASRResult:
+    """Run full-accuracy Whisper ASR on a stored audio file (WAV path)."""
+    if not is_available():
+        raise ASRUnavailable(
+            "Whisper ASR is not installed. Install backend ML deps: "
+            "pip install -r requirements-ml.txt"
+        )
+    samples = audio.load_audio_float32(path)
+    return transcribe_pcm(samples, language, live=False)
+
+
+def transcribe_pcm_bytes(pcm_bytes: bytes, language: str | None = None, *, live: bool = False) -> ASRResult:
+    """Convenience: int16 LE PCM bytes → Whisper ASR."""
+    samples = audio.pcm16_to_float32(pcm_bytes)
+    return transcribe_pcm(samples, language, live=live)
+
+
+def merge_live_caption(previous: str, window_text: str) -> str:
+    """Merge overlapping live Whisper windows into a continuous caption."""
+    return transcription.merge_live_caption(previous, window_text)
+
+
+def persist_transcript(db, meeting, result: ASRResult) -> None:
+    """Write Whisper ASR segments + full text onto a meeting row.
+
+    Clears stale summary/translation because they were derived from older text.
+    """
+    from ..models import TranscriptSegment
+
+    db.query(TranscriptSegment).filter(
+        TranscriptSegment.meeting_id == meeting.id
+    ).delete()
+    for i, seg in enumerate(result.segments):
+        db.add(
+            TranscriptSegment(
+                meeting_id=meeting.id,
+                kind="final",
+                text=seg.text,
+                start_time=seg.start,
+                end_time=seg.end,
+                seq=i,
+            )
+        )
+    meeting.final_transcript = result.text
+    meeting.summary = ""
+    meeting.summary_format = ""
+    meeting.translation = ""
+    meeting.translation_language = ""
+    meeting.status = "finalized"
