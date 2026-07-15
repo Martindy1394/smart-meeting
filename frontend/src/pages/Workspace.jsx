@@ -96,12 +96,16 @@ export default function Workspace() {
         language: "hil",
         meeting_date: new Date().toISOString(),
       });
+      // Show the room immediately — refresh lists in the background.
       setSection("meeting");
       setSaveControls(null);
       setActiveId(detail.id);
       setActiveMeeting(detail);
-      loadMeetings(search);
-      loadRecordings(recordingSearch);
+      setLoadingMeeting(false);
+      Promise.resolve().then(() => {
+        loadMeetings(search);
+        loadRecordings(recordingSearch);
+      });
     } catch {
       /* ignore */
     }

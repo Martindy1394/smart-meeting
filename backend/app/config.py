@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     # Live caption windowing: 10s buffer overlapping by 5s (hop = 5s).
     whisper_live_window_seconds: float = 10.0
     whisper_live_hop_seconds: float = 5.0
+    # Emit a short first caption quickly so recording does not feel stuck
+    # waiting for the full 10s window (steady-state still uses 10s/5s).
+    whisper_live_warmup_seconds: float = 2.5
     # Final ASR chunk size for multi-hour recordings (seconds of audio per pass).
     whisper_final_chunk_seconds: float = 600.0
     whisper_final_chunk_overlap_seconds: float = 15.0

@@ -278,9 +278,31 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id, meeting.final_transcript, meeting.summary]);
 
+  // Preload the AudioWorklet so Start recording does not wait on the network.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        await ctx.audioWorklet.addModule("/pcm-worklet.js");
+        window.__smWorkletReady = true;
+        if (!cancelled) await ctx.close();
+      } catch {
+        /* worklet will load on start */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function toggleRecord() {
-    if (recorder.recording) {
-      recorder.stop();
+    if (recorder.recording || recorder.status === "starting") {
+      if (recorder.recording && recorder.status !== "starting") {
+        recorder.stop();
+      }
       return;
     }
     if (!detailsRef.current?.isComplete()) return;
@@ -292,10 +314,17 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     }
   }
 
-  const canStart = detailsReady && recorder.status !== "finalizing";
+  const canStart =
+    detailsReady &&
+    recorder.status !== "finalizing" &&
+    recorder.status !== "starting";
   const isRefined = status === "finalized" && finalTranscript;
   const hasTranscript = Boolean(finalTranscript);
-  const showLive = recorder.recording || recorder.status === "finalizing";
+  const showLive =
+    recorder.recording ||
+    recorder.status === "finalizing" ||
+    recorder.status === "starting";
+  const isStarting = recorder.status === "starting";
 
   async function runSummarize() {
     if (!hasTranscript) {
@@ -342,7 +371,11 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             ) : hasTranscript ? (
               finalTranscript
             ) : showLive ? (
-              <span className="transcript-live">Listening…</span>
+              <span className="transcript-live">
+                {isStarting
+                  ? "Starting meeting and microphone…"
+                  : recorder.message || "Listening…"}
+              </span>
             ) : asrBusy ? (
               <div className="center-spin">
                 <span className="spinner" /> Running Whisper ASR on audio…
@@ -360,10 +393,11 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
 
       <div className="recorder-bar">
         <button
-          className={`btn record ${recorder.recording ? "active" : ""}`}
+          className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
           onClick={toggleRecord}
           disabled={
             asrBusy ||
+            isStarting ||
             (recorder.recording ? recorder.status === "finalizing" : !canStart)
           }
           title={
@@ -372,7 +406,11 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
               : undefined
           }
         >
-          {recorder.recording ? "■ Stop recording" : "● Start recording"}
+          {isStarting
+            ? "Starting…"
+            : recorder.recording
+              ? "■ Stop recording"
+              : "● Start recording"}
         </button>
 
         {!recorder.recording && (

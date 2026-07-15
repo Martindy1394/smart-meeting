@@ -5,7 +5,7 @@ import { getToken } from "../api/client";
 // to the backend over a WebSocket, exposing live caption + finalization state.
 export function useRecorder({ onFinalTranscript } = {}) {
   const [recording, setRecording] = useState(false);
-  const [status, setStatus] = useState("idle"); // idle|recording|finalizing|error
+  const [status, setStatus] = useState("idle"); // idle|starting|recording|finalizing|error
   const [liveText, setLiveText] = useState("");
   const [message, setMessage] = useState("");
   const [transcriptionAvailable, setTranscriptionAvailable] = useState(true);
@@ -135,7 +135,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
         if (data.type === "status") {
           setTranscriptionAvailable(data.transcription_available);
-          setMessage(data.message || "");
+          // Keep the short startup copy until the first caption arrives.
+          setMessage((prev) =>
+            prev === "Starting meeting and microphone…" ||
+            prev === "Connecting live transcription…" ||
+            prev === "Listening…"
+              ? prev
+              : data.message || prev
+          );
           // Resume captions restored from Redis after a reconnect.
           if (data.live_caption) {
             setLiveText((prev) => prev || data.live_caption);
@@ -170,6 +177,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
             }
             return incoming.length >= current.length ? incoming : prev;
           });
+          setMessage("");
+          setStatus((s) => (s === "starting" ? "recording" : s));
         } else if (data.type === "live_segment") {
           // Legacy per-chunk segments (kept for compatibility / persistence).
           liveSegmentsRef.current[data.seq] = data.text;
@@ -222,14 +231,22 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
   const start = useCallback(
     async (meetingId) => {
-      setMessage("");
       setLiveText("");
       liveSegmentsRef.current = {};
       meetingIdRef.current = meetingId;
       stoppingRef.current = false;
       reconnectRef.current = { attempts: 0, timer: null, active: true };
+      // Immediate UI feedback — do not wait for mic/worklet/WS to finish.
+      setStatus("starting");
+      setMessage("Starting meeting and microphone…");
+      setRecording(true);
+      setElapsed(0);
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
 
-      // 1) Microphone + AudioWorklet.
+      // Open the WebSocket in parallel with mic setup (biggest perceived win).
+      openSocket(meetingId);
+
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -242,11 +259,19 @@ export function useRecorder({ onFinalTranscript } = {}) {
           },
         });
       } catch (err) {
+        setRecording(false);
         setStatus("error");
         setMessage("Microphone access denied or unavailable.");
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        reconnectRef.current.active = false;
+        if (wsRef.current) wsRef.current.close();
         throw err;
       }
       streamRef.current = stream;
+      setMessage("Connecting live transcription…");
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const audioCtx = new AudioCtx();
@@ -259,11 +284,28 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       }
       try {
-        await audioCtx.audioWorklet.addModule("/pcm-worklet.js");
+        // Prefer a preloaded module; fall back to loading now.
+        if (!window.__smWorkletReady) {
+          await audioCtx.audioWorklet.addModule("/pcm-worklet.js");
+          window.__smWorkletReady = true;
+        } else {
+          try {
+            await audioCtx.audioWorklet.addModule("/pcm-worklet.js");
+          } catch {
+            /* already registered in this context */
+          }
+        }
       } catch (err) {
+        setRecording(false);
         setStatus("error");
         setMessage("Failed to initialize audio processor.");
         cleanupAudio();
+        reconnectRef.current.active = false;
+        if (wsRef.current) wsRef.current.close();
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
         throw err;
       }
 
@@ -271,11 +313,16 @@ export function useRecorder({ onFinalTranscript } = {}) {
       sourceRef.current = source;
       const node = new AudioWorkletNode(audioCtx, "pcm-worklet");
       workletNodeRef.current = node;
+      // Buffer a few PCM chunks until the socket is open (parallel start).
+      const pending = [];
       node.port.onmessage = (event) => {
         if (event.data && event.data.type === "flushed") return;
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
+          while (pending.length) ws.send(pending.shift());
           ws.send(event.data);
+        } else if (pending.length < 40) {
+          pending.push(event.data);
         }
       };
       source.connect(node);
@@ -285,13 +332,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
       node.connect(silent);
       silent.connect(audioCtx.destination);
 
-      // 2) WebSocket stream.
-      openSocket(meetingId);
-
-      setRecording(true);
       setStatus("recording");
-      setElapsed(0);
-      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+      setMessage("Listening…");
       // Keep AudioContext alive during multi-hour sessions (browsers suspend it).
       if (audioWatchRef.current) clearInterval(audioWatchRef.current);
       audioWatchRef.current = setInterval(() => {

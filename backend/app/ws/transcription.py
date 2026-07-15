@@ -206,6 +206,12 @@ async def transcribe_ws(websocket: WebSocket):
     live_available = asr.is_available()
     redis_ok = redis_store.is_available()
 
+    # Ensure the live model is loaded before the first window (non-blocking if warm).
+    if live_available:
+        from ..services import transcription as transcription_svc
+
+        asyncio.create_task(asyncio.to_thread(transcription_svc.warm_live_model))
+
     # Resume caption / offset state from Redis when reconnecting.
     meta = redis_store.get_session_meta(meeting_id) if redis_ok else {}
     live_caption = meta.get("live_caption") or ""
@@ -213,6 +219,7 @@ async def transcribe_ws(websocket: WebSocket):
     seq = int(meta.get("seq") or 0)
     # Bytes already consumed by live windowing (exclusive end offset into Redis PCM).
     live_offset = int(meta.get("live_offset") or 0)
+    warmup_done = bool(meta.get("seq"))  # skip warmup after reconnect mid-session
 
     # Local fallback only used when Redis is down.
     local_pcm = bytearray()
@@ -271,15 +278,54 @@ async def transcribe_ws(websocket: WebSocket):
         hop_seconds * settings.audio_sample_rate * bytes_per_sample_frame
     )
     bytes_overlap = max(0, bytes_per_window - bytes_per_hop)
+    warmup_seconds = max(1.0, float(settings.whisper_live_warmup_seconds))
+    bytes_per_warmup = int(
+        warmup_seconds * settings.audio_sample_rate * bytes_per_sample_frame
+    )
+    # Never longer than the steady-state window.
+    bytes_per_warmup = min(bytes_per_warmup, bytes_per_window)
     warned_long = False
     recording_capped = False
 
     async def _process_live_from_redis() -> None:
-        nonlocal live_caption, previous_window, seq, live_offset
+        nonlocal live_caption, previous_window, seq, live_offset, warmup_done
         if not live_available:
             return
         total = redis_store.get_pcm_length(meeting_id)
-        # Emit as soon as we have a full window ahead of live_offset.
+
+        # Fast first caption: run a short warmup window so Start Recording
+        # feels responsive instead of waiting a full 10s + cold model load.
+        if (
+            not warmup_done
+            and live_offset == 0
+            and total >= bytes_per_warmup
+            and total < bytes_per_window
+        ):
+            chunk = redis_store.get_pcm_slice(meeting_id, 0, bytes_per_warmup - 1)
+            if len(chunk) >= bytes_per_warmup:
+                seq += 1
+                try:
+                    live_caption, previous_window = await _emit_live_window(
+                        websocket,
+                        meeting_id=meeting_id,
+                        chunk=chunk,
+                        language=language,
+                        seq=seq,
+                        live_caption=live_caption,
+                        previous_window=previous_window,
+                    )
+                except Exception as exc:
+                    logger.exception("Live warmup transcription error: %s", exc)
+                warmup_done = True
+                redis_store.set_session_meta(
+                    meeting_id,
+                    live_caption=live_caption,
+                    previous_window=previous_window,
+                    live_offset=live_offset,
+                    seq=seq,
+                )
+
+        # Steady-state: full overlapping windows.
         while total - live_offset >= bytes_per_window:
             chunk = redis_store.get_pcm_slice(
                 meeting_id, live_offset, live_offset + bytes_per_window - 1
@@ -299,6 +345,7 @@ async def transcribe_ws(websocket: WebSocket):
                 )
             except Exception as exc:
                 logger.exception("Live transcription error: %s", exc)
+            warmup_done = True
             # Advance by hop; retain overlap in Redis by only moving the offset.
             live_offset += bytes_per_hop
             redis_store.set_session_meta(

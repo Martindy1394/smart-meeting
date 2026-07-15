@@ -29,6 +29,10 @@ _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
+
+    from .services import transcription as transcription_svc
+
     logger.info("Starting %s v%s (%s)", settings.app_name, __version__, settings.environment)
     init_db()
     if redis_store.is_available():
@@ -38,6 +42,10 @@ async def lifespan(app: FastAPI):
             "Redis not available at %s — live audio will use in-process buffers.",
             settings.redis_url,
         )
+    # Warm the live Whisper model in the background so Start recording
+    # does not stall on first-caption model load.
+    if transcription_svc.is_available():
+        asyncio.create_task(asyncio.to_thread(transcription_svc.warm_live_model))
     yield
     logger.info("Shutting down %s", settings.app_name)
 

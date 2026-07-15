@@ -130,6 +130,19 @@ def is_available() -> bool:
         return False
 
 
+def warm_live_model() -> bool:
+    """Load the live Whisper model into memory so the first caption is fast."""
+    if not is_available():
+        return False
+    try:
+        _cache.get_faster_whisper(settings.whisper_live_model)
+        logger.info("Live Whisper model '%s' warmed and ready.", settings.whisper_live_model)
+        return True
+    except Exception as exc:
+        logger.warning("Could not warm live Whisper model: %s", exc)
+        return False
+
+
 def hiligaynon_model_id() -> str:
     """Hugging Face / local id used for the final Stop-Recording pass."""
     return (settings.whisper_hiligaynon_model or settings.whisper_final_model).strip()
