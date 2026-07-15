@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .config import settings
@@ -20,6 +22,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 logger = logging.getLogger("smart_meeting")
+
+# /workspace/frontend/dist when running from the monorepo layout.
+_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -48,17 +53,6 @@ app.add_middleware(
 )
 
 
-@app.get("/", tags=["system"])
-def root():
-    return {
-        "app": settings.app_name,
-        "status": "ok",
-        "message": "API is running. Open the frontend at http://127.0.0.1:5173/",
-        "health": "/api/health",
-        "docs": "/docs",
-    }
-
-
 @app.get("/api/health", tags=["system"])
 def health():
     return {
@@ -83,3 +77,54 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "An internal error occurred. Please try again."},
     )
+
+
+def _mount_frontend() -> None:
+    """Serve the Vite production build from the same origin as the API.
+
+    Cursor's browser port-forward often reaches :8000 reliably while :5173
+    returns ERR_EMPTY_RESPONSE, so shipping the UI through FastAPI avoids that.
+    """
+    if not (_FRONTEND_DIST.is_dir() and (_FRONTEND_DIST / "index.html").is_file()):
+        @app.get("/", tags=["system"])
+        def root_api_only():
+            return {
+                "app": settings.app_name,
+                "status": "ok",
+                "message": (
+                    "API is running, but the frontend build is missing. "
+                    "Run: cd frontend && npm run build"
+                ),
+                "health": "/api/health",
+                "docs": "/docs",
+            }
+
+        logger.warning("Frontend dist not found at %s", _FRONTEND_DIST)
+        return
+
+    assets_dir = _FRONTEND_DIST / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    async def spa_index():
+        return FileResponse(_FRONTEND_DIST / "index.html")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # Never override API / docs / OpenAPI.
+        if full_path.startswith(("api/", "docs", "redoc", "openapi.json", "ws/")):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        candidate = (_FRONTEND_DIST / full_path).resolve()
+        try:
+            candidate.relative_to(_FRONTEND_DIST.resolve())
+        except ValueError:
+            return FileResponse(_FRONTEND_DIST / "index.html")
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_FRONTEND_DIST / "index.html")
+
+    logger.info("Serving frontend from %s", _FRONTEND_DIST)
+
+
+_mount_frontend()
