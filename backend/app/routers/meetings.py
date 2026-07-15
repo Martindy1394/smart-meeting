@@ -70,6 +70,7 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         has_summary=bool(m.summary),
         has_translation=bool(m.translation),
         has_audio=_has_audio(m),
+        has_transcript=bool((m.final_transcript or "").strip()),
     )
 
 

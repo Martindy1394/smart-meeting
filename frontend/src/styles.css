@@ -451,8 +451,10 @@ button {
 }
 .history-row-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 }
 .recordings-panel .recording-row {
   display: flex;
@@ -952,6 +954,19 @@ select.inline {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.transcript-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.history-audio-bar {
+  align-items: center;
+}
+.history-row-actions {
   flex-wrap: wrap;
   justify-content: flex-end;
 }

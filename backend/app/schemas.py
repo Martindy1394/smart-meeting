@@ -158,6 +158,7 @@ class MeetingSummary(BaseModel):
     has_summary: bool = False
     has_translation: bool = False
     has_audio: bool = False
+    has_transcript: bool = False
 
     class Config:
         from_attributes = True

@@ -45,6 +45,7 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrError, setAsrError] = useState("");
   const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
+  const [copyState, setCopyState] = useState("");
   const audioUrlRef = useRef(null);
   const uploadInputRef = useRef(null);
 
@@ -319,6 +320,12 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     recorder.status !== "starting";
   const isRefined = status === "finalized" && finalTranscript;
   const hasTranscript = Boolean(finalTranscript);
+  // Past/history meetings: no live start or upload — review + export only.
+  const isHistoryMeeting =
+    (status === "finalized" || Boolean((meeting.final_transcript || "").trim())) &&
+    !recorder.recording &&
+    recorder.status !== "starting" &&
+    recorder.status !== "finalizing";
   const showLive =
     recorder.recording ||
     recorder.status === "finalizing" ||
@@ -331,6 +338,35 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
       return;
     }
     await summarizeFromTranscript(summaryFormat);
+  }
+
+  async function copyTranscript() {
+    const text = (finalTranscript || "").trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyState("Copied");
+      setTimeout(() => setCopyState(""), 1800);
+    } catch {
+      setCopyState("Copy failed");
+      setTimeout(() => setCopyState(""), 1800);
+    }
+  }
+
+  function downloadTranscript() {
+    const text = (finalTranscript || "").trim();
+    if (!text) return;
+    const base = (meeting.title || "transcript").trim() || "transcript";
+    const filename = `${base.replace(/[^\w\-]+/g, "_").replace(/_+/g, "_").slice(0, 80)}_transcript.txt`;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -362,6 +398,26 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
               )}
             </h3>
             <div className="transcript-head-meta">
+              {hasTranscript && (
+                <div className="transcript-actions">
+                  <button
+                    type="button"
+                    className="btn secondary meeting-action-btn"
+                    onClick={copyTranscript}
+                    title="Copy transcript text"
+                  >
+                    {copyState === "Copied" ? "Copied" : "Copy text"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary meeting-action-btn"
+                    onClick={downloadTranscript}
+                    title="Download transcript as a text file"
+                  >
+                    Download
+                  </button>
+                </div>
+              )}
               <span className="card-tag">Whisper ASR · {meeting.language}</span>
             </div>
           </div>
@@ -383,75 +439,146 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
               </div>
             ) : (
               <div className="placeholder">
-                Press <strong>Start recording</strong> for live Whisper captions,
-                or upload a WAV to transcribe with Whisper ASR. Stopping a
-                recording runs the full-accuracy Whisper pass automatically.
+                Press <strong>Start recording</strong> for live Whisper captions.
+                Ending a meeting runs the full-accuracy Whisper pass automatically.
               </div>
             )}
           </div>
         </div>
       </div>
 
-      <div className="recorder-bar">
-        <div className="record-control">
-          <button
-            className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
-            onClick={toggleRecord}
-            disabled={
-              asrBusy ||
-              isStarting ||
-              (recorder.recording ? recorder.status === "finalizing" : !canStart)
-            }
-            title={
-              !detailsReady && !recorder.recording
-                ? "Fill in all meeting details first"
-                : undefined
-            }
-          >
-            {isStarting
-              ? "Starting…"
-              : recorder.recording
-                ? "■ End meeting"
-                : "● Start recording"}
-          </button>
-          <div
-            className={`record-duration ${
-              recorder.recording || recorder.status === "starting"
-                ? "active"
-                : recorder.status === "finalizing"
-                  ? "finalizing"
-                  : ""
-            }`}
-            aria-live="polite"
-            aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
-          >
-            {(recorder.recording ||
-              recorder.status === "starting" ||
-              recorder.status === "finalizing" ||
-              recorder.elapsed > 0) && (
-              <>
-                {(recorder.recording || recorder.status === "starting") && (
-                  <span className="dot-live" />
-                )}
-                <span className="record-duration-label">
-                  {recorder.status === "finalizing" ? "Duration" : "Time"}
-                </span>
-                <span className="record-duration-value">
-                  {fmtTime(recorder.elapsed)}
-                </span>
-              </>
-            )}
-            {!recorder.recording &&
-              recorder.status !== "starting" &&
-              recorder.status !== "finalizing" &&
-              recorder.elapsed === 0 && (
-                <span className="record-duration-idle">00:00:00</span>
+      {!isHistoryMeeting && (
+        <div className="recorder-bar">
+          <div className="record-control">
+            <button
+              className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
+              onClick={toggleRecord}
+              disabled={
+                asrBusy ||
+                isStarting ||
+                (recorder.recording ? recorder.status === "finalizing" : !canStart)
+              }
+              title={
+                !detailsReady && !recorder.recording
+                  ? "Fill in all meeting details first"
+                  : undefined
+              }
+            >
+              {isStarting
+                ? "Starting…"
+                : recorder.recording
+                  ? "■ End meeting"
+                  : "● Start recording"}
+            </button>
+            <div
+              className={`record-duration ${
+                recorder.recording || recorder.status === "starting"
+                  ? "active"
+                  : recorder.status === "finalizing"
+                    ? "finalizing"
+                    : ""
+              }`}
+              aria-live="polite"
+              aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
+            >
+              {(recorder.recording ||
+                recorder.status === "starting" ||
+                recorder.status === "finalizing" ||
+                recorder.elapsed > 0) && (
+                <>
+                  {(recorder.recording || recorder.status === "starting") && (
+                    <span className="dot-live" />
+                  )}
+                  <span className="record-duration-label">
+                    {recorder.status === "finalizing" ? "Duration" : "Time"}
+                  </span>
+                  <span className="record-duration-value">
+                    {fmtTime(recorder.elapsed)}
+                  </span>
+                </>
               )}
+              {!recorder.recording &&
+                recorder.status !== "starting" &&
+                recorder.status !== "finalizing" &&
+                recorder.elapsed === 0 && (
+                  <span className="record-duration-idle">00:00:00</span>
+                )}
+            </div>
           </div>
-        </div>
 
-        {!recorder.recording && (
-          <div className="audio-player-wrap" title={audioUrl ? "Meeting recording" : "Recording available after you stop"}>
+          {!recorder.recording && (
+            <div
+              className="audio-player-wrap"
+              title={audioUrl ? "Meeting recording" : "Recording available after you end the meeting"}
+            >
+              {audioLoading ? (
+                <span className="card-tag">Loading audio…</span>
+              ) : audioUrl ? (
+                <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
+                  Your browser does not support audio playback.
+                </audio>
+              ) : (
+                <div className="audio-player-empty">
+                  <span className="audio-player-label">Audio</span>
+                  <span className="audio-player-hint">No recording yet</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!recorder.recording && (
+            <>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
+                onClick={() => uploadInputRef.current?.click()}
+                title="Upload WAV/PCM and run Whisper ASR"
+              >
+                {asrBusy ? <span className="spinner" /> : "Upload audio"}
+              </button>
+              {(hasAudio || audioUrl) && (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  disabled={asrBusy || recorder.status === "finalizing"}
+                  onClick={runWhisperAsr}
+                  title="Run Whisper ASR on the saved recording"
+                >
+                  {asrBusy ? (
+                    <span className="spinner" />
+                  ) : hasTranscript ? (
+                    "Re-transcribe"
+                  ) : (
+                    "Transcribe with Whisper"
+                  )}
+                </button>
+              )}
+            </>
+          )}
+
+          {!detailsReady && !recorder.recording && (
+            <span className="card-tag">
+              Fill in title, venue, date &amp; time, and attendees first
+            </span>
+          )}
+          {(recorder.status === "finalizing" || asrBusy) && (
+            <span className="center-spin" style={{ padding: 0 }}>
+              <span className="spinner" />{" "}
+              {asrBusy
+                ? "Whisper ASR processing audio…"
+                : "Finalizing full-accuracy Whisper transcript…"}
+            </span>
+          )}
+          {recorder.connectionState === "connecting" && (
+            <span className="card-tag">connecting…</span>
+          )}
+        </div>
+      )}
+
+      {isHistoryMeeting && (hasAudio || audioUrl) && (
+        <div className="recorder-bar history-audio-bar">
+          <div className="audio-player-wrap" title="Meeting recording">
             {audioLoading ? (
               <span className="card-tag">Loading audio…</span>
             ) : audioUrl ? (
@@ -461,67 +588,41 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             ) : (
               <div className="audio-player-empty">
                 <span className="audio-player-label">Audio</span>
-                <span className="audio-player-hint">No recording yet</span>
+                <span className="audio-player-hint">No recording file</span>
               </div>
             )}
           </div>
-        )}
-
-        {!recorder.recording && (
-          <>
-            <input
-              ref={uploadInputRef}
-              type="file"
-              accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
-              hidden
-              onChange={(e) => uploadForWhisper(e.target.files?.[0])}
-            />
-            <button
-              type="button"
-              className="btn secondary"
-              disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
-              onClick={() => uploadInputRef.current?.click()}
-              title="Upload WAV/PCM and run Whisper ASR"
-            >
-              {asrBusy ? <span className="spinner" /> : "Upload audio"}
-            </button>
-            {(hasAudio || audioUrl) && (
+          {hasTranscript && (
+            <div className="transcript-actions">
               <button
                 type="button"
-                className="btn secondary"
-                disabled={asrBusy || recorder.status === "finalizing"}
-                onClick={runWhisperAsr}
-                title="Run Whisper ASR on the saved recording"
+                className="btn secondary meeting-action-btn"
+                onClick={copyTranscript}
               >
-                {asrBusy ? (
-                  <span className="spinner" />
-                ) : hasTranscript ? (
-                  "Re-transcribe"
-                ) : (
-                  "Transcribe with Whisper"
-                )}
+                {copyState === "Copied" ? "Copied" : "Copy text"}
               </button>
-            )}
-          </>
-        )}
+              <button
+                type="button"
+                className="btn secondary meeting-action-btn"
+                onClick={downloadTranscript}
+              >
+                Download
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
-        {!detailsReady && !recorder.recording && (
-          <span className="card-tag">
-            Fill in title, venue, date &amp; time, and attendees first
-          </span>
-        )}
-        {(recorder.status === "finalizing" || asrBusy) && (
-          <span className="center-spin" style={{ padding: 0 }}>
-            <span className="spinner" />{" "}
-            {asrBusy
-              ? "Whisper ASR processing audio…"
-              : "Finalizing full-accuracy Whisper transcript…"}
-          </span>
-        )}
-        {recorder.connectionState === "connecting" && (
-          <span className="card-tag">connecting…</span>
-        )}
-      </div>
+      {/* Keep file input mounted only for new/live meetings (upload removed from history). */}
+      {!isHistoryMeeting && (
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
+          hidden
+          onChange={(e) => uploadForWhisper(e.target.files?.[0])}
+        />
+      )}
 
       <div className="cards bottom-cards">
         {/* Summary card (BART) — from finalized transcript */}
