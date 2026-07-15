@@ -966,10 +966,6 @@ select.inline {
 .history-audio-bar {
   align-items: center;
 }
-.history-row-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
 .recording-timer {
   display: inline-flex;
   align-items: center;
