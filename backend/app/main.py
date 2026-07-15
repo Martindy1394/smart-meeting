@@ -14,7 +14,7 @@ from . import __version__
 from .config import settings
 from .database import init_db
 from .routers import ai, auth, meetings
-from .services import asr, llm
+from .services import asr, llm, redis_store
 from .ws import transcription as ws_transcription
 
 logging.basicConfig(
@@ -31,6 +31,13 @@ _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s (%s)", settings.app_name, __version__, settings.environment)
     init_db()
+    if redis_store.is_available():
+        logger.info("Redis audio memory store ready (%s)", settings.redis_url)
+    else:
+        logger.warning(
+            "Redis not available at %s — live audio will use in-process buffers.",
+            settings.redis_url,
+        )
     yield
     logger.info("Shutting down %s", settings.app_name)
 
@@ -68,6 +75,7 @@ def health():
     from .services import transcription as transcription_svc
 
     whisper_ok = asr.is_available()
+    redis_ok = redis_store.is_available()
     return {
         "status": "ok",
         "version": __version__,
@@ -77,6 +85,8 @@ def health():
         "whisper_hiligaynon_model": transcription_svc.hiligaynon_model_id(),
         "whisper_live_window_seconds": settings.whisper_live_window_seconds,
         "whisper_live_hop_seconds": settings.whisper_live_hop_seconds,
+        "redis_available": redis_ok,
+        "redis_url": settings.redis_url if redis_ok else None,
         "llm_available": llm.summarizer_available(),
         "environment": settings.environment,
     }

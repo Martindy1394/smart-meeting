@@ -13,10 +13,23 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://smartmeeting:smartmeeting@db:5432/smartmeeting
+      REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
       CORS_ORIGINS: http://localhost:8080
       AUDIO_STORAGE_DIR: /data/audio
@@ -24,6 +37,8 @@ services:
       - audio_data:/data/audio
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "8000:8000"
@@ -38,3 +53,4 @@ services:
 volumes:
   db_data:
   audio_data:
+  redis_data:

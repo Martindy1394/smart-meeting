@@ -119,6 +119,10 @@ export function useRecorder({ onFinalTranscript } = {}) {
         if (data.type === "status") {
           setTranscriptionAvailable(data.transcription_available);
           setMessage(data.message || "");
+          // Resume captions restored from Redis after a reconnect.
+          if (data.live_caption) {
+            setLiveText((prev) => prev || data.live_caption);
+          }
         } else if (data.type === "live_caption") {
           // Cumulative caption — never allow a shorter update to erase older words
           // (protects against aggressive overlap dedupe or WS reconnect resets).

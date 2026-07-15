@@ -19,7 +19,7 @@ from ..schemas import (
     MeetingSummary,
     MeetingUpdate,
 )
-from ..services import asr, audio
+from ..services import asr, audio, redis_store
 
 logger = logging.getLogger("smart_meeting.meetings")
 
@@ -39,9 +39,13 @@ def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
 
 
 def _has_audio(m: Meeting) -> bool:
-    if not m.audio_path:
-        return False
-    return os.path.exists(os.path.abspath(m.audio_path))
+    if m.audio_path and os.path.exists(os.path.abspath(m.audio_path)):
+        return True
+    # Audio may still be in Redis memory storage (live or cached WAV).
+    return bool(
+        redis_store.get_wav_bytes(m.id)
+        or redis_store.get_pcm_length(m.id) > 0
+    )
 
 
 def _clean_attendees(names: list[str]) -> str:
@@ -179,22 +183,43 @@ def get_meeting_audio(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Stream the saved WAV recording for playback or download."""
+    """Stream the saved WAV recording for playback or download.
+
+    Prefers disk archive; falls back to Redis-cached WAV, then Redis PCM
+    encoded on the fly.
+    """
+    from fastapi.responses import Response
+
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    if not _has_audio(meeting):
+    safe_title = (meeting.title or "meeting").strip() or "meeting"
+    safe_title = "".join(
+        ch if ch.isalnum() or ch in " -_" else "_" for ch in safe_title
+    )
+    filename = f"{safe_title}.wav"
+    disposition = "attachment" if download else "inline"
+
+    if meeting.audio_path and os.path.exists(os.path.abspath(meeting.audio_path)):
+        return FileResponse(
+            path=os.path.abspath(meeting.audio_path),
+            media_type="audio/wav",
+            filename=filename,
+            content_disposition_type=disposition,
+        )
+
+    wav_bytes = redis_store.get_wav_bytes(meeting_id)
+    if not wav_bytes:
+        pcm = redis_store.get_pcm(meeting_id)
+        if pcm:
+            wav_bytes = audio.build_wav_bytes(pcm)
+    if not wav_bytes:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No audio recording is available for this meeting yet.",
         )
-    path = os.path.abspath(meeting.audio_path)
-    safe_title = (meeting.title or "meeting").strip() or "meeting"
-    safe_title = "".join(ch if ch.isalnum() or ch in " -_" else "_" for ch in safe_title)
-    return FileResponse(
-        path=path,
-        media_type="audio/wav",
-        filename=f"{safe_title}.wav",
-        content_disposition_type="attachment" if download else "inline",
-    )
+    headers = {
+        "Content-Disposition": f'{disposition}; filename="{filename}"'
+    }
+    return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
 
 
 @router.post("/{meeting_id}/audio", response_model=MeetingDetail)
@@ -285,12 +310,13 @@ def delete_meeting(
     db: Session = Depends(get_db),
 ):
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    # Best-effort removal of the stored audio file.
+    # Best-effort removal of the stored audio file + Redis memory buffers.
     if meeting.audio_path and os.path.exists(meeting.audio_path):
         try:
             os.remove(meeting.audio_path)
         except OSError:
             pass
+    redis_store.clear_meeting_audio(meeting_id, keep_wav=False)
     db.delete(meeting)
     db.commit()
     return None

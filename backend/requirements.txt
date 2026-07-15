@@ -21,3 +21,6 @@ python-jose[cryptography]==3.3.0
 
 # Numeric (audio buffer handling)
 numpy==2.2.1
+
+# In-memory audio / session storage
+redis==5.2.1

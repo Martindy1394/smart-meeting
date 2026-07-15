@@ -42,14 +42,35 @@ def audio_dir() -> str:
     return path
 
 
-def save_wav(meeting_id: str, pcm_bytes: bytes) -> str:
-    """Persist raw PCM bytes as a 16 kHz mono WAV file. Returns an absolute path."""
-    path = os.path.join(audio_dir(), f"{meeting_id}.wav")
-    with wave.open(path, "wb") as wf:
+def build_wav_bytes(pcm_bytes: bytes) -> bytes:
+    """Encode raw PCM as a 16 kHz mono WAV container in memory."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
         wf.setnchannels(settings.audio_channels)
         wf.setsampwidth(2)  # 16-bit
         wf.setframerate(settings.audio_sample_rate)
         wf.writeframes(pcm_bytes)
+    return buf.getvalue()
+
+
+def save_wav(meeting_id: str, pcm_bytes: bytes) -> str:
+    """Persist raw PCM bytes as a 16 kHz mono WAV file. Returns an absolute path.
+
+    Also caches the WAV bytes in Redis memory storage when Redis is available.
+    """
+    wav_bytes = build_wav_bytes(pcm_bytes)
+    path = os.path.join(audio_dir(), f"{meeting_id}.wav")
+    with open(path, "wb") as fh:
+        fh.write(wav_bytes)
+
+    # Mirror into Redis so recorded audio lives in memory storage too.
+    try:
+        from . import redis_store
+
+        redis_store.save_wav_bytes(meeting_id, wav_bytes)
+    except Exception:
+        pass
+
     return os.path.abspath(path)
 
 

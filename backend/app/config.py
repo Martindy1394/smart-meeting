@@ -51,6 +51,10 @@ class Settings(BaseSettings):
 
     # --- Storage ---------------------------------------------------------
     audio_storage_dir: str = "./data/audio"
+    # Redis holds live PCM + cached WAV in memory during/after recording.
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    # TTL for meeting audio keys in Redis (seconds). 0 = no expiry.
+    redis_audio_ttl_seconds: int = 60 * 60 * 24
 
     # --- Audio / transcription ------------------------------------------
     audio_sample_rate: int = 16000

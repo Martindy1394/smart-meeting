@@ -7,18 +7,27 @@ paragraphs), and translates it on demand with **mBART** into 14+ languages — a
 behind a secure JWT authentication system with per-user meeting history.
 
 ```
-┌──────────────┐   PCM/WS    ┌───────────────────────────┐
-│  React (Vite)│ ──────────► │  FastAPI backend          │
-│  AudioWorklet│             │  • Auth (JWT + bcrypt)    │
-│  16kHz PCM   │ ◄────────── │  • WebSocket live captions │
-│  transcript/ │  live +     │  • Whisper 2-pass          │
+┌──────────────┐   PCM/WS    ┌────────────────────────────┐
+│  React (Vite)│ ──────────► │  FastAPI backend           │
+│  AudioWorklet│             │  • Auth (JWT + bcrypt)     │
+│  16kHz PCM   │ ◄────────── │  • WebSocket live captions  │
+│  transcript/ │  live +     │  • Whisper 2-pass           │
 │  summary/    │  final      │  • InvokeLLM: BART / mBART  │
 │  translate   │             │  • Meetings CRUD (SQLite/PG)│
-└──────────────┘             └───────────────────────────┘
+└──────────────┘             │  • Redis audio memory store │
+                             └─────────────┬──────────────┘
+                                           │
+                                      ┌────▼────┐
+                                      │  Redis  │
+                                      │ PCM/WAV │
+                                      └─────────┘
 ```
 
 ## Features
 
+- **Redis audio memory** — every recorded PCM chunk is appended to Redis during
+  capture; finalized WAV is cached in Redis too (disk archive kept for playback).
+  Live caption offsets resume from Redis on reconnect.
 - **Authentication** — signup with email + strong-password validation, login,
   JWT (7-day expiry), bcrypt hashing (12 rounds), protected routes, logout.
 - **Live transcription** — raw 16 kHz mono PCM captured with an `AudioWorklet`
@@ -131,6 +140,8 @@ See `backend/.env.example`. Key variables:
 | `WHISPER_LIVE_WINDOW_SECONDS` | `10.0` | Live ASR window length. |
 | `WHISPER_LIVE_HOP_SECONDS` | `5.0` | Live ASR hop (10s window overlapping by 5s). |
 | `WHISPER_DEFAULT_LANGUAGE` | `hil` | Meeting label; Whisper decode uses `tl`. |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis memory store for recorded PCM/WAV. |
+| `REDIS_AUDIO_TTL_SECONDS` | `86400` | TTL for Redis audio keys (0 = no expiry). |
 | `BART_MODEL` | `facebook/bart-large-cnn` | Summarization. |
 | `MBART_MODEL` | `facebook/mbart-large-50-many-to-many-mmt` | Translation. |
 | `ALLOW_LLM_FALLBACK` | `true` | Enable extractive summary fallback. |
