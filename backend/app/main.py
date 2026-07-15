@@ -65,12 +65,18 @@ else:
 
 @app.get("/api/health", tags=["system"])
 def health():
+    from .services import transcription as transcription_svc
+
     whisper_ok = asr.is_available()
     return {
         "status": "ok",
         "version": __version__,
         "asr_engine": asr.engine_name(),
         "whisper_available": whisper_ok,
+        "whisper_live_model": settings.whisper_live_model,
+        "whisper_hiligaynon_model": transcription_svc.hiligaynon_model_id(),
+        "whisper_live_window_seconds": settings.whisper_live_window_seconds,
+        "whisper_live_hop_seconds": settings.whisper_live_hop_seconds,
         "llm_available": llm.summarizer_available(),
         "environment": settings.environment,
     }

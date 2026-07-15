@@ -111,8 +111,11 @@ All AI features flow through single, consistent integration surfaces:
   - `transcribe_pcm(..., live=True|False)` for live captions / full pass
   - `transcribe_file(path)` for saved or uploaded WAV recordings
   - `persist_transcript(...)` writes segments onto the meeting
-- `app/services/transcription.py` — lower-level faster-whisper live/final models
-  used by the ASR facade.
+- `app/services/transcription.py` — Whisper backends used by the ASR facade:
+  - **Live:** faster-whisper with **10s windows overlapping by 5s**, forced
+    `language="tl"` and `task="transcribe"`
+  - **Final (Stop Recording):** fine-tuned Hiligaynon / PH Whisper from Hugging
+    Face (`WHISPER_HILIGAYNON_MODEL`, default `rbcurzon/whisper-medium-ph`)
 
 ## Configuration
 
@@ -123,10 +126,11 @@ See `backend/.env.example`. Key variables:
 | `JWT_SECRET_KEY` | dev value | **Change in production.** |
 | `DATABASE_URL` | `sqlite:///./smart_meeting.db` | Use a PostgreSQL DSN in prod. |
 | `WHISPER_LIVE_MODEL` | `small` | Fast live-caption Whisper model. |
-| `WHISPER_FINAL_MODEL` | `medium` | Full-accuracy Whisper ASR model. |
-| `WHISPER_LIVE_WINDOW_SECONDS` | `5.0` | Live ASR window length. |
-| `WHISPER_LIVE_HOP_SECONDS` | `1.0` | Live ASR hop / overlap step. |
-| `WHISPER_DEFAULT_LANGUAGE` | `hil` | Hiligaynon (auto-detect in Whisper). |
+| `WHISPER_FINAL_MODEL` | `medium` | faster-whisper fallback if HF final model fails. |
+| `WHISPER_HILIGAYNON_MODEL` | `rbcurzon/whisper-medium-ph` | Fine-tuned HF Whisper for Stop Recording. |
+| `WHISPER_LIVE_WINDOW_SECONDS` | `10.0` | Live ASR window length. |
+| `WHISPER_LIVE_HOP_SECONDS` | `5.0` | Live ASR hop (10s window overlapping by 5s). |
+| `WHISPER_DEFAULT_LANGUAGE` | `hil` | Meeting label; Whisper decode uses `tl`. |
 | `BART_MODEL` | `facebook/bart-large-cnn` | Summarization. |
 | `MBART_MODEL` | `facebook/mbart-large-50-many-to-many-mmt` | Translation. |
 | `ALLOW_LLM_FALLBACK` | `true` | Enable extractive summary fallback. |

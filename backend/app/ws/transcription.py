@@ -166,7 +166,8 @@ async def transcribe_ws(websocket: WebSocket):
             "transcription_available": live_available,
             "asr_engine": asr.engine_name(),
             "message": (
-                "Whisper ASR active — live captions with full-accuracy finalize."
+                "Whisper ASR active — 10s live windows (5s overlap), "
+                "language=tl / task=transcribe; Stop uses fine-tuned Hiligaynon model."
                 if live_available
                 else "Whisper ASR not installed — audio will still be saved "
                 "and can be transcribed once ML dependencies are available."

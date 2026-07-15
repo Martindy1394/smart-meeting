@@ -57,18 +57,21 @@ class Settings(BaseSettings):
     audio_channels: int = 1
 
     # Whisper model sizes for the two-pass pipeline.
-    # Defaults favour machines without a GPU: int8 keeps memory under control so
-    # the API process is not OOM-killed while loading the finalization model.
-    # Live uses ``small`` with overlapping windows for freer, more continuous captions.
+    # Live uses a stock Whisper model with overlapping windows.
+    # Final Stop-Recording pass uses a fine-tuned Hiligaynon / PH Whisper checkpoint.
     whisper_live_model: str = "small"
     whisper_final_model: str = "medium"
+    # Hugging Face id (or local path) for the fine-tuned final ASR model.
+    # Default is the closest public PH-dialect Whisper fine-tune; override with
+    # your own Hiligaynon fine-tune via WHISPER_HILIGAYNON_MODEL.
+    whisper_hiligaynon_model: str = "rbcurzon/whisper-medium-ph"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    # Dialect / language handling. "hil" == Hiligaynon.
+    # Meeting language label (Hiligaynon). Whisper decode is locked to ``tl``.
     whisper_default_language: str = "hil"
-    # Live caption windowing (seconds). Longer window + shorter hop = fewer cut words.
-    whisper_live_window_seconds: float = 5.0
-    whisper_live_hop_seconds: float = 1.0
+    # Live caption windowing: 10s buffer overlapping by 5s (hop = 5s).
+    whisper_live_window_seconds: float = 10.0
+    whisper_live_hop_seconds: float = 5.0
 
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"

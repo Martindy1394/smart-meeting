@@ -1,20 +1,15 @@
 """Whisper transcription service — the ``TranscribeAudio`` integration.
 
-Implements the two-pass pipeline described in the specification:
+Implements the two-pass pipeline:
 
-* **Live pass** — a fast, low-latency model (``base``/``tiny``) with greedy
-  decoding, used for word-by-word captions during recording.
-* **Final pass** — the full-accuracy model with beam search, soft VAD,
-  temperature fallback, and anti-hallucination settings so the finalized
-  transcript reads as one coherent document.
+* **Live pass** — fast Whisper model on overlapping 10s windows (5s hop),
+  locked to ``language="tl"`` and ``task="transcribe"``.
+* **Final pass** — fine-tuned Hiligaynon / Philippine Whisper checkpoint from
+  Hugging Face (``WHISPER_HILIGAYNON_MODEL``), also with ``task="transcribe"``
+  and ``language="tl"``.
 
-Hiligaynon (``hil``) is not a Whisper language token. Forcing Tagalog
-(``tl``) caused severe hallucination loops on English / mixed Philippine
-speech (common in meetings). We therefore use **auto language detection**
-for Hiligaynon instead of a hard Tagalog lock.
-
-``faster_whisper`` is imported lazily so the rest of the application runs even
-when the (multi-gigabyte) model weights / package are not installed.
+``faster_whisper`` / ``transformers`` are imported lazily so the rest of the
+application runs even when model weights are not installed.
 """
 from __future__ import annotations
 
@@ -29,11 +24,7 @@ from ..config import settings
 
 logger = logging.getLogger("smart_meeting.transcription")
 
-# Languages Whisper cannot lock to — use auto-detect instead of a wrong force.
-_AUTO_DETECT_LANGUAGES = frozenset({"hil"})
-
-# Soft VAD: keep more quiet speech; pad edges so words aren't clipped.
-# faster-whisper VadOptions uses onset/offset (not "threshold").
+# Soft VAD for the faster-whisper fallback final path.
 _FINAL_VAD_PARAMS = {
     "onset": 0.35,
     "offset": 0.25,
@@ -42,10 +33,12 @@ _FINAL_VAD_PARAMS = {
     "speech_pad_ms": 400,
 }
 
-# Philippine-meeting hint so auto-detect prefers English / Filipino lexicon
-# without forcing Tagalog decoding.
+# Forced Whisper decode settings (never leave language as None).
+_WHISPER_TASK = "transcribe"
+_WHISPER_LANGUAGE = "tl"
+
 _INITIAL_PROMPT = (
-    "Meeting minutes. Speakers may use English, Filipino, or Hiligaynon. "
+    "Meeting minutes in Hiligaynon, Filipino, or English. "
     "Transcribe the spoken words accurately."
 )
 
@@ -62,64 +55,66 @@ class Segment:
 
 
 class _ModelCache:
-    """Lazily loads and caches faster-whisper models by size, thread-safely."""
+    """Lazily loads and caches Whisper backends, thread-safely."""
 
     def __init__(self) -> None:
-        self._models: dict[str, object] = {}
+        self._fw_models: dict[str, object] = {}
+        self._hf_pipelines: dict[str, object] = {}
         self._lock = threading.Lock()
-        self._supported_languages: set[str] | None = None
 
-    def _load(self, model_size: str):
+    def get_faster_whisper(self, model_size: str):
         try:
             from faster_whisper import WhisperModel  # type: ignore
-        except Exception as exc:  # pragma: no cover - depends on optional dep
+        except Exception as exc:  # pragma: no cover
             raise TranscriptionUnavailable(
                 "faster-whisper is not installed. Install backend ML deps: "
                 "pip install -r requirements-ml.txt"
             ) from exc
 
-        logger.info("Loading Whisper model '%s' (device=%s)", model_size, settings.whisper_device)
-        model = WhisperModel(
-            model_size,
-            device=settings.whisper_device,
-            compute_type=settings.whisper_compute_type,
-        )
-        # Capture the model's supported languages for validation.
-        try:
-            from faster_whisper.tokenizer import _LANGUAGE_CODES  # type: ignore
-
-            self._supported_languages = set(_LANGUAGE_CODES)
-        except Exception:
-            self._supported_languages = None
-        return model
-
-    def get(self, model_size: str):
         with self._lock:
-            if model_size not in self._models:
-                self._models[model_size] = self._load(model_size)
-            return self._models[model_size]
+            if model_size not in self._fw_models:
+                logger.info(
+                    "Loading faster-whisper model '%s' (device=%s)",
+                    model_size,
+                    settings.whisper_device,
+                )
+                self._fw_models[model_size] = WhisperModel(
+                    model_size,
+                    device=settings.whisper_device,
+                    compute_type=settings.whisper_compute_type,
+                )
+            return self._fw_models[model_size]
 
-    def resolve_language(self, requested: str | None) -> str | None:
-        """Return a Whisper language code, or ``None`` for auto-detect."""
-        if not requested:
-            return None
-        requested = requested.strip().lower()
-        if requested in _AUTO_DETECT_LANGUAGES:
-            logger.info(
-                "Language '%s' is not supported by Whisper; using auto-detection "
-                "(avoids forced-Tagalog hallucination on English/mixed speech).",
-                requested,
-            )
-            return None
-        supported = self._supported_languages
-        if supported is None:
-            return requested
-        if requested in supported:
-            return requested
-        logger.warning(
-            "Whisper does not support language '%s'; using auto-detection.", requested
-        )
-        return None
+    def get_hf_pipeline(self, model_id: str):
+        """Load a Hugging Face fine-tuned Whisper ASR pipeline."""
+        try:
+            import torch  # type: ignore
+            from transformers import pipeline  # type: ignore
+        except Exception as exc:  # pragma: no cover
+            raise TranscriptionUnavailable(
+                "transformers/torch are not installed. Install backend ML deps: "
+                "pip install -r requirements-ml.txt"
+            ) from exc
+
+        with self._lock:
+            if model_id not in self._hf_pipelines:
+                device = 0 if settings.whisper_device == "cuda" and torch.cuda.is_available() else -1
+                dtype = torch.float16 if device >= 0 else torch.float32
+                logger.info(
+                    "Loading fine-tuned Whisper ASR '%s' via transformers (device=%s)",
+                    model_id,
+                    "cuda" if device >= 0 else "cpu",
+                )
+                self._hf_pipelines[model_id] = pipeline(
+                    "automatic-speech-recognition",
+                    model=model_id,
+                    device=device,
+                    torch_dtype=dtype,
+                    chunk_length_s=30,
+                    stride_length_s=5,
+                    return_timestamps=True,
+                )
+            return self._hf_pipelines[model_id]
 
 
 _cache = _ModelCache()
@@ -132,6 +127,11 @@ def is_available() -> bool:
         return True
     except Exception:
         return False
+
+
+def hiligaynon_model_id() -> str:
+    """Hugging Face / local id used for the final Stop-Recording pass."""
+    return (settings.whisper_hiligaynon_model or settings.whisper_final_model).strip()
 
 
 _REPEAT_WORD_RE = re.compile(r"\b(\w+)(?:\s+\1){3,}\b", re.IGNORECASE)
@@ -148,51 +148,46 @@ def _collapse_hallucinations(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _forced_language(_requested: str | None) -> str:
+    """Always return Tagalog (``tl``) — never leave Whisper language as None."""
+    return _WHISPER_LANGUAGE
+
+
 def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     """Low-latency transcription of a live audio window.
 
-    Tuned for continuous captions with minimal filtering so spoken words are
-    not dropped for being short, numeric, or mid-phrase.
+    Uses overlapping windows upstream; decode is locked to Tagalog transcription.
     """
     if pcm is None or len(pcm) == 0:
         return []
 
-    model = _cache.get(settings.whisper_live_model)
-    lang = _cache.resolve_language(language or settings.whisper_default_language)
+    model = _cache.get_faster_whisper(settings.whisper_live_model)
+    lang = _forced_language(language)
     segments, _info = model.transcribe(
         pcm,
         language=lang,
-        # Slightly wider beam than pure greedy — still fast enough for live.
+        task=_WHISPER_TASK,
         beam_size=3,
         best_of=3,
         temperature=0.0,
-        # Live windows are short; VAD often drops the whole chunk.
         vad_filter=False,
         condition_on_previous_text=False,
         without_timestamps=False,
-        # Very permissive thresholds so quiet / quick / mixed-language words
-        # are not discarded during live capture.
         no_speech_threshold=0.2,
         compression_ratio_threshold=3.2,
         log_prob_threshold=-1.5,
-        initial_prompt=_INITIAL_PROMPT if lang is None else None,
+        initial_prompt=_INITIAL_PROMPT,
     )
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
-        # Keep any non-empty spoken content (letters, digits, or mixed).
         if text and any(ch.isalnum() for ch in text):
             out.append(Segment(text=text, start=s.start, end=s.end))
     return out
 
 
 def merge_live_caption(previous: str, window_text: str) -> str:
-    """Merge an overlapping-window transcript into the running live caption.
-
-    Finds the longest word overlap between the end of ``previous`` and the start
-    of ``window_text``, then appends only the new suffix so words are not cut or
-    duplicated when windows overlap. Never replaces earlier caption history.
-    """
+    """Merge an overlapping-window transcript into the running live caption."""
     prev = re.sub(r"\s+", " ", (previous or "").strip())
     cur = re.sub(r"\s+", " ", (window_text or "").strip())
     if not cur:
@@ -214,7 +209,6 @@ def merge_live_caption(previous: str, window_text: str) -> str:
             break
 
     if overlap == 0:
-        # Character fallback for short phrases / punctuation drift.
         prev_l = prev.lower()
         cur_l = cur.lower()
         max_check = min(len(prev_l), len(cur_l), 80)
@@ -231,26 +225,6 @@ def merge_live_caption(previous: str, window_text: str) -> str:
     return " ".join(merged).strip()
 
 
-def _run_final(model, audio_source, language: str | None, *, use_prompt: bool):
-    return model.transcribe(
-        audio_source,
-        language=language,
-        beam_size=5,
-        best_of=5,
-        # Retry with higher temperatures when compression/log-prob checks fail.
-        temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-        vad_filter=True,
-        vad_parameters=_FINAL_VAD_PARAMS,
-        # Avoid prompt-conditioning loops ("word word word…") on long audio.
-        condition_on_previous_text=False,
-        without_timestamps=False,
-        initial_prompt=_INITIAL_PROMPT if use_prompt else None,
-        no_speech_threshold=0.55,
-        compression_ratio_threshold=2.4,
-        log_prob_threshold=-1.0,
-    )
-
-
 def _segments_to_list(segments) -> list[Segment]:
     out: list[Segment] = []
     for s in segments:
@@ -260,41 +234,114 @@ def _segments_to_list(segments) -> list[Segment]:
     return out
 
 
-# Languages that are plausible for Philippine meetings / code-switching.
-_PLAUSIBLE_LANGS = frozenset({"en", "tl", "es", "zh", "ja", "ko", "id", "ms"})
+def _audio_to_float32(audio_source) -> np.ndarray:
+    if isinstance(audio_source, np.ndarray):
+        return audio_source.astype(np.float32, copy=False)
+    from . import audio as audio_svc
+
+    return audio_svc.load_audio_float32(str(audio_source))
+
+
+def _transcribe_final_hf(audio_source, language: str | None) -> list[Segment]:
+    """Final pass with a Hugging Face fine-tuned Whisper checkpoint."""
+    model_id = hiligaynon_model_id()
+    pipe = _cache.get_hf_pipeline(model_id)
+    samples = _audio_to_float32(audio_source)
+    if samples.size == 0:
+        return []
+
+    lang = _forced_language(language)
+    logger.info(
+        "Final Whisper ASR with fine-tuned model '%s' (language=%s, task=%s)",
+        model_id,
+        lang,
+        _WHISPER_TASK,
+    )
+    result = pipe(
+        {"array": samples, "sampling_rate": int(settings.audio_sample_rate)},
+        generate_kwargs={
+            "language": lang,
+            "task": _WHISPER_TASK,
+        },
+        return_timestamps=True,
+    )
+
+    chunks = result.get("chunks") if isinstance(result, dict) else None
+    if chunks:
+        out: list[Segment] = []
+        for i, chunk in enumerate(chunks):
+            text = _collapse_hallucinations((chunk.get("text") or "").strip())
+            if not text:
+                continue
+            ts = chunk.get("timestamp") or (None, None)
+            start = float(ts[0] or 0.0)
+            end = float(ts[1] if ts[1] is not None else start)
+            out.append(Segment(text=text, start=start, end=end))
+        if out:
+            return out
+
+    text = ""
+    if isinstance(result, dict):
+        text = _collapse_hallucinations((result.get("text") or "").strip())
+    elif isinstance(result, str):
+        text = _collapse_hallucinations(result.strip())
+    if not text:
+        return []
+    duration = float(samples.size) / float(settings.audio_sample_rate)
+    return [Segment(text=text, start=0.0, end=duration)]
+
+
+def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list[Segment]:
+    """Fallback final pass via faster-whisper (stock or converted model id)."""
+    model = _cache.get_faster_whisper(settings.whisper_final_model)
+    lang = _forced_language(language)
+    segments, info = model.transcribe(
+        audio_source if isinstance(audio_source, str) else _audio_to_float32(audio_source),
+        language=lang,
+        task=_WHISPER_TASK,
+        beam_size=5,
+        best_of=5,
+        temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        vad_filter=True,
+        vad_parameters=_FINAL_VAD_PARAMS,
+        condition_on_previous_text=False,
+        without_timestamps=False,
+        initial_prompt=_INITIAL_PROMPT,
+        no_speech_threshold=0.55,
+        compression_ratio_threshold=2.4,
+        log_prob_threshold=-1.0,
+    )
+    detected = getattr(info, "language", None)
+    if detected:
+        logger.info("faster-whisper final language reported: %s", detected)
+    return _segments_to_list(segments)
+
+
+def _looks_like_hf_repo(model_id: str) -> bool:
+    mid = (model_id or "").strip()
+    return "/" in mid or mid.startswith(".") or mid.startswith("/")
 
 
 def transcribe_final(audio_source, language: str | None) -> list[Segment]:
-    """Full-accuracy transcription of the complete recording (finalization pass).
+    """Full-accuracy transcription for Stop Recording / re-transcribe / upload.
 
-    ``audio_source`` may be a file path (str) or a float32 numpy array.
+    Prefer the configured fine-tuned Hiligaynon (or PH-dialect) Hugging Face
+    Whisper model. Fall back to faster-whisper if that checkpoint cannot load.
+    Always forces ``language="tl"`` and ``task="transcribe"``.
     """
-    model = _cache.get(settings.whisper_final_model)
-    requested = (language or settings.whisper_default_language or "").strip().lower()
-    lang = _cache.resolve_language(requested or None)
+    model_id = hiligaynon_model_id()
+    if _looks_like_hf_repo(model_id):
+        try:
+            return _transcribe_final_hf(audio_source, language)
+        except TranscriptionUnavailable:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Fine-tuned Hiligaynon Whisper '%s' failed (%s); "
+                "falling back to faster-whisper '%s'.",
+                model_id,
+                exc,
+                settings.whisper_final_model,
+            )
 
-    segments, info = _run_final(model, audio_source, lang, use_prompt=(lang is None))
-    detected = getattr(info, "language", None)
-    prob = float(getattr(info, "language_probability", 0.0) or 0.0)
-    if detected:
-        logger.info(
-            "Final transcription language detected: %s (p=%.2f)", detected, prob
-        )
-
-    # When Hiligaynon forced auto-detect and confidence is poor / implausible
-    # (e.g. "jw" on mic noise), retry locked to English — common in PH meetings.
-    if (
-        requested in _AUTO_DETECT_LANGUAGES
-        and lang is None
-        and (prob < 0.55 or (detected and detected not in _PLAUSIBLE_LANGS))
-    ):
-        logger.info(
-            "Low-confidence detect (%s p=%.2f); retrying final pass as English.",
-            detected,
-            prob,
-        )
-        segments, info = _run_final(model, audio_source, "en", use_prompt=False)
-        detected = getattr(info, "language", None)
-        logger.info("English retry language: %s", detected)
-
-    return _segments_to_list(segments)
+    return _transcribe_final_faster_whisper(audio_source, language)
