@@ -325,6 +325,13 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     recorder.status === "finalizing" ||
     recorder.status === "starting";
   const isStarting = recorder.status === "starting";
+  // History detail with an existing transcript (see product screenshot):
+  // hide "Start live transcription" / "Upload audio"; keep Copy + Download.
+  const hideLiveUploadActions =
+    hasTranscript &&
+    !recorder.recording &&
+    recorder.status !== "starting" &&
+    recorder.status !== "finalizing";
 
   async function runSummarize() {
     if (!hasTranscript) {
@@ -442,143 +449,162 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
         </div>
       </div>
 
-      <div className="recorder-bar">
-        <div className="record-control">
-          <button
-            className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
-            onClick={toggleRecord}
-            disabled={
-              asrBusy ||
-              isStarting ||
-              (recorder.recording ? recorder.status === "finalizing" : !canStart)
-            }
-            title={
-              !detailsReady && !recorder.recording
-                ? "Fill in all meeting details first"
-                : undefined
-            }
-          >
-            {isStarting
-              ? "Starting…"
-              : recorder.recording
-                ? "■ End meeting"
-                : "● Start recording"}
-          </button>
-          <div
-            className={`record-duration ${
-              recorder.recording || recorder.status === "starting"
-                ? "active"
-                : recorder.status === "finalizing"
-                  ? "finalizing"
-                  : ""
-            }`}
-            aria-live="polite"
-            aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
-          >
-            {(recorder.recording ||
-              recorder.status === "starting" ||
-              recorder.status === "finalizing" ||
-              recorder.elapsed > 0) && (
-              <>
-                {(recorder.recording || recorder.status === "starting") && (
-                  <span className="dot-live" />
-                )}
-                <span className="record-duration-label">
-                  {recorder.status === "finalizing" ? "Duration" : "Time"}
-                </span>
-                <span className="record-duration-value">
-                  {fmtTime(recorder.elapsed)}
-                </span>
-              </>
-            )}
-            {!recorder.recording &&
-              recorder.status !== "starting" &&
-              recorder.status !== "finalizing" &&
-              recorder.elapsed === 0 && (
-                <span className="record-duration-idle">00:00:00</span>
+      {/* Live start / upload only for meetings that still need a transcript.
+          History detail (already transcribed) matches the product screenshot:
+          no "Start live transcription" / "Upload audio" — Copy + Download only. */}
+      {!hideLiveUploadActions && (
+        <div className="recorder-bar">
+          <div className="record-control">
+            <button
+              className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
+              onClick={toggleRecord}
+              disabled={
+                asrBusy ||
+                isStarting ||
+                (recorder.recording ? recorder.status === "finalizing" : !canStart)
+              }
+              title={
+                !detailsReady && !recorder.recording
+                  ? "Fill in all meeting details first"
+                  : undefined
+              }
+            >
+              {isStarting
+                ? "Starting…"
+                : recorder.recording
+                  ? "■ End meeting"
+                  : "● Start live transcription"}
+            </button>
+            <div
+              className={`record-duration ${
+                recorder.recording || recorder.status === "starting"
+                  ? "active"
+                  : recorder.status === "finalizing"
+                    ? "finalizing"
+                    : ""
+              }`}
+              aria-live="polite"
+              aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
+            >
+              {(recorder.recording ||
+                recorder.status === "starting" ||
+                recorder.status === "finalizing" ||
+                recorder.elapsed > 0) && (
+                <>
+                  {(recorder.recording || recorder.status === "starting") && (
+                    <span className="dot-live" />
+                  )}
+                  <span className="record-duration-label">
+                    {recorder.status === "finalizing" ? "Duration" : "Time"}
+                  </span>
+                  <span className="record-duration-value">
+                    {fmtTime(recorder.elapsed)}
+                  </span>
+                </>
               )}
+              {!recorder.recording &&
+                recorder.status !== "starting" &&
+                recorder.status !== "finalizing" &&
+                recorder.elapsed === 0 && (
+                  <span className="record-duration-idle">00:00:00</span>
+                )}
+            </div>
           </div>
-        </div>
 
-        {!recorder.recording && (
-          <div
-            className="audio-player-wrap"
-            title={
-              audioUrl
-                ? "Meeting recording"
-                : "Recording available after you end the meeting"
-            }
-          >
+          {!recorder.recording && (
+            <div
+              className="audio-player-wrap"
+              title={
+                audioUrl
+                  ? "Meeting recording"
+                  : "Recording available after you end the meeting"
+              }
+            >
+              {audioLoading ? (
+                <span className="card-tag">Loading audio…</span>
+              ) : audioUrl ? (
+                <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
+                  Your browser does not support audio playback.
+                </audio>
+              ) : (
+                <div className="audio-player-empty">
+                  <span className="audio-player-label">Audio</span>
+                  <span className="audio-player-hint">No recording yet</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!recorder.recording && (
+            <>
+              <input
+                ref={uploadInputRef}
+                type="file"
+                accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
+                hidden
+                onChange={(e) => uploadForWhisper(e.target.files?.[0])}
+              />
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
+                onClick={() => uploadInputRef.current?.click()}
+                title="Upload WAV/PCM and run Whisper ASR"
+              >
+                {asrBusy ? <span className="spinner" /> : "Upload audio"}
+              </button>
+              {(hasAudio || audioUrl) && (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  disabled={asrBusy || recorder.status === "finalizing"}
+                  onClick={runWhisperAsr}
+                  title="Run Whisper ASR on the saved recording"
+                >
+                  {asrBusy ? (
+                    <span className="spinner" />
+                  ) : hasTranscript ? (
+                    "Re-transcribe"
+                  ) : (
+                    "Transcribe with Whisper"
+                  )}
+                </button>
+              )}
+            </>
+          )}
+
+          {!detailsReady && !recorder.recording && (
+            <span className="card-tag">
+              Fill in title, venue, date &amp; time, and attendees first
+            </span>
+          )}
+          {(recorder.status === "finalizing" || asrBusy) && (
+            <span className="center-spin" style={{ padding: 0 }}>
+              <span className="spinner" />{" "}
+              {asrBusy
+                ? "Whisper ASR processing audio…"
+                : "Finalizing full-accuracy Whisper transcript…"}
+            </span>
+          )}
+          {recorder.connectionState === "connecting" && (
+            <span className="card-tag">connecting…</span>
+          )}
+        </div>
+      )}
+
+      {hideLiveUploadActions && (hasAudio || audioUrl) && (
+        <div className="recorder-bar history-audio-bar">
+          <div className="audio-player-wrap" title="Saved meeting recording">
             {audioLoading ? (
               <span className="card-tag">Loading audio…</span>
             ) : audioUrl ? (
               <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
                 Your browser does not support audio playback.
               </audio>
-            ) : (
-              <div className="audio-player-empty">
-                <span className="audio-player-label">Audio</span>
-                <span className="audio-player-hint">No recording yet</span>
-              </div>
-            )}
+            ) : null}
           </div>
-        )}
-
-        {!recorder.recording && (
-          <>
-            <input
-              ref={uploadInputRef}
-              type="file"
-              accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
-              hidden
-              onChange={(e) => uploadForWhisper(e.target.files?.[0])}
-            />
-            <button
-              type="button"
-              className="btn secondary"
-              disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
-              onClick={() => uploadInputRef.current?.click()}
-              title="Upload WAV/PCM and run Whisper ASR"
-            >
-              {asrBusy ? <span className="spinner" /> : "Upload audio"}
-            </button>
-            {(hasAudio || audioUrl) && (
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={asrBusy || recorder.status === "finalizing"}
-                onClick={runWhisperAsr}
-                title="Run Whisper ASR on the saved recording"
-              >
-                {asrBusy ? (
-                  <span className="spinner" />
-                ) : hasTranscript ? (
-                  "Re-transcribe"
-                ) : (
-                  "Transcribe with Whisper"
-                )}
-              </button>
-            )}
-          </>
-        )}
-
-        {!detailsReady && !recorder.recording && (
-          <span className="card-tag">
-            Fill in title, venue, date &amp; time, and attendees first
-          </span>
-        )}
-        {(recorder.status === "finalizing" || asrBusy) && (
-          <span className="center-spin" style={{ padding: 0 }}>
-            <span className="spinner" />{" "}
-            {asrBusy
-              ? "Whisper ASR processing audio…"
-              : "Finalizing full-accuracy Whisper transcript…"}
-          </span>
-        )}
-        {recorder.connectionState === "connecting" && (
-          <span className="card-tag">connecting…</span>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="cards bottom-cards">
         {/* Summary card (BART) — from finalized transcript */}

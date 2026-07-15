@@ -963,6 +963,9 @@ select.inline {
   gap: 8px;
   flex-wrap: wrap;
 }
+.history-audio-bar {
+  align-items: center;
+}
 .recording-timer {
   display: inline-flex;
   align-items: center;
