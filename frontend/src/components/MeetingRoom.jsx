@@ -320,12 +320,6 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
     recorder.status !== "starting";
   const isRefined = status === "finalized" && finalTranscript;
   const hasTranscript = Boolean(finalTranscript);
-  // Past/history meetings: no live start or upload — review + export only.
-  const isHistoryMeeting =
-    (status === "finalized" || Boolean((meeting.final_transcript || "").trim())) &&
-    !recorder.recording &&
-    recorder.status !== "starting" &&
-    recorder.status !== "finalizing";
   const showLive =
     recorder.recording ||
     recorder.status === "finalizing" ||
@@ -439,146 +433,82 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
               </div>
             ) : (
               <div className="placeholder">
-                Press <strong>Start recording</strong> for live Whisper captions.
-                Ending a meeting runs the full-accuracy Whisper pass automatically.
+                Press <strong>Start recording</strong> for live Whisper captions,
+                or upload a WAV to transcribe with Whisper ASR. Ending a meeting
+                runs the full-accuracy Whisper pass automatically.
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {!isHistoryMeeting && (
-        <div className="recorder-bar">
-          <div className="record-control">
-            <button
-              className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
-              onClick={toggleRecord}
-              disabled={
-                asrBusy ||
-                isStarting ||
-                (recorder.recording ? recorder.status === "finalizing" : !canStart)
-              }
-              title={
-                !detailsReady && !recorder.recording
-                  ? "Fill in all meeting details first"
-                  : undefined
-              }
-            >
-              {isStarting
-                ? "Starting…"
-                : recorder.recording
-                  ? "■ End meeting"
-                  : "● Start recording"}
-            </button>
-            <div
-              className={`record-duration ${
-                recorder.recording || recorder.status === "starting"
-                  ? "active"
-                  : recorder.status === "finalizing"
-                    ? "finalizing"
-                    : ""
-              }`}
-              aria-live="polite"
-              aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
-            >
-              {(recorder.recording ||
-                recorder.status === "starting" ||
-                recorder.status === "finalizing" ||
-                recorder.elapsed > 0) && (
-                <>
-                  {(recorder.recording || recorder.status === "starting") && (
-                    <span className="dot-live" />
-                  )}
-                  <span className="record-duration-label">
-                    {recorder.status === "finalizing" ? "Duration" : "Time"}
-                  </span>
-                  <span className="record-duration-value">
-                    {fmtTime(recorder.elapsed)}
-                  </span>
-                </>
-              )}
-              {!recorder.recording &&
-                recorder.status !== "starting" &&
-                recorder.status !== "finalizing" &&
-                recorder.elapsed === 0 && (
-                  <span className="record-duration-idle">00:00:00</span>
+      <div className="recorder-bar">
+        <div className="record-control">
+          <button
+            className={`btn record ${recorder.recording || isStarting ? "active" : ""}`}
+            onClick={toggleRecord}
+            disabled={
+              asrBusy ||
+              isStarting ||
+              (recorder.recording ? recorder.status === "finalizing" : !canStart)
+            }
+            title={
+              !detailsReady && !recorder.recording
+                ? "Fill in all meeting details first"
+                : undefined
+            }
+          >
+            {isStarting
+              ? "Starting…"
+              : recorder.recording
+                ? "■ End meeting"
+                : "● Start recording"}
+          </button>
+          <div
+            className={`record-duration ${
+              recorder.recording || recorder.status === "starting"
+                ? "active"
+                : recorder.status === "finalizing"
+                  ? "finalizing"
+                  : ""
+            }`}
+            aria-live="polite"
+            aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
+          >
+            {(recorder.recording ||
+              recorder.status === "starting" ||
+              recorder.status === "finalizing" ||
+              recorder.elapsed > 0) && (
+              <>
+                {(recorder.recording || recorder.status === "starting") && (
+                  <span className="dot-live" />
                 )}
-            </div>
+                <span className="record-duration-label">
+                  {recorder.status === "finalizing" ? "Duration" : "Time"}
+                </span>
+                <span className="record-duration-value">
+                  {fmtTime(recorder.elapsed)}
+                </span>
+              </>
+            )}
+            {!recorder.recording &&
+              recorder.status !== "starting" &&
+              recorder.status !== "finalizing" &&
+              recorder.elapsed === 0 && (
+                <span className="record-duration-idle">00:00:00</span>
+              )}
           </div>
-
-          {!recorder.recording && (
-            <div
-              className="audio-player-wrap"
-              title={audioUrl ? "Meeting recording" : "Recording available after you end the meeting"}
-            >
-              {audioLoading ? (
-                <span className="card-tag">Loading audio…</span>
-              ) : audioUrl ? (
-                <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
-                  Your browser does not support audio playback.
-                </audio>
-              ) : (
-                <div className="audio-player-empty">
-                  <span className="audio-player-label">Audio</span>
-                  <span className="audio-player-hint">No recording yet</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {!recorder.recording && (
-            <>
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
-                onClick={() => uploadInputRef.current?.click()}
-                title="Upload WAV/PCM and run Whisper ASR"
-              >
-                {asrBusy ? <span className="spinner" /> : "Upload audio"}
-              </button>
-              {(hasAudio || audioUrl) && (
-                <button
-                  type="button"
-                  className="btn secondary"
-                  disabled={asrBusy || recorder.status === "finalizing"}
-                  onClick={runWhisperAsr}
-                  title="Run Whisper ASR on the saved recording"
-                >
-                  {asrBusy ? (
-                    <span className="spinner" />
-                  ) : hasTranscript ? (
-                    "Re-transcribe"
-                  ) : (
-                    "Transcribe with Whisper"
-                  )}
-                </button>
-              )}
-            </>
-          )}
-
-          {!detailsReady && !recorder.recording && (
-            <span className="card-tag">
-              Fill in title, venue, date &amp; time, and attendees first
-            </span>
-          )}
-          {(recorder.status === "finalizing" || asrBusy) && (
-            <span className="center-spin" style={{ padding: 0 }}>
-              <span className="spinner" />{" "}
-              {asrBusy
-                ? "Whisper ASR processing audio…"
-                : "Finalizing full-accuracy Whisper transcript…"}
-            </span>
-          )}
-          {recorder.connectionState === "connecting" && (
-            <span className="card-tag">connecting…</span>
-          )}
         </div>
-      )}
 
-      {isHistoryMeeting && (hasAudio || audioUrl) && (
-        <div className="recorder-bar history-audio-bar">
-          <div className="audio-player-wrap" title="Meeting recording">
+        {!recorder.recording && (
+          <div
+            className="audio-player-wrap"
+            title={
+              audioUrl
+                ? "Meeting recording"
+                : "Recording available after you end the meeting"
+            }
+          >
             {audioLoading ? (
               <span className="card-tag">Loading audio…</span>
             ) : audioUrl ? (
@@ -588,41 +518,67 @@ export default function MeetingRoom({ meeting, onMeetingUpdated, onSaveControls 
             ) : (
               <div className="audio-player-empty">
                 <span className="audio-player-label">Audio</span>
-                <span className="audio-player-hint">No recording file</span>
+                <span className="audio-player-hint">No recording yet</span>
               </div>
             )}
           </div>
-          {hasTranscript && (
-            <div className="transcript-actions">
-              <button
-                type="button"
-                className="btn secondary meeting-action-btn"
-                onClick={copyTranscript}
-              >
-                {copyState === "Copied" ? "Copied" : "Copy text"}
-              </button>
-              <button
-                type="button"
-                className="btn secondary meeting-action-btn"
-                onClick={downloadTranscript}
-              >
-                Download
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+        )}
 
-      {/* Keep file input mounted only for new/live meetings (upload removed from history). */}
-      {!isHistoryMeeting && (
-        <input
-          ref={uploadInputRef}
-          type="file"
-          accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
-          hidden
-          onChange={(e) => uploadForWhisper(e.target.files?.[0])}
-        />
-      )}
+        {!recorder.recording && (
+          <>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
+              hidden
+              onChange={(e) => uploadForWhisper(e.target.files?.[0])}
+            />
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
+              onClick={() => uploadInputRef.current?.click()}
+              title="Upload WAV/PCM and run Whisper ASR"
+            >
+              {asrBusy ? <span className="spinner" /> : "Upload audio"}
+            </button>
+            {(hasAudio || audioUrl) && (
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={asrBusy || recorder.status === "finalizing"}
+                onClick={runWhisperAsr}
+                title="Run Whisper ASR on the saved recording"
+              >
+                {asrBusy ? (
+                  <span className="spinner" />
+                ) : hasTranscript ? (
+                  "Re-transcribe"
+                ) : (
+                  "Transcribe with Whisper"
+                )}
+              </button>
+            )}
+          </>
+        )}
+
+        {!detailsReady && !recorder.recording && (
+          <span className="card-tag">
+            Fill in title, venue, date &amp; time, and attendees first
+          </span>
+        )}
+        {(recorder.status === "finalizing" || asrBusy) && (
+          <span className="center-spin" style={{ padding: 0 }}>
+            <span className="spinner" />{" "}
+            {asrBusy
+              ? "Whisper ASR processing audio…"
+              : "Finalizing full-accuracy Whisper transcript…"}
+          </span>
+        )}
+        {recorder.connectionState === "connecting" && (
+          <span className="card-tag">connecting…</span>
+        )}
+      </div>
 
       <div className="cards bottom-cards">
         {/* Summary card (BART) — from finalized transcript */}
