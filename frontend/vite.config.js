@@ -15,6 +15,9 @@ export default defineConfig({
       "/ws": {
         target: "ws://127.0.0.1:8000",
         ws: true,
+        // Do not idle-out long live-transcription sessions in dev.
+        timeout: 0,
+        proxyTimeout: 0,
       },
     },
   },

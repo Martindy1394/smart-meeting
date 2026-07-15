@@ -186,14 +186,30 @@ export function useRecorder({ onFinalTranscript } = {}) {
           // Only fall back to composed chunks if we have not received live_caption yet.
           setLiveText((prev) => prev || composeLive());
         } else if (data.type === "finalizing") {
+          // Server started finalize — never reconnect into a wiped session.
+          stoppingRef.current = true;
+          reconnectRef.current.active = false;
+          if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
+          setRecording(false);
           setStatus("finalizing");
         } else if (data.type === "final_transcript") {
           // Two-pass: clear live fragments, surface the finalized transcript.
+          stoppingRef.current = true;
+          reconnectRef.current.active = false;
+          if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
           liveSegmentsRef.current = {};
           setLiveText("");
+          setRecording(false);
           setStatus("idle");
           if (onFinalTranscript) onFinalTranscript(data);
         } else if (data.type === "error") {
+          // Finished / fatal errors should not keep reconnecting.
+          if (/already (finalized|processing|failed)/i.test(data.message || "")) {
+            stoppingRef.current = true;
+            reconnectRef.current.active = false;
+            if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
+            setRecording(false);
+          }
           setStatus("error");
           setMessage(data.message || "Transcription error.");
         }
@@ -207,9 +223,10 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
         // Reconnect only if we are actively recording (unexpected drop).
         // Allow many retries — board meetings can run 8h+ and proxies flap.
+        // Server keeps Redis PCM on drop (does not finalize) so captions resume.
         if (reconnectRef.current.active && !stoppingRef.current) {
           const attempts = ++reconnectRef.current.attempts;
-          if (attempts <= 30) {
+          if (attempts <= 60) {
             const delay = Math.min(1000 * 2 ** Math.min(attempts - 1, 5), 30000);
             setMessage(`Connection lost — reconnecting (attempt ${attempts})…`);
             reconnectRef.current.timer = setTimeout(
