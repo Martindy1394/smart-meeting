@@ -15,7 +15,7 @@ export default function Sidebar({
     "";
 
   const menuSection =
-    section === "meeting" ? "history" : section;
+    section === "meeting" || section === "recordings" ? "history" : section;
 
   return (
     <>
@@ -50,16 +50,6 @@ export default function Sidebar({
           </button>
           <button
             type="button"
-            className={`side-menu-item ${menuSection === "recordings" ? "active" : ""}`}
-            onClick={() => {
-              onSectionChange("recordings");
-              onClose && onClose();
-            }}
-          >
-            Recordings
-          </button>
-          <button
-            type="button"
             className={`side-menu-item ${menuSection === "settings" ? "active" : ""}`}
             onClick={() => {
               onSectionChange("settings");
@@ -73,13 +63,8 @@ export default function Sidebar({
         <div className="sidebar-settings-note">
           {menuSection === "history" ? (
             <p>
-              Open <strong>History</strong> in the main panel to browse, search,
-              open, or remove all saved meeting records.
-            </p>
-          ) : menuSection === "recordings" ? (
-            <p>
-              Open <strong>Recordings</strong> to play, download, or re-transcribe
-              every saved meeting audio file.
+              <strong>History</strong> holds every saved meeting and recording.
+              Copy, download, play, open, or remove records from one list.
             </p>
           ) : menuSection === "settings" ? (
             <p>
@@ -87,10 +72,7 @@ export default function Sidebar({
               position, workplace, working email, username, and password.
             </p>
           ) : (
-            <p>
-              Use the menu to switch between history, recordings, and account
-              settings.
-            </p>
+            <p>Use the menu to switch between history and account settings.</p>
           )}
         </div>
 

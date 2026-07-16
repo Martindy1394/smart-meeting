@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
 function fmtDate(iso) {
@@ -14,6 +14,17 @@ function fmtDate(iso) {
   } catch {
     return "";
   }
+}
+
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, "0")}:${r.toString().padStart(2, "0")}`;
+  }
+  return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
 function statusLabel(status) {
@@ -50,41 +61,208 @@ function downloadTextFile(filename, text) {
   URL.revokeObjectURL(url);
 }
 
-function HistoryRow({
-  meeting,
-  active,
-  onSelect,
-  onDelete,
+function Icon({ children }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+const ICONS = {
+  copy: (
+    <Icon>
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </Icon>
+  ),
+  download: (
+    <Icon>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </Icon>
+  ),
+  open: (
+    <Icon>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </Icon>
+  ),
+  play: (
+    <Icon>
+      <polygon points="6 3 20 12 6 21 6 3" />
+    </Icon>
+  ),
+  audio: (
+    <Icon>
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </Icon>
+  ),
+  refresh: (
+    <Icon>
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </Icon>
+  ),
+  trash: (
+    <Icon>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </Icon>
+  ),
+};
+
+function IconButton({
+  label,
+  onClick,
+  disabled,
+  busy,
+  tone = "default",
+  children,
 }) {
+  return (
+    <button
+      type="button"
+      className={`icon-btn ${tone === "danger" ? "danger" : ""}`}
+      onClick={onClick}
+      disabled={disabled || busy}
+      title={label}
+      aria-label={label}
+    >
+      {busy ? <span className="spinner" /> : children}
+    </button>
+  );
+}
+
+function HistoryRow({ meeting, active, onSelect, onDelete, onRefresh }) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
-  const hasTranscript = Boolean(meeting.has_transcript || meeting.status === "finalized");
+  const [error, setError] = useState("");
+  const [showPlayer, setShowPlayer] = useState(false);
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  const audioRef = useRef(null);
+  const urlRef = useRef(null);
+
+  const hasTranscript = Boolean(
+    meeting.has_transcript || meeting.status === "finalized"
+  );
+  const hasAudio = Boolean(meeting.has_audio);
+
+  useEffect(() => {
+    return () => {
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showPlayer || !audioUrl) return;
+    const el = audioRef.current;
+    if (!el) return;
+    el.play().catch(() => {});
+  }, [showPlayer, audioUrl]);
+
+  function flash(msg) {
+    setMessage(msg);
+    setTimeout(() => setMessage(""), 1800);
+  }
 
   async function handleCopy() {
     setBusy("copy");
-    setMessage("");
+    setError("");
     try {
       const { text } = await loadTranscript(meeting.id);
       await navigator.clipboard.writeText(text);
-      setMessage("Copied");
-      setTimeout(() => setMessage(""), 1800);
+      flash("Copied");
     } catch (err) {
-      setMessage(err.message || "Copy failed.");
+      setError(err.message || "Copy failed.");
     } finally {
       setBusy("");
     }
   }
 
-  async function handleDownload() {
-    setBusy("download");
-    setMessage("");
+  async function handleDownloadTranscript() {
+    setBusy("download-text");
+    setError("");
     try {
       const { text, title } = await loadTranscript(meeting.id);
       downloadTextFile(`${safeFilename(title)}_transcript`, text);
-      setMessage("Downloaded");
-      setTimeout(() => setMessage(""), 1800);
+      flash("Downloaded");
     } catch (err) {
-      setMessage(err.message || "Download failed.");
+      setError(err.message || "Download failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function ensureAudio() {
+    if (audioUrl) return audioUrl;
+    setLoadingAudio(true);
+    setError("");
+    try {
+      const url = await api.getMeetingAudioUrl(meeting.id);
+      if (!url) {
+        setError("Audio file not found.");
+        return null;
+      }
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+      urlRef.current = url;
+      setAudioUrl(url);
+      return url;
+    } catch (err) {
+      setError(err.message || "Could not load audio.");
+      return null;
+    } finally {
+      setLoadingAudio(false);
+    }
+  }
+
+  async function handlePlay() {
+    setShowPlayer(true);
+    await ensureAudio();
+  }
+
+  async function handleDownloadAudio() {
+    setBusy("download-audio");
+    setError("");
+    try {
+      const name = (meeting.title || "recording").trim() || "recording";
+      await api.downloadMeetingAudio(meeting.id, name);
+      flash("Audio saved");
+    } catch (err) {
+      setError(err.message || "Audio download failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function handleRetranscribe() {
+    setBusy("retranscribe");
+    setError("");
+    try {
+      await api.retranscribeMeeting(meeting.id);
+      flash("Transcribed");
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      setError(err.message || "Transcription failed.");
     } finally {
       setBusy("");
     }
@@ -98,6 +276,9 @@ function HistoryRow({
         </div>
         <div className="history-row-meta">
           <span>{fmtDate(meeting.meeting_date || meeting.created_at)}</span>
+          {meeting.duration_seconds > 0 ? (
+            <span>{fmtDuration(meeting.duration_seconds)}</span>
+          ) : null}
           {meeting.venue ? <span>{meeting.venue}</span> : null}
           <span
             className={`badge ${
@@ -110,7 +291,7 @@ function HistoryRow({
           >
             {statusLabel(meeting.status)}
           </span>
-          {meeting.has_audio ? <span className="badge">Audio</span> : null}
+          {hasAudio ? <span className="badge">Audio</span> : null}
           {hasTranscript ? <span className="badge">Transcribed</span> : null}
           {meeting.has_summary ? <span className="badge">Summary</span> : null}
           {meeting.has_translation ? (
@@ -118,44 +299,94 @@ function HistoryRow({
           ) : null}
           {message ? <span className="card-tag">{message}</span> : null}
         </div>
+
+        {showPlayer && (
+          <div className="recording-player">
+            {loadingAudio && !audioUrl ? (
+              <span className="card-tag">Loading audio…</span>
+            ) : audioUrl ? (
+              <audio
+                ref={audioRef}
+                className="meeting-audio-player"
+                controls
+                src={audioUrl}
+                preload="metadata"
+              />
+            ) : null}
+          </div>
+        )}
+
+        {error ? (
+          <div className="error-banner" style={{ marginTop: 10 }}>
+            {error}
+          </div>
+        ) : null}
       </div>
-      <div className="history-row-actions">
+
+      <div className="history-row-actions icon-actions">
         {hasTranscript && (
           <>
-            <button
-              type="button"
-              className="btn secondary meeting-action-btn"
+            <IconButton
+              label="Copy text"
               onClick={handleCopy}
+              busy={busy === "copy"}
               disabled={Boolean(busy)}
-              title="Copy transcript text"
             >
-              {busy === "copy" ? <span className="spinner" /> : "Copy text"}
-            </button>
-            <button
-              type="button"
-              className="btn secondary meeting-action-btn"
-              onClick={handleDownload}
+              {ICONS.copy}
+            </IconButton>
+            <IconButton
+              label="Download transcript"
+              onClick={handleDownloadTranscript}
+              busy={busy === "download-text"}
               disabled={Boolean(busy)}
-              title="Download transcript as a text file"
             >
-              {busy === "download" ? <span className="spinner" /> : "Download"}
-            </button>
+              {ICONS.download}
+            </IconButton>
           </>
         )}
-        <button
-          type="button"
-          className="btn secondary meeting-action-btn"
+        {hasAudio && (
+          <>
+            <IconButton
+              label="Play audio"
+              onClick={handlePlay}
+              busy={loadingAudio}
+              disabled={Boolean(busy)}
+            >
+              {ICONS.play}
+            </IconButton>
+            <IconButton
+              label="Download audio"
+              onClick={handleDownloadAudio}
+              busy={busy === "download-audio"}
+              disabled={Boolean(busy)}
+            >
+              {ICONS.audio}
+            </IconButton>
+            <IconButton
+              label={hasTranscript ? "Re-transcribe" : "Transcribe"}
+              onClick={handleRetranscribe}
+              busy={busy === "retranscribe"}
+              disabled={Boolean(busy)}
+            >
+              {ICONS.refresh}
+            </IconButton>
+          </>
+        )}
+        <IconButton
+          label="Open meeting"
           onClick={() => onSelect(meeting.id)}
+          disabled={Boolean(busy)}
         >
-          Open
-        </button>
-        <button
-          type="button"
-          className="btn ghost meeting-action-btn meeting-remove-btn"
+          {ICONS.open}
+        </IconButton>
+        <IconButton
+          label="Remove meeting"
           onClick={() => onDelete(meeting.id)}
+          disabled={Boolean(busy)}
+          tone="danger"
         >
-          Remove
-        </button>
+          {ICONS.trash}
+        </IconButton>
       </div>
     </div>
   );
@@ -170,6 +401,7 @@ export default function HistoryPanel({
   onSelect,
   onDelete,
   onCreate,
+  onRefresh,
 }) {
   const count = meetings.length;
 
@@ -178,12 +410,12 @@ export default function HistoryPanel({
       <div className="card history-card">
         <div className="card-head">
           <h3>History</h3>
-          <span className="card-tag">Saved records</span>
+          <span className="card-tag">Meetings &amp; recordings</span>
         </div>
         <div className="card-body">
           <p className="settings-intro">
-            All of your saved meeting records live here. Open one to review the
-            transcript, or copy / download transcribed text.
+            All saved meetings and recordings in one place. Use the icons to
+            copy, download, play, open, or remove a record.
           </p>
 
           <div className="history-toolbar">
@@ -228,6 +460,7 @@ export default function HistoryPanel({
                       active={m.id === activeId}
                       onSelect={onSelect}
                       onDelete={onDelete}
+                      onRefresh={onRefresh}
                     />
                   ))}
                 </div>

@@ -549,6 +549,49 @@ button {
   justify-content: flex-end;
   flex-shrink: 0;
 }
+.history-row-actions.icon-actions {
+  gap: 6px;
+}
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.icon-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.16);
+  border-color: rgba(99, 102, 241, 0.45);
+  color: #c7c9ff;
+}
+.icon-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.icon-btn.danger {
+  color: #fca5a5;
+}
+.icon-btn.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fecaca;
+}
+.icon-btn .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+.transcript-actions .icon-btn {
+  background: var(--surface);
+}
 .recordings-panel .history-card > .card-body {
   white-space: normal;
 }

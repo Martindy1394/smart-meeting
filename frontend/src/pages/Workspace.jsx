@@ -2,27 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import HistoryPanel from "../components/HistoryPanel.jsx";
 import MeetingRoom from "../components/MeetingRoom.jsx";
-import RecordingsPanel from "../components/RecordingsPanel.jsx";
 import SettingsPanel from "../components/SettingsPanel.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 
 export default function Workspace() {
   const [section, setSection] = useState("history");
   const [meetings, setMeetings] = useState([]);
-  const [recordings, setRecordings] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
-  const [loadingRecordings, setLoadingRecordings] = useState(false);
   const [search, setSearch] = useState("");
-  const [recordingSearch, setRecordingSearch] = useState("");
   const [activeId, setActiveId] = useState(null);
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loadingMeeting, setLoadingMeeting] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [saveControls, setSaveControls] = useState(null);
-  // True when opening an existing meeting from History/Recordings (review mode).
+  // True when opening an existing meeting from History (review mode).
   const [historyView, setHistoryView] = useState(false);
   const searchTimer = useRef(null);
-  const recordingSearchTimer = useRef(null);
 
   const loadMeetings = useCallback(async (q) => {
     setLoadingList(true);
@@ -36,27 +31,9 @@ export default function Workspace() {
     }
   }, []);
 
-  const loadRecordings = useCallback(async (q) => {
-    setLoadingRecordings(true);
-    try {
-      const list = await api.listMeetings(q, { hasAudio: true });
-      setRecordings(list);
-    } catch {
-      setRecordings([]);
-    } finally {
-      setLoadingRecordings(false);
-    }
-  }, []);
-
   useEffect(() => {
     loadMeetings("");
   }, [loadMeetings]);
-
-  useEffect(() => {
-    if (section === "recordings") {
-      loadRecordings(recordingSearch);
-    }
-  }, [section, loadRecordings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced search for history.
   useEffect(() => {
@@ -65,16 +42,10 @@ export default function Workspace() {
     return () => clearTimeout(searchTimer.current);
   }, [search, loadMeetings]);
 
-  // Debounced search for recordings.
-  useEffect(() => {
-    if (section !== "recordings") return undefined;
-    if (recordingSearchTimer.current) clearTimeout(recordingSearchTimer.current);
-    recordingSearchTimer.current = setTimeout(
-      () => loadRecordings(recordingSearch),
-      300
-    );
-    return () => clearTimeout(recordingSearchTimer.current);
-  }, [recordingSearch, loadRecordings, section]);
+  const handleSectionChange = useCallback((next) => {
+    // Recordings was merged into History.
+    setSection(next === "recordings" ? "history" : next);
+  }, []);
 
   const selectMeeting = useCallback(async (id) => {
     setSection("meeting");
@@ -99,21 +70,17 @@ export default function Workspace() {
         language: "hil",
         meeting_date: new Date().toISOString(),
       });
-      // Show the room immediately — refresh lists in the background.
       setSection("meeting");
       setSaveControls(null);
       setHistoryView(false);
       setActiveId(detail.id);
       setActiveMeeting(detail);
       setLoadingMeeting(false);
-      Promise.resolve().then(() => {
-        loadMeetings(search);
-        loadRecordings(recordingSearch);
-      });
+      Promise.resolve().then(() => loadMeetings(search));
     } catch {
       /* ignore */
     }
-  }, [loadMeetings, loadRecordings, search, recordingSearch]);
+  }, [loadMeetings, search]);
 
   const deleteMeeting = useCallback(
     async (id) => {
@@ -128,12 +95,11 @@ export default function Workspace() {
           setSection("history");
         }
         loadMeetings(search);
-        loadRecordings(recordingSearch);
       } catch {
         /* ignore */
       }
     },
-    [activeId, loadMeetings, loadRecordings, search, recordingSearch]
+    [activeId, loadMeetings, search]
   );
 
   const refreshActive = useCallback(
@@ -149,21 +115,19 @@ export default function Workspace() {
         }
       }
       loadMeetings(search);
-      loadRecordings(recordingSearch);
     },
-    [activeId, loadMeetings, loadRecordings, search, recordingSearch]
+    [activeId, loadMeetings, search]
   );
 
   const showSettings = section === "settings";
-  const showHistory = section === "history";
-  const showRecordings = section === "recordings";
+  const showHistory = section === "history" || section === "recordings";
   const showMeeting = section === "meeting";
 
   return (
     <div className="app-shell">
       <Sidebar
         section={section}
-        onSectionChange={setSection}
+        onSectionChange={handleSectionChange}
         onCreate={createMeeting}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -183,11 +147,9 @@ export default function Workspace() {
                 ? "Settings"
                 : showHistory
                   ? "History"
-                  : showRecordings
-                    ? "Recordings"
-                    : activeMeeting
-                      ? activeMeeting.title || "Untitled meeting"
-                      : "Smart Meeting"}
+                  : activeMeeting
+                    ? activeMeeting.title || "Untitled meeting"
+                    : "Smart Meeting"}
             </h1>
           </div>
           {showMeeting && activeMeeting && saveControls && (
@@ -215,16 +177,7 @@ export default function Workspace() {
             onSelect={selectMeeting}
             onDelete={deleteMeeting}
             onCreate={createMeeting}
-          />
-        ) : showRecordings ? (
-          <RecordingsPanel
-            recordings={recordings}
-            loading={loadingRecordings}
-            search={recordingSearch}
-            onSearch={setRecordingSearch}
-            onOpen={selectMeeting}
-            onDelete={deleteMeeting}
-            onRefresh={() => loadRecordings(recordingSearch)}
+            onRefresh={() => loadMeetings(search)}
           />
         ) : loadingMeeting ? (
           <div className="center-spin">
@@ -244,8 +197,8 @@ export default function Workspace() {
             <h2>Welcome to Smart Meeting</h2>
             <p>
               Create a new meeting to start live transcription, then summarize
-              and translate the results. Open History or Recordings anytime to
-              revisit saved work.
+              and translate the results. Open History anytime to revisit saved
+              meetings and recordings.
             </p>
             <button className="btn" onClick={createMeeting}>
               + New meeting
