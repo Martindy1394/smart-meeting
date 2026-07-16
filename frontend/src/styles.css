@@ -720,10 +720,18 @@ button {
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 .history-detail-heading {
   min-width: 0;
   flex: 1;
+}
+.history-detail-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 .history-detail-kicker {
   display: block;

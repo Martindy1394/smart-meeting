@@ -70,8 +70,11 @@ export default function MeetingRoom({
   const [asrError, setAsrError] = useState("");
   const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
   const [copyState, setCopyState] = useState("");
+  const [actionBusy, setActionBusy] = useState("");
+  const [showPlayer, setShowPlayer] = useState(false);
   const audioUrlRef = useRef(null);
   const uploadInputRef = useRef(null);
+  const playerRef = useRef(null);
 
   const revokeAudioUrl = useCallback(() => {
     if (audioUrlRef.current) {
@@ -367,7 +370,10 @@ export default function MeetingRoom({
 
   async function copyTranscript() {
     const text = (finalTranscript || "").trim();
-    if (!text) return;
+    if (!text) {
+      setAsrError("No transcript is available to copy.");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(text);
       setCopyState("Copied");
@@ -380,7 +386,10 @@ export default function MeetingRoom({
 
   function downloadTranscript() {
     const text = (finalTranscript || "").trim();
-    if (!text) return;
+    if (!text) {
+      setAsrError("No transcript is available to download.");
+      return;
+    }
     const base = (meeting.title || "transcript").trim() || "transcript";
     const filename = `${base.replace(/[^\w\-]+/g, "_").replace(/_+/g, "_").slice(0, 80)}_transcript.txt`;
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
@@ -394,27 +403,155 @@ export default function MeetingRoom({
     URL.revokeObjectURL(url);
   }
 
+  async function playSavedAudio() {
+    setAsrError("");
+    setShowPlayer(true);
+    setActionBusy("play");
+    try {
+      let url = audioUrl;
+      if (!url) {
+        await loadAudio(meeting.id);
+        url = audioUrlRef.current;
+      }
+      if (!url) {
+        setAsrError("Audio file not found.");
+        return;
+      }
+      // Allow the player to mount, then play.
+      requestAnimationFrame(() => {
+        const el = playerRef.current;
+        if (el) el.play().catch(() => {});
+      });
+    } finally {
+      setActionBusy("");
+    }
+  }
+
+  async function downloadSavedAudio() {
+    setActionBusy("download-audio");
+    setAsrError("");
+    try {
+      const name = (meeting.title || "recording").trim() || "recording";
+      await api.downloadMeetingAudio(meeting.id, name);
+    } catch (err) {
+      setAsrError(err.message || "Audio download failed.");
+    } finally {
+      setActionBusy("");
+    }
+  }
+
   return (
     <div className={`content ${historyView ? "history-detail" : ""}`}>
-      {historyView && onBack && (
+      {historyView && (
         <div className="history-detail-toolbar">
-          <button
-            type="button"
-            className="icon-btn back-icon-btn"
-            onClick={onBack}
-            title="Back to saved meetings"
-            aria-label="Back to saved meetings"
-          >
-            <MiniIcon>
-              <line x1="19" y1="12" x2="5" y2="12" />
-              <polyline points="12 19 5 12 12 5" />
-            </MiniIcon>
-          </button>
+          {onBack && (
+            <button
+              type="button"
+              className="icon-btn back-icon-btn"
+              onClick={onBack}
+              title="Back to saved meetings"
+              aria-label="Back to saved meetings"
+            >
+              <MiniIcon>
+                <line x1="19" y1="12" x2="5" y2="12" />
+                <polyline points="12 19 5 12 12 5" />
+              </MiniIcon>
+            </button>
+          )}
           <div className="history-detail-heading">
             <span className="history-detail-kicker">Saved meeting</span>
             <h2 className="history-detail-title">
               {meeting.title || "Untitled meeting"}
             </h2>
+          </div>
+          <div className="history-detail-actions icon-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={copyTranscript}
+              disabled={!hasTranscript || Boolean(actionBusy)}
+              title={copyState === "Copied" ? "Copied" : "Copy text"}
+              aria-label={copyState === "Copied" ? "Copied" : "Copy text"}
+            >
+              {copyState === "Copied" ? (
+                <span className="card-tag" style={{ margin: 0 }}>✓</span>
+              ) : (
+                <MiniIcon>
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </MiniIcon>
+              )}
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={downloadTranscript}
+              disabled={!hasTranscript || Boolean(actionBusy)}
+              title="Download transcript"
+              aria-label="Download transcript"
+            >
+              <MiniIcon>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </MiniIcon>
+            </button>
+            {hasAudio && (
+              <>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={playSavedAudio}
+                  disabled={Boolean(actionBusy) || audioLoading}
+                  title="Play audio"
+                  aria-label="Play audio"
+                >
+                  {actionBusy === "play" || audioLoading ? (
+                    <span className="spinner" />
+                  ) : (
+                    <MiniIcon>
+                      <polygon points="6 3 20 12 6 21 6 3" />
+                    </MiniIcon>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={downloadSavedAudio}
+                  disabled={Boolean(actionBusy)}
+                  title="Download audio"
+                  aria-label="Download audio"
+                >
+                  {actionBusy === "download-audio" ? (
+                    <span className="spinner" />
+                  ) : (
+                    <MiniIcon>
+                      <path d="M9 18V5l12-2v13" />
+                      <circle cx="6" cy="18" r="3" />
+                      <circle cx="18" cy="16" r="3" />
+                    </MiniIcon>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={runWhisperAsr}
+                  disabled={asrBusy || Boolean(actionBusy)}
+                  title={hasTranscript ? "Re-transcribe" : "Transcribe"}
+                  aria-label={hasTranscript ? "Re-transcribe" : "Transcribe"}
+                >
+                  {asrBusy ? (
+                    <span className="spinner" />
+                  ) : (
+                    <MiniIcon>
+                      <polyline points="23 4 23 10 17 10" />
+                      <polyline points="1 20 1 14 7 14" />
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                    </MiniIcon>
+                  )}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -446,7 +583,8 @@ export default function MeetingRoom({
               )}
             </h3>
             <div className="transcript-head-meta">
-              {hasTranscript && (
+              {/* On saved-meeting pages, actions live in the top toolbar. */}
+              {!historyView && hasTranscript && (
                 <div className="transcript-actions">
                   <button
                     type="button"
@@ -479,9 +617,7 @@ export default function MeetingRoom({
                   </button>
                 </div>
               )}
-              {!historyView && (
-                <span className="card-tag">Whisper ASR · {meeting.language}</span>
-              )}
+              <span className="card-tag">Whisper ASR · {meeting.language}</span>
             </div>
           </div>
           <div className="card-body">
@@ -654,16 +790,27 @@ export default function MeetingRoom({
         </div>
       )}
 
-      {hideLiveUploadActions && (hasAudio || audioUrl) && (
+      {hideLiveUploadActions && (hasAudio || audioUrl || showPlayer) && (
         <div className="recorder-bar history-audio-bar">
           <div className="audio-player-wrap" title="Saved meeting recording">
-            {audioLoading ? (
+            {audioLoading && !audioUrl ? (
               <span className="card-tag">Loading audio…</span>
             ) : audioUrl ? (
-              <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
+              <audio
+                ref={playerRef}
+                className="meeting-audio-player"
+                controls
+                src={audioUrl}
+                preload="metadata"
+              >
                 Your browser does not support audio playback.
               </audio>
-            ) : null}
+            ) : (
+              <div className="audio-player-empty">
+                <span className="audio-player-label">Audio</span>
+                <span className="audio-player-hint">No recording file</span>
+              </div>
+            )}
           </div>
         </div>
       )}

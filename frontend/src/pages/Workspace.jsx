@@ -185,7 +185,6 @@ export default function Workspace() {
             onSelect={selectMeeting}
             onDelete={deleteMeeting}
             onCreate={createMeeting}
-            onRefresh={() => loadMeetings(search)}
           />
         ) : loadingMeeting ? (
           <div className="center-spin">
