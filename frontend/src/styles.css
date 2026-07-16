@@ -715,6 +715,36 @@ button {
   margin: 0 auto;
   width: 100%;
 }
+.history-detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.history-detail-heading {
+  min-width: 0;
+  flex: 1;
+}
+.history-detail-kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.history-detail-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 750;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.back-icon-btn {
+  flex-shrink: 0;
+}
 .content.history-detail .top-row {
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   align-items: stretch;

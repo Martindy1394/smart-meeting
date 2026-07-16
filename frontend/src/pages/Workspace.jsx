@@ -63,6 +63,14 @@ export default function Workspace() {
     }
   }, []);
 
+  const backToHistory = useCallback(() => {
+    setSection("history");
+    setHistoryView(false);
+    setSaveControls(null);
+    setLoadingMeeting(false);
+    // Keep activeId so the list can highlight the last opened meeting.
+  }, []);
+
   const createMeeting = useCallback(async () => {
     try {
       const detail = await api.createMeeting({
@@ -190,6 +198,7 @@ export default function Workspace() {
             onMeetingUpdated={refreshActive}
             onSaveControls={setSaveControls}
             historyView={historyView}
+            onBack={historyView ? backToHistory : undefined}
           />
         ) : (
           <div className="empty-state">

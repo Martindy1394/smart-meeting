@@ -39,6 +39,7 @@ export default function MeetingRoom({
   onMeetingUpdated,
   onSaveControls,
   historyView = false,
+  onBack,
 }) {
   const detailsRef = useRef(null);
   const [detailsReady, setDetailsReady] = useState(false);
@@ -395,6 +396,29 @@ export default function MeetingRoom({
 
   return (
     <div className={`content ${historyView ? "history-detail" : ""}`}>
+      {historyView && onBack && (
+        <div className="history-detail-toolbar">
+          <button
+            type="button"
+            className="icon-btn back-icon-btn"
+            onClick={onBack}
+            title="Back to saved meetings"
+            aria-label="Back to saved meetings"
+          >
+            <MiniIcon>
+              <line x1="19" y1="12" x2="5" y2="12" />
+              <polyline points="12 19 5 12 12 5" />
+            </MiniIcon>
+          </button>
+          <div className="history-detail-heading">
+            <span className="history-detail-kicker">Saved meeting</span>
+            <h2 className="history-detail-title">
+              {meeting.title || "Untitled meeting"}
+            </h2>
+          </div>
+        </div>
+      )}
+
       {!recorder.transcriptionAvailable && recorder.message && (
         <div className="banner-warn">{recorder.message}</div>
       )}
