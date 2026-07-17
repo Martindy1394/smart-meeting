@@ -243,14 +243,16 @@ button {
   padding: 12px 10px 4px;
 }
 .side-menu-item {
-  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
   border-radius: 9px;
-  padding: 10px 12px;
-  font-size: 14px;
-  font-weight: 650;
+  padding: 0;
   cursor: pointer;
 }
 .side-menu-item:hover {

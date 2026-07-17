@@ -1,5 +1,23 @@
 import { useAuth } from "../context/AuthContext.jsx";
 
+function MenuIcon({ children }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
 export default function Sidebar({
   section,
   onSectionChange,
@@ -45,8 +63,13 @@ export default function Sidebar({
               onSectionChange("history");
               onClose && onClose();
             }}
+            title="History"
+            aria-label="History"
           >
-            History
+            <MenuIcon>
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </MenuIcon>
           </button>
           <button
             type="button"
@@ -55,16 +78,21 @@ export default function Sidebar({
               onSectionChange("settings");
               onClose && onClose();
             }}
+            title="Settings"
+            aria-label="Settings"
           >
-            Settings
+            <MenuIcon>
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </MenuIcon>
           </button>
         </nav>
 
         <div className="sidebar-settings-note">
           {menuSection === "history" ? (
             <p>
-              <strong>History</strong> holds every saved meeting and recording.
-              Copy, download, play, open, or remove records from one list.
+              Open saved meetings and recordings from History. Copy, download,
+              play, or remove records from one list.
             </p>
           ) : menuSection === "settings" ? (
             <p>
