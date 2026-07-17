@@ -164,16 +164,29 @@ export function useRecorder({ onFinalTranscript } = {}) {
         if (data.type === "status") {
           setTranscriptionAvailable(data.transcription_available);
           // Keep the short startup copy until the first caption arrives.
-          setMessage((prev) =>
-            prev === "Starting meeting and microphone…" ||
-            prev === "Connecting live transcription…" ||
-            prev === "Listening…"
-              ? prev
-              : data.message || prev
-          );
+          // Always surface explicit reconnect/resume status from the server.
+          if (data.resumed && data.message) {
+            setMessage(data.message);
+          } else {
+            setMessage((prev) =>
+              prev === "Starting meeting and microphone…" ||
+              prev === "Connecting live transcription…" ||
+              prev === "Listening…"
+                ? prev
+                : data.message || prev
+            );
+          }
           // Resume captions restored from Redis after a reconnect.
           if (data.live_caption) {
-            setLiveText((prev) => prev || data.live_caption);
+            setLiveText((prev) => {
+              const current = (prev || "").trim();
+              const incoming = String(data.live_caption || "").trim();
+              if (!incoming) return prev;
+              if (!current) return incoming;
+              // Prefer the longer buffer so a short client buffer cannot wipe
+              // Redis-restored captions (or vice versa).
+              return incoming.length >= current.length ? incoming : prev;
+            });
           }
         } else if (data.type === "info" || data.type === "warning") {
           setMessage(data.message || "");

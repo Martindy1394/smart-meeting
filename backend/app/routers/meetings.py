@@ -1,6 +1,7 @@
 """Meeting management: list, create, read, update, delete, search, audio, ASR."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -80,8 +81,8 @@ def _to_detail(m: Meeting) -> MeetingDetail:
     return detail
 
 
-def _run_whisper_on_meeting(meeting: Meeting, db: Session) -> MeetingDetail:
-    """Full-accuracy Whisper ASR on the meeting's saved audio file."""
+def _prepare_whisper_job(meeting: Meeting, db: Session) -> tuple[str, str]:
+    """Validate meeting audio and mark processing. Returns ``(path, language)``."""
     if not _has_audio(meeting):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -92,38 +93,75 @@ def _run_whisper_on_meeting(meeting: Meeting, db: Session) -> MeetingDetail:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Whisper ASR is not available on this server.",
         )
-
     meeting.status = "processing"
     db.commit()
+    return os.path.abspath(meeting.audio_path), meeting.language or "hil"
 
-    path = os.path.abspath(meeting.audio_path)
+
+def _persist_whisper_result(
+    meeting: Meeting, db: Session, result: asr.ASRResult
+) -> MeetingDetail:
+    asr.persist_transcript(db, meeting, result)
+    db.commit()
+    db.refresh(meeting)
+    return _to_detail(meeting)
+
+
+def _fail_whisper(meeting: Meeting, db: Session) -> None:
+    meeting.status = "failed"
+    db.commit()
+
+
+def _run_whisper_on_meeting(meeting: Meeting, db: Session) -> MeetingDetail:
+    """Full-accuracy Whisper ASR on the meeting's saved audio file (sync)."""
+    path, language = _prepare_whisper_job(meeting, db)
     try:
-        result = asr.transcribe_file(path, meeting.language or "hil")
+        result = asr.transcribe_file(path, language)
     except asr.ASRUnavailable as exc:
-        meeting.status = "failed"
-        db.commit()
+        _fail_whisper(meeting, db)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
     except audio.AudioFormatError as exc:
-        meeting.status = "failed"
-        db.commit()
+        _fail_whisper(meeting, db)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         )
     except Exception as exc:
         logger.exception("Whisper ASR failed for meeting %s", meeting.id)
-        meeting.status = "failed"
-        db.commit()
+        _fail_whisper(meeting, db)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Whisper ASR failed: {exc}",
         )
+    return _persist_whisper_result(meeting, db, result)
 
-    asr.persist_transcript(db, meeting, result)
-    db.commit()
-    db.refresh(meeting)
-    return _to_detail(meeting)
+
+async def _run_whisper_on_meeting_async(
+    meeting: Meeting, db: Session
+) -> MeetingDetail:
+    """Async variant: run blocking ASR in a worker thread, keep DB on this task."""
+    path, language = _prepare_whisper_job(meeting, db)
+    try:
+        result = await asyncio.to_thread(asr.transcribe_file, path, language)
+    except asr.ASRUnavailable as exc:
+        _fail_whisper(meeting, db)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        )
+    except audio.AudioFormatError as exc:
+        _fail_whisper(meeting, db)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        )
+    except Exception as exc:
+        logger.exception("Whisper ASR failed for meeting %s", meeting.id)
+        _fail_whisper(meeting, db)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Whisper ASR failed: {exc}",
+        )
+    return _persist_whisper_result(meeting, db, result)
 
 
 @router.get("", response_model=list[MeetingSummary])
@@ -249,8 +287,12 @@ async def upload_meeting_audio(
         )
 
     try:
-        path, duration = audio.save_uploaded_audio(
-            meeting_id, data, filename=file.filename or ""
+        # ffmpeg / WAV decode is blocking — keep the event loop free.
+        path, duration = await asyncio.to_thread(
+            audio.save_uploaded_audio,
+            meeting_id,
+            data,
+            file.filename or "",
         )
     except audio.AudioFormatError as exc:
         raise HTTPException(
@@ -269,18 +311,18 @@ async def upload_meeting_audio(
         db.refresh(meeting)
         return _to_detail(meeting)
 
-    return _run_whisper_on_meeting(meeting, db)
+    return await _run_whisper_on_meeting_async(meeting, db)
 
 
 @router.post("/{meeting_id}/retranscribe", response_model=MeetingDetail)
-def retranscribe_meeting(
+async def retranscribe_meeting(
     meeting_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Re-run Whisper ASR on the saved WAV recording."""
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    return _run_whisper_on_meeting(meeting, db)
+    return await _run_whisper_on_meeting_async(meeting, db)
 
 
 @router.patch("/{meeting_id}", response_model=MeetingDetail)

@@ -2,16 +2,24 @@
 
 The browser streams raw 16 kHz / 16-bit / mono PCM. Uploaded files are normalized
 into that canonical format before Whisper ASR runs.
+
+Non-WAV uploads are decoded via ``ffmpeg`` in a blocking subprocess — callers on
+the asyncio event loop must wrap those paths with ``asyncio.to_thread``.
 """
 from __future__ import annotations
 
 import io
+import logging
 import os
+import shutil
+import subprocess
 import wave
 
 import numpy as np
 
 from ..config import settings
+
+logger = logging.getLogger("smart_meeting.audio")
 
 
 class AudioFormatError(ValueError):
@@ -116,6 +124,72 @@ def decode_wav_bytes(data: bytes) -> tuple[np.ndarray, int]:
     return samples.astype(np.float32), int(rate)
 
 
+def ffmpeg_available() -> bool:
+    return shutil.which("ffmpeg") is not None
+
+
+def decode_with_ffmpeg(data: bytes, *, timeout: float | None = None) -> np.ndarray:
+    """Decode arbitrary audio bytes to mono float32 @ ``audio_sample_rate``.
+
+    Uses a blocking ``ffmpeg`` subprocess. Never call this directly from an
+    async request handler — wrap with ``asyncio.to_thread``.
+    """
+    if not data:
+        raise AudioFormatError("Empty audio payload.")
+    if not ffmpeg_available():
+        raise AudioFormatError(
+            "ffmpeg is not installed; only WAV/PCM uploads are supported."
+        )
+
+    target_rate = int(settings.audio_sample_rate)
+    limit = float(timeout if timeout is not None else settings.ffmpeg_timeout_seconds)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-f",
+        "s16le",
+        "-acodec",
+        "pcm_s16le",
+        "-ac",
+        "1",
+        "-ar",
+        str(target_rate),
+        "pipe:1",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=data,
+            capture_output=True,
+            timeout=max(5.0, limit),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AudioFormatError(
+            f"Audio conversion timed out after {limit:g}s."
+        ) from exc
+    except OSError as exc:
+        raise AudioFormatError(f"Failed to run ffmpeg: {exc}") from exc
+
+    if proc.returncode != 0 or not proc.stdout:
+        err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+        detail = err or f"ffmpeg exited with code {proc.returncode}"
+        raise AudioFormatError(f"Could not decode audio ({detail}).")
+
+    samples = pcm16_to_float32(proc.stdout)
+    logger.info(
+        "audio.ffmpeg_decode bytes_in=%d samples_out=%d rate=%d",
+        len(data),
+        int(samples.size),
+        target_rate,
+    )
+    return samples
+
+
 def normalize_for_asr(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     """Resample / shape audio to the Whisper ASR canonical rate (16 kHz mono)."""
     target = int(settings.audio_sample_rate)
@@ -129,6 +203,9 @@ def load_audio_float32(path: str) -> np.ndarray:
     if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
         samples, rate = decode_wav_bytes(data)
         return normalize_for_asr(samples, rate)
+    # Allow ffmpeg for unusual on-disk formats left by older uploads.
+    if ffmpeg_available():
+        return decode_with_ffmpeg(data)
     raise AudioFormatError(
         "Unsupported audio file. Upload a WAV recording (16-bit PCM recommended)."
     )
@@ -138,22 +215,30 @@ def save_uploaded_audio(meeting_id: str, data: bytes, filename: str = "") -> tup
     """Normalize an uploaded audio file to canonical WAV and persist it.
 
     Returns ``(absolute_path, duration_seconds)``.
+
+    Blocking (may invoke ffmpeg). Call via ``asyncio.to_thread`` from async routes.
     """
     name = (filename or "").lower()
     if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
         samples, rate = decode_wav_bytes(data)
+        mono_16k = normalize_for_asr(samples, rate)
     elif name.endswith(".pcm") or name.endswith(".raw"):
-        samples = pcm16_to_float32(data)
-        rate = settings.audio_sample_rate
+        mono_16k = pcm16_to_float32(data)
     else:
+        # Prefer ffmpeg for mp3/m4a/ogg/webm and other containers.
         try:
-            samples, rate = decode_wav_bytes(data)
-        except AudioFormatError as exc:
-            raise AudioFormatError(
-                "Unsupported upload format. Please upload a WAV (or raw 16-bit PCM) file."
-            ) from exc
+            mono_16k = decode_with_ffmpeg(data)
+        except AudioFormatError:
+            # Last chance: some WAVs lack a standard extension.
+            try:
+                samples, rate = decode_wav_bytes(data)
+                mono_16k = normalize_for_asr(samples, rate)
+            except AudioFormatError as exc:
+                raise AudioFormatError(
+                    "Unsupported upload format. Please upload WAV, PCM, or a "
+                    "common compressed audio file (mp3/m4a/ogg/webm)."
+                ) from exc
 
-    mono_16k = normalize_for_asr(samples, rate)
     pcm_bytes = float32_to_pcm16(mono_16k)
     path = save_wav(meeting_id, pcm_bytes)
     return path, wav_duration_seconds(pcm_bytes)

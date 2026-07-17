@@ -14,7 +14,7 @@ from . import __version__
 from .config import settings
 from .database import init_db
 from .routers import ai, auth, meetings
-from .services import asr, llm, redis_store
+from .services import asr, audio, llm, redis_store
 from .ws import transcription as ws_transcription
 
 logging.basicConfig(
@@ -101,6 +101,11 @@ def health():
         "max_meeting_hours": settings.max_meeting_hours,
         "redis_audio_ttl_seconds": settings.redis_audio_ttl_seconds,
         "whisper_final_chunk_seconds": settings.whisper_final_chunk_seconds,
+        "whisper_model_cache_size": settings.whisper_model_cache_size,
+        "whisper_model_cache": transcription_svc.get_model_cache().stats(),
+        "live_caption_prefer_ratio": settings.live_caption_prefer_ratio,
+        "live_caption_prefer_min_words": settings.live_caption_prefer_min_words,
+        "ffmpeg_available": audio.ffmpeg_available(),
         "llm_available": llm.summarizer_available(),
         "environment": settings.environment,
     }

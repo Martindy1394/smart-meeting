@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import numpy as np
@@ -70,14 +72,43 @@ class Segment:
 
 
 class _ModelCache:
-    """Lazily loads and caches Whisper backends, thread-safely."""
+    """Lazily loads Whisper backends with per-model infer locks + LRU eviction.
 
-    def __init__(self) -> None:
+    faster-whisper and HF pipelines are not safe for concurrent calls on the
+    *same* loaded model, but live (``small``) and final (``medium``) can run in
+    parallel when they are distinct cache entries. Cache size is capped so
+    long-running processes do not retain every model ever touched.
+    """
+
+    def __init__(self, max_models: int | None = None) -> None:
         self._fw_models: dict[str, object] = {}
         self._hf_pipelines: dict[str, object] = {}
+        self._fw_locks: dict[str, threading.Lock] = {}
+        self._hf_locks: dict[str, threading.Lock] = {}
+        # Global LRU across both backends: ("fw"|"hf", model_id) -> None
+        self._lru: OrderedDict[tuple[str, str], None] = OrderedDict()
         self._lock = threading.Lock()
-        # faster-whisper models are not safe for concurrent transcribe() calls.
-        self._infer_lock = threading.Lock()
+        self._max_models = max(1, int(max_models or settings.whisper_model_cache_size))
+
+    def _touch(self, kind: str, model_id: str) -> None:
+        token = (kind, model_id)
+        if token in self._lru:
+            self._lru.move_to_end(token)
+        else:
+            self._lru[token] = None
+        while len(self._lru) > self._max_models:
+            old_kind, old_id = next(iter(self._lru))
+            self._lru.popitem(last=False)
+            if old_kind == "fw":
+                self._fw_models.pop(old_id, None)
+            else:
+                self._hf_pipelines.pop(old_id, None)
+            logger.info(
+                "Evicted %s model cache entry '%s' (max_models=%d)",
+                "faster-whisper" if old_kind == "fw" else "huggingface",
+                old_id,
+                self._max_models,
+            )
 
     def get_faster_whisper(self, model_size: str):
         try:
@@ -89,21 +120,40 @@ class _ModelCache:
             ) from exc
 
         with self._lock:
-            if model_size not in self._fw_models:
-                logger.info(
-                    "Loading faster-whisper model '%s' (device=%s)",
-                    model_size,
-                    settings.whisper_device,
-                )
-                self._fw_models[model_size] = WhisperModel(
-                    model_size,
-                    device=settings.whisper_device,
-                    compute_type=settings.whisper_compute_type,
-                )
-            return self._fw_models[model_size]
+            if model_size in self._fw_models:
+                self._touch("fw", model_size)
+                return self._fw_models[model_size]
+
+        # Load outside the cache lock so concurrent warmups for different
+        # models do not serialize on download / mmap.
+        logger.info(
+            "Loading faster-whisper model '%s' (device=%s)",
+            model_size,
+            settings.whisper_device,
+        )
+        model = WhisperModel(
+            model_size,
+            device=settings.whisper_device,
+            compute_type=settings.whisper_compute_type,
+        )
+        with self._lock:
+            existing = self._fw_models.get(model_size)
+            if existing is not None:
+                self._touch("fw", model_size)
+                return existing
+            self._fw_models[model_size] = model
+            self._fw_locks.setdefault(model_size, threading.Lock())
+            self._touch("fw", model_size)
+            return model
+
+    def fw_infer_lock(self, model_size: str) -> threading.Lock:
+        """Per-model lock — live and final models can infer concurrently."""
+        with self._lock:
+            return self._fw_locks.setdefault(model_size, threading.Lock())
 
     def infer_lock(self) -> threading.Lock:
-        return self._infer_lock
+        """Backward-compatible alias: lock for the configured live model."""
+        return self.fw_infer_lock(settings.whisper_live_model)
 
     def get_hf_pipeline(self, model_id: str):
         """Load a Hugging Face fine-tuned Whisper ASR pipeline."""
@@ -117,27 +167,63 @@ class _ModelCache:
             ) from exc
 
         with self._lock:
-            if model_id not in self._hf_pipelines:
-                device = 0 if settings.whisper_device == "cuda" and torch.cuda.is_available() else -1
-                dtype = torch.float16 if device >= 0 else torch.float32
-                logger.info(
-                    "Loading fine-tuned Whisper ASR '%s' via transformers (device=%s)",
-                    model_id,
-                    "cuda" if device >= 0 else "cpu",
-                )
-                self._hf_pipelines[model_id] = pipeline(
-                    "automatic-speech-recognition",
-                    model=model_id,
-                    device=device,
-                    torch_dtype=dtype,
-                    chunk_length_s=30,
-                    stride_length_s=5,
-                    return_timestamps=True,
-                )
-            return self._hf_pipelines[model_id]
+            if model_id in self._hf_pipelines:
+                self._touch("hf", model_id)
+                return self._hf_pipelines[model_id]
+
+        device = 0 if settings.whisper_device == "cuda" and torch.cuda.is_available() else -1
+        dtype = torch.float16 if device >= 0 else torch.float32
+        logger.info(
+            "Loading fine-tuned Whisper ASR '%s' via transformers (device=%s)",
+            model_id,
+            "cuda" if device >= 0 else "cpu",
+        )
+        pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model_id,
+            device=device,
+            torch_dtype=dtype,
+            chunk_length_s=30,
+            stride_length_s=5,
+            return_timestamps=True,
+        )
+        with self._lock:
+            existing = self._hf_pipelines.get(model_id)
+            if existing is not None:
+                self._touch("hf", model_id)
+                return existing
+            self._hf_pipelines[model_id] = pipe
+            self._hf_locks.setdefault(model_id, threading.Lock())
+            self._touch("hf", model_id)
+            return pipe
+
+    def hf_infer_lock(self, model_id: str) -> threading.Lock:
+        with self._lock:
+            return self._hf_locks.setdefault(model_id, threading.Lock())
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "max_models": self._max_models,
+                "faster_whisper": list(self._fw_models.keys()),
+                "huggingface": list(self._hf_pipelines.keys()),
+                "lru": [f"{k}:{i}" for k, i in self._lru.keys()],
+            }
 
 
 _cache = _ModelCache()
+
+
+def get_model_cache() -> _ModelCache:
+    """Accessor for the process-wide model cache (testable / injectable)."""
+    return _cache
+
+
+def set_model_cache(cache: _ModelCache | None) -> _ModelCache:
+    """Replace the process-wide cache (tests). Pass ``None`` to reset."""
+    global _cache
+    _cache = cache if cache is not None else _ModelCache()
+    return _cache
 
 
 def is_available() -> bool:
@@ -154,7 +240,7 @@ def warm_live_model() -> bool:
     if not is_available():
         return False
     try:
-        _cache.get_faster_whisper(settings.whisper_live_model)
+        get_model_cache().get_faster_whisper(settings.whisper_live_model)
         logger.info("Live Whisper model '%s' warmed and ready.", settings.whisper_live_model)
         return True
     except Exception as exc:
@@ -279,11 +365,14 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     if not _energy_ok(pcm):
         return []
 
-    model = _cache.get_faster_whisper(settings.whisper_live_model)
+    cache = get_model_cache()
+    model_id = settings.whisper_live_model
+    model = cache.get_faster_whisper(model_id)
     lang = _forced_language(language)
+    t0 = time.perf_counter()
 
     def _run(decode_language: str | None):
-        with _cache.infer_lock():
+        with cache.fw_infer_lock(model_id):
             return model.transcribe(
                 pcm,
                 language=decode_language,
@@ -332,6 +421,15 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
                     out.append(Segment(text=text, start=s.start, end=s.end))
         except Exception as exc:
             logger.debug("Live auto-detect retry failed: %s", exc)
+
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    logger.info(
+        "asr.live duration_ms=%d segments=%d pcm_samples=%d model=%s",
+        elapsed_ms,
+        len(out),
+        int(len(pcm)),
+        model_id,
+    )
     return out
 
 
@@ -366,12 +464,18 @@ def _token_overlap_size(left: list[str], right: list[str], *, min_size: int = 3)
     return 0
 
 
-def _novel_suffix_from_window(previous_window: str, current_window: str) -> str:
+def _novel_suffix_from_window(
+    previous_window: str,
+    current_window: str,
+    *,
+    hop_fraction: float | None = None,
+) -> str:
     """Return only the new words from an overlapping Whisper window.
 
-    With a 10s window / 5s hop, Whisper re-transcribes the shared half every
-    time. Using the previous window as the overlap anchor lets us append only
-    the hop's new words instead of replacing / truncating the caption.
+    Strategy (kept intentionally simple for debuggability):
+    1. Exact token suffix/prefix overlap vs the previous window.
+    2. If that fails, keep the newest ``hop_fraction`` of the current window
+       (default 0.5 for a 10s window / 5s hop) — never re-paste the whole window.
     """
     cur_tokens = _raw_tokens(current_window)
     if not cur_tokens:
@@ -393,29 +497,20 @@ def _novel_suffix_from_window(previous_window: str, current_window: str) -> str:
     overlap = _token_overlap_size(prev_n, cur_n, min_size=3)
 
     if overlap == 0:
-        # Fuzzy: align with SequenceMatcher and keep a block near the end of
-        # the previous window (typical of sliding-window re-transcription).
-        from difflib import SequenceMatcher
-
-        matcher = SequenceMatcher(a=prev_n, b=cur_n, autojunk=False)
-        best_b_end = 0
-        best_size = 0
-        for block in matcher.get_matching_blocks():
-            if block.size < 3:
-                continue
-            # Prefer matches that touch the end of the previous window.
-            if block.a + block.size >= len(prev_n) - 2 and block.size >= best_size:
-                best_size = block.size
-                best_b_end = block.b + block.size
-        if best_size >= 3:
-            if best_b_end >= len(cur_pairs):
-                return ""
-            start = cur_pairs[best_b_end][0]
-            return " ".join(cur_tokens[start:]).strip()
-        # No reliable overlap — keep roughly the newest half (the hop region)
-        # so we still grow instead of re-pasting the whole window.
-        cut = max(1, int(round(len(cur_tokens) * 0.5)))
-        return " ".join(cur_tokens[-cut:]).strip()
+        # No reliable overlap — append only the hop region (newest half by default).
+        frac = hop_fraction
+        if frac is None:
+            window_s = float(settings.whisper_live_window_seconds) or 10.0
+            hop_s = float(settings.whisper_live_hop_seconds) or 5.0
+            frac = min(1.0, max(0.25, hop_s / window_s))
+        cut = max(1, int(round(len(cur_tokens) * frac)))
+        novel = " ".join(cur_tokens[-cut:]).strip()
+        logger.debug(
+            "live.merge overlap=0 fallback_hop_tokens=%d/%d",
+            cut,
+            len(cur_tokens),
+        )
+        return novel
 
     if overlap >= len(cur_pairs):
         return ""
@@ -476,9 +571,12 @@ def merge_live_caption(
 ) -> str:
     """Merge an overlapping-window transcript into the running live caption.
 
-    Invariant: the returned caption never shrinks versus ``previous``. Overlap
-    audio is deduplicated by comparing against the previous window (preferred)
-    or the caption tail, then only new words are appended.
+    Invariant: the returned caption never shrinks versus ``previous``.
+
+    Merge path (simple, debuggable):
+    1. Prefer window-to-window novel suffix (exact token overlap).
+    2. Else novel vs caption tail only (never full multi-hour scan).
+    3. Else hop-fraction / whole-window append with containment check.
     """
     prev = _clean_caption(previous)
     cur = _clean_caption(window_text)
@@ -542,7 +640,8 @@ def _audio_to_float32(audio_source) -> np.ndarray:
 def _transcribe_final_hf(audio_source, language: str | None) -> list[Segment]:
     """Final pass with a Hugging Face fine-tuned Whisper checkpoint."""
     model_id = hiligaynon_model_id()
-    pipe = _cache.get_hf_pipeline(model_id)
+    cache = get_model_cache()
+    pipe = cache.get_hf_pipeline(model_id)
     samples = _audio_to_float32(audio_source)
     if samples.size == 0:
         return []
@@ -554,13 +653,21 @@ def _transcribe_final_hf(audio_source, language: str | None) -> list[Segment]:
         lang,
         _WHISPER_TASK,
     )
-    result = pipe(
-        {"array": samples, "sampling_rate": int(settings.audio_sample_rate)},
-        generate_kwargs={
-            "language": lang,
-            "task": _WHISPER_TASK,
-        },
-        return_timestamps=True,
+    t0 = time.perf_counter()
+    with cache.hf_infer_lock(model_id):
+        result = pipe(
+            {"array": samples, "sampling_rate": int(settings.audio_sample_rate)},
+            generate_kwargs={
+                "language": lang,
+                "task": _WHISPER_TASK,
+            },
+            return_timestamps=True,
+        )
+    logger.info(
+        "asr.final_hf duration_ms=%d samples=%d model=%s",
+        int((time.perf_counter() - t0) * 1000),
+        int(samples.size),
+        model_id,
     )
 
     chunks = result.get("chunks") if isinstance(result, dict) else None
@@ -590,14 +697,17 @@ def _transcribe_final_hf(audio_source, language: str | None) -> list[Segment]:
 
 def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list[Segment]:
     """Fallback final pass via faster-whisper (stock or converted model id)."""
-    model = _cache.get_faster_whisper(settings.whisper_final_model)
+    model_id = settings.whisper_final_model
+    cache = get_model_cache()
+    model = cache.get_faster_whisper(model_id)
     lang = _forced_language(language)
     audio_in = (
         audio_source
         if isinstance(audio_source, str)
         else _audio_to_float32(audio_source)
     )
-    with _cache.infer_lock():
+    t0 = time.perf_counter()
+    with cache.fw_infer_lock(model_id):
         segments, info = model.transcribe(
             audio_in,
             language=lang,
@@ -614,6 +724,11 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
             compression_ratio_threshold=2.4,
             log_prob_threshold=-1.0,
         )
+    logger.info(
+        "asr.final_fw duration_ms=%d model=%s",
+        int((time.perf_counter() - t0) * 1000),
+        model_id,
+    )
     detected = getattr(info, "language", None)
     if detected:
         logger.info("faster-whisper final language reported: %s", detected)

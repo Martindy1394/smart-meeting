@@ -93,6 +93,17 @@ class Settings(BaseSettings):
     live_segment_persist_every: int = 12
     # WebSocket keepalive interval so proxies don't drop 8h+ sessions.
     ws_keepalive_seconds: float = 25.0
+    # Max Whisper backends retained in memory (LRU). Live + final usually need 2.
+    whisper_model_cache_size: int = 2
+    # Prefer accumulated live captions over the final ASR pass when the final
+    # word count falls below ``live_words * ratio`` (and live has enough words).
+    # Example: 0.6 means "final has < 60% of live words" → keep live text.
+    live_caption_prefer_ratio: float = 0.6
+    # Minimum live-caption word count before the preference rule can fire
+    # (avoids overriding a short/empty final with a tiny live hallucination).
+    live_caption_prefer_min_words: int = 12
+    # ffmpeg subprocess timeout when decoding non-WAV uploads (seconds).
+    ffmpeg_timeout_seconds: float = 120.0
 
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"

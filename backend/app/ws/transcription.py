@@ -71,18 +71,37 @@ def _finalize_blocking(
                 db.commit()
                 return {"ok": False, "message": str(exc)}
 
-        # If the final pass is markedly shorter than live captions, keep the
-        # richer live text so the finalized transcript is not incomplete.
+        # Prefer live captions when the final pass is below an explicit ratio
+        # of live word count (configurable; default 60%) and live is long enough.
         live = (live_caption or "").strip()
         final_text = (result.text or "").strip()
         live_words = len(live.split()) if live else 0
         final_words = len(final_text.split()) if final_text else 0
-        if live_words > 0 and final_words < max(1, int(live_words * 0.6)):
+        prefer_ratio = float(settings.live_caption_prefer_ratio)
+        prefer_ratio = min(1.0, max(0.0, prefer_ratio))
+        min_live_words = max(1, int(settings.live_caption_prefer_min_words))
+        final_threshold = max(1, int(live_words * prefer_ratio))
+        prefer_live = live_words >= min_live_words and final_words < final_threshold
+        logger.info(
+            "asr.finalize_choice meeting=%s live_words=%d final_words=%d "
+            "prefer_ratio=%.2f min_live_words=%d threshold=%d prefer_live=%s",
+            meeting_id,
+            live_words,
+            final_words,
+            prefer_ratio,
+            min_live_words,
+            final_threshold,
+            prefer_live,
+        )
+        if prefer_live:
             logger.warning(
-                "Final ASR (%d words) shorter than live caption (%d words); "
-                "preferring live caption for meeting %s",
+                "Final ASR (%d words) below live-caption threshold "
+                "(%d words < %d = %d×%.0f%%); preferring live caption for meeting %s",
                 final_words,
+                final_words,
+                final_threshold,
                 live_words,
+                prefer_ratio * 100.0,
                 meeting_id,
             )
             result = asr.ASRResult(
@@ -236,6 +255,7 @@ async def transcribe_ws(websocket: WebSocket):
     # Bytes already consumed by live windowing (exclusive end offset into Redis PCM).
     live_offset = int(meta.get("live_offset") or 0)
     warmup_done = bool(meta.get("seq"))  # skip warmup after reconnect mid-session
+    resumed = bool(seq or live_caption or live_offset)
 
     # Local fallback only used when Redis is down.
     local_pcm = bytearray()
@@ -246,6 +266,34 @@ async def transcribe_ws(websocket: WebSocket):
         int(max_hours * 3600 * settings.audio_sample_rate * 2) if max_hours > 0 else 0
     )
 
+    if resumed:
+        status_message = (
+            f"Reconnected — resumed live captions (seq={seq}, "
+            f"{len(live_caption.split()) if live_caption else 0} words buffered)."
+        )
+        logger.info(
+            "WS resume meeting=%s seq=%d live_offset=%d caption_words=%d",
+            meeting_id,
+            seq,
+            live_offset,
+            len(live_caption.split()) if live_caption else 0,
+        )
+    elif live_available and redis_ok:
+        status_message = (
+            "Whisper ASR active — Redis-buffered for multi-hour board meetings "
+            f"(up to {max_hours:g}h); 10s live windows, language=tl / task=transcribe."
+        )
+    elif live_available:
+        status_message = (
+            "Whisper ASR active — Redis unavailable, using in-process buffer "
+            "(prefer Redis for 4h+ meetings)."
+        )
+    else:
+        status_message = (
+            "Whisper ASR not installed — audio will still be saved "
+            "and can be transcribed once ML dependencies are available."
+        )
+
     await _send(
         websocket,
         {
@@ -254,20 +302,13 @@ async def transcribe_ws(websocket: WebSocket):
             "asr_engine": asr.engine_name(),
             "redis_audio": redis_ok,
             "live_caption": live_caption,
+            "resumed": resumed,
+            "seq": seq,
+            "live_offset": live_offset,
             "max_meeting_hours": max_hours or None,
             "keepalive_seconds": settings.ws_keepalive_seconds,
-            "message": (
-                "Whisper ASR active — Redis-buffered for multi-hour board meetings "
-                f"(up to {max_hours:g}h); 10s live windows, language=tl / task=transcribe."
-                if live_available and redis_ok
-                else (
-                    "Whisper ASR active — Redis unavailable, using in-process buffer "
-                    "(prefer Redis for 4h+ meetings)."
-                    if live_available
-                    else "Whisper ASR not installed — audio will still be saved "
-                    "and can be transcribed once ML dependencies are available."
-                )
-            ),
+            "live_caption_prefer_ratio": settings.live_caption_prefer_ratio,
+            "message": status_message,
         },
     )
     if live_caption:
