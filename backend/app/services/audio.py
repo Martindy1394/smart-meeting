@@ -50,6 +50,66 @@ def audio_dir() -> str:
     return path
 
 
+def raw_pcm_path(meeting_id: str) -> str:
+    """Authoritative growing PCM file for a live recording (disk, not Redis)."""
+    return os.path.join(audio_dir(), f"{meeting_id}.pcm")
+
+
+def append_raw_pcm(meeting_id: str, chunk: bytes) -> int:
+    """Append int16 LE PCM to the meeting's on-disk buffer. Returns total bytes."""
+    if not chunk:
+        return get_raw_pcm_length(meeting_id)
+    path = raw_pcm_path(meeting_id)
+    with open(path, "ab") as fh:
+        fh.write(chunk)
+    return get_raw_pcm_length(meeting_id)
+
+
+def get_raw_pcm_length(meeting_id: str) -> int:
+    path = raw_pcm_path(meeting_id)
+    try:
+        return int(os.path.getsize(path)) if os.path.exists(path) else 0
+    except OSError:
+        return 0
+
+
+def get_raw_pcm_slice(meeting_id: str, start: int, end_inclusive: int) -> bytes:
+    """Read inclusive byte range ``[start, end_inclusive]`` from the disk PCM."""
+    if end_inclusive < start:
+        return b""
+    path = raw_pcm_path(meeting_id)
+    if not os.path.exists(path):
+        return b""
+    length = end_inclusive - start + 1
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, start))
+            return fh.read(length)
+    except OSError:
+        return b""
+
+
+def read_raw_pcm(meeting_id: str) -> bytes:
+    """Read the full on-disk PCM buffer (may be large — prefer for finalize)."""
+    path = raw_pcm_path(meeting_id)
+    if not os.path.exists(path):
+        return b""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return b""
+
+
+def delete_raw_pcm(meeting_id: str) -> None:
+    path = raw_pcm_path(meeting_id)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 def build_wav_bytes(pcm_bytes: bytes) -> bytes:
     """Encode raw PCM as a 16 kHz mono WAV container in memory."""
     buf = io.BytesIO()

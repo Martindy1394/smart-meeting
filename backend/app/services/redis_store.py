@@ -1,11 +1,16 @@
-"""Redis-backed memory storage for live meeting audio and session state.
+"""Redis-backed memory storage for *recent* live audio and session state.
 
-All recorded PCM is appended to Redis during capture. Finalized WAV bytes are
-also cached in Redis so audio lives in memory storage in addition to disk.
+Full multi-hour PCM lives on disk (``audio.append_raw_pcm``). Redis keeps only:
+* a rolling PCM window (last ``redis_live_buffer_seconds``) for reconnect assist
+* session meta (caption / offset / seq / last_active)
+* finalized WAV cache
+
+This avoids the Redis string 512 MiB ceiling and OOM on long board meetings.
 """
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from ..config import settings
@@ -43,13 +48,11 @@ def get_client():
         return None
 
     try:
-        # Longer socket timeout: multi-hour meetings can hold ~1GB PCM and
-        # need room for large GETRANGE / GET during finalization.
         client = redis.Redis.from_url(
             settings.redis_url,
             decode_responses=False,
             socket_connect_timeout=2.0,
-            socket_timeout=120.0,
+            socket_timeout=30.0,
             health_check_interval=30,
         )
         client.ping()
@@ -80,6 +83,11 @@ def reset_client_for_tests() -> None:
     _client_failed = False
 
 
+def rolling_buffer_max_bytes() -> int:
+    seconds = max(30.0, float(settings.redis_live_buffer_seconds))
+    return int(seconds * settings.audio_sample_rate * 2)
+
+
 def _touch_ttl(client, meeting_id: str) -> None:
     ttl = int(settings.redis_audio_ttl_seconds)
     if ttl <= 0:
@@ -90,70 +98,60 @@ def _touch_ttl(client, meeting_id: str) -> None:
 
 
 def append_pcm(meeting_id: str, chunk: bytes) -> int:
-    """Append a PCM chunk to the meeting's Redis audio buffer.
+    """Append PCM into the Redis *rolling* buffer (not the full recording).
 
-    Returns the total buffered byte length after append, or ``-1`` on failure.
+    Returns the rolling buffer byte length after append, or ``-1`` on failure.
+    Full meeting audio must be written to disk separately.
     """
     if not chunk:
         return get_pcm_length(meeting_id)
     client = get_client()
     if client is None:
         return -1
+    max_bytes = rolling_buffer_max_bytes()
+    key = _pcm_key(meeting_id)
     try:
-        total = int(client.append(_pcm_key(meeting_id), chunk))
+        # Truncate oversized incoming chunks so one write cannot blow the cap.
+        if len(chunk) > max_bytes:
+            chunk = chunk[-max_bytes:]
+        total = int(client.append(key, chunk))
+        if total > max_bytes:
+            # Keep only the newest window — cheap for ~MB-scale buffers.
+            kept = client.getrange(key, total - max_bytes, -1) or b""
+            client.set(key, kept)
+            total = len(kept)
         _touch_ttl(client, meeting_id)
         return total
     except Exception as exc:
-        logger.exception("Redis APPEND failed for meeting %s: %s", meeting_id, exc)
+        logger.exception("Redis rolling APPEND failed for meeting %s: %s", meeting_id, exc)
         return -1
 
 
 def get_pcm(meeting_id: str) -> bytes:
-    """Return the full recorded PCM for a meeting from Redis (or empty).
-
-    Uses chunked GETRANGE so multi-hour (~GB-scale) buffers do not rely on a
-    single giant GET that can time out.
-    """
+    """Return the Redis rolling PCM window (not the full multi-hour recording)."""
     client = get_client()
     if client is None:
         return b""
     try:
-        total = int(client.strlen(_pcm_key(meeting_id)))
-        if total <= 0:
-            return b""
-        # 4 MiB slices — safe for long board-meeting buffers.
-        step = 4 * 1024 * 1024
-        parts: list[bytes] = []
-        start = 0
-        while start < total:
-            end = min(total, start + step) - 1
-            chunk = client.getrange(_pcm_key(meeting_id), start, end)
-            if not chunk:
-                break
-            parts.append(chunk)
-            start += len(chunk)
-        return b"".join(parts)
+        data = client.get(_pcm_key(meeting_id))
+        return data or b""
     except Exception as exc:
         logger.exception("Redis GET pcm failed for meeting %s: %s", meeting_id, exc)
         return b""
 
 
 def iter_pcm_chunks(meeting_id: str, chunk_bytes: int):
-    """Yield successive PCM slices from Redis (for chunked final ASR)."""
-    if chunk_bytes <= 0:
-        data = get_pcm(meeting_id)
-        if data:
-            yield data
+    """Yield successive PCM slices from the Redis rolling buffer."""
+    data = get_pcm(meeting_id)
+    if not data:
         return
-    total = get_pcm_length(meeting_id)
+    if chunk_bytes <= 0:
+        yield data
+        return
     start = 0
-    while start < total:
-        end = min(total, start + chunk_bytes) - 1
-        piece = get_pcm_slice(meeting_id, start, end)
-        if not piece:
-            break
-        yield piece
-        start += len(piece)
+    while start < len(data):
+        yield data[start : start + chunk_bytes]
+        start += chunk_bytes
 
 
 def get_pcm_length(meeting_id: str) -> int:
@@ -167,7 +165,7 @@ def get_pcm_length(meeting_id: str) -> int:
 
 
 def get_pcm_slice(meeting_id: str, start: int, end: int) -> bytes:
-    """Inclusive Redis GETRANGE slice ``[start, end]`` (end inclusive)."""
+    """Inclusive Redis GETRANGE slice ``[start, end]`` within the rolling buffer."""
     client = get_client()
     if client is None:
         return b""
@@ -215,6 +213,7 @@ def set_session_meta(
     previous_window: Optional[str] = None,
     live_offset: Optional[int] = None,
     seq: Optional[int] = None,
+    last_active: Optional[float] = None,
 ) -> None:
     """Persist live-session fields so reconnects can resume cleanly."""
     client = get_client()
@@ -229,13 +228,19 @@ def set_session_meta(
         mapping[b"live_offset"] = str(int(live_offset)).encode("utf-8")
     if seq is not None:
         mapping[b"seq"] = str(int(seq)).encode("utf-8")
-    if not mapping:
-        return
+    # Always refresh activity when meta is written so the janitor can age sessions.
+    ts = time.time() if last_active is None else float(last_active)
+    mapping[b"last_active"] = str(ts).encode("utf-8")
     try:
         client.hset(_meta_key(meeting_id), mapping=mapping)
         _touch_ttl(client, meeting_id)
     except Exception as exc:
         logger.exception("Redis HSET meta failed for meeting %s: %s", meeting_id, exc)
+
+
+def touch_session(meeting_id: str) -> None:
+    """Bump last_active without changing caption/offset."""
+    set_session_meta(meeting_id, last_active=time.time())
 
 
 def get_session_meta(meeting_id: str) -> dict:
@@ -260,12 +265,40 @@ def get_session_meta(meeting_id: str) -> dict:
         except ValueError:
             return default
 
+    def _f(key: bytes, default: float = 0.0) -> float:
+        try:
+            return float(_s(key, str(default)))
+        except ValueError:
+            return default
+
     return {
         "live_caption": _s(b"live_caption"),
         "previous_window": _s(b"previous_window"),
         "live_offset": _i(b"live_offset"),
         "seq": _i(b"seq"),
+        "last_active": _f(b"last_active"),
     }
+
+
+def list_session_meeting_ids() -> list[str]:
+    """Return meeting ids that currently have Redis session meta keys."""
+    client = get_client()
+    if client is None:
+        return []
+    prefix = b"smartmeeting:audio:"
+    suffix = b":meta"
+    out: list[str] = []
+    try:
+        for key in client.scan_iter(match="smartmeeting:audio:*:meta", count=100):
+            raw = key if isinstance(key, (bytes, bytearray)) else str(key).encode()
+            if not raw.startswith(prefix) or not raw.endswith(suffix):
+                continue
+            mid = raw[len(prefix) : -len(suffix)].decode("utf-8", errors="ignore")
+            if mid:
+                out.append(mid)
+    except Exception as exc:
+        logger.exception("Redis SCAN sessions failed: %s", exc)
+    return out
 
 
 def clear_meeting_audio(meeting_id: str, *, keep_wav: bool = False) -> None:

@@ -14,7 +14,7 @@ from . import __version__
 from .config import settings
 from .database import init_db
 from .routers import ai, auth, meetings
-from .services import asr, audio, llm, redis_store
+from .services import asr, audio, live_metrics, llm, redis_store
 from .ws import transcription as ws_transcription
 
 logging.basicConfig(
@@ -31,22 +31,35 @@ _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 async def lifespan(app: FastAPI):
     import asyncio
 
-    from .services import transcription as transcription_svc
+    from .services import janitor, transcription as transcription_svc
 
     logger.info("Starting %s v%s (%s)", settings.app_name, __version__, settings.environment)
     init_db()
     if redis_store.is_available():
-        logger.info("Redis audio memory store ready (%s)", settings.redis_url)
+        logger.info(
+            "Redis ready (%s) — rolling live buffer %.0fs, TTL %ss",
+            settings.redis_url,
+            settings.redis_live_buffer_seconds,
+            settings.redis_audio_ttl_seconds,
+        )
     else:
         logger.warning(
-            "Redis not available at %s — live audio will use in-process buffers.",
+            "Redis not available at %s — disk PCM continues; reconnect resume limited.",
             settings.redis_url,
         )
     # Warm the live Whisper model in the background so Start recording
     # does not stall on first-caption model load.
     if transcription_svc.is_available():
         asyncio.create_task(asyncio.to_thread(transcription_svc.warm_live_model))
+    stop_janitor = asyncio.Event()
+    janitor_task = asyncio.create_task(janitor.janitor_loop(stop_janitor))
     yield
+    stop_janitor.set()
+    janitor_task.cancel()
+    try:
+        await janitor_task
+    except (Exception, asyncio.CancelledError):
+        pass
     logger.info("Shutting down %s", settings.app_name)
 
 
@@ -100,11 +113,18 @@ def health():
         "redis_url": settings.redis_url if redis_ok else None,
         "max_meeting_hours": settings.max_meeting_hours,
         "redis_audio_ttl_seconds": settings.redis_audio_ttl_seconds,
+        "redis_live_buffer_seconds": settings.redis_live_buffer_seconds,
+        "redis_rolling_buffer_max_bytes": (
+            redis_store.rolling_buffer_max_bytes() if redis_ok else 0
+        ),
+        "abandoned_session_seconds": settings.abandoned_session_seconds,
+        "live_asr_max_backlog_windows": settings.live_asr_max_backlog_windows,
         "whisper_final_chunk_seconds": settings.whisper_final_chunk_seconds,
         "whisper_model_cache_size": settings.whisper_model_cache_size,
         "whisper_model_cache": transcription_svc.get_model_cache().stats(),
         "live_caption_prefer_ratio": settings.live_caption_prefer_ratio,
         "live_caption_prefer_min_words": settings.live_caption_prefer_min_words,
+        "live_metrics": live_metrics.snapshot(),
         "ffmpeg_available": audio.ffmpeg_available(),
         "llm_available": llm.summarizer_available(),
         "environment": settings.environment,

@@ -51,14 +51,23 @@ class Settings(BaseSettings):
 
     # --- Storage ---------------------------------------------------------
     audio_storage_dir: str = "./data/audio"
-    # Redis holds live PCM + cached WAV in memory during/after recording.
+    # Redis holds a *rolling* live PCM window + cached WAV + session meta.
+    # Full multi-hour PCM is appended on disk (see audio.append_raw_pcm).
     redis_url: str = "redis://127.0.0.1:6379/0"
     # TTL for meeting audio keys in Redis (seconds). 0 = no expiry.
-    # Default 48h so all-day board meetings (8h+) plus wrap-up stay buffered.
-    redis_audio_ttl_seconds: int = 60 * 60 * 48
+    # Default 24h — long enough for reconnect, short enough to avoid landfill.
+    redis_audio_ttl_seconds: int = 60 * 60 * 24
+    # How much recent PCM Redis keeps for resume (seconds). ~3 min ≈ 5.8 MB.
+    redis_live_buffer_seconds: float = 180.0
     # Soft cap for a single live recording (hours). Used for warnings / docs;
-    # Redis continues buffering until this limit (0 = unlimited).
+    # disk continues buffering until this limit (0 = unlimited).
     max_meeting_hours: float = 16.0
+    # Abandoned live sessions (no finalize) are cleaned after this many seconds.
+    abandoned_session_seconds: int = 60 * 5
+    # How often the background janitor scans for abandoned sessions.
+    session_janitor_interval_seconds: float = 60.0
+    # Drop old live windows when ASR backlog exceeds this many hops.
+    live_asr_max_backlog_windows: int = 6
 
     # --- Audio / transcription ------------------------------------------
     audio_sample_rate: int = 16000

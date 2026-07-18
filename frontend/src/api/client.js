@@ -82,6 +82,9 @@ export const api = {
   deleteMeeting: (id) => request(`/meetings/${id}`, { method: "DELETE" }),
   retranscribeMeeting: (id) =>
     request(`/meetings/${id}/retranscribe`, { method: "POST" }),
+  /** Finalize a live recording even if the WebSocket stop message was lost. */
+  stopMeetingRecording: (id) =>
+    request(`/meetings/${id}/stop`, { method: "POST" }),
   /**
    * Upload a WAV/PCM file and run Whisper ASR on it (default).
    */

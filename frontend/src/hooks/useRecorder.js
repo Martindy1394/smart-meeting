@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getToken } from "../api/client";
+import { api, getToken } from "../api/client";
 
 // Manages microphone capture (AudioWorklet -> 16 kHz PCM) and streams the audio
 // to the backend over a WebSocket, exposing live caption + finalization state.
@@ -482,14 +482,67 @@ export function useRecorder({ onFinalTranscript } = {}) {
     setStatus("finalizing");
     // Flush trailing PCM (~up to 0.25s) before tearing down the mic graph.
     await flushAndCleanupAudio();
+    const meetingId = meetingIdRef.current;
     const ws = wsRef.current;
+    let stopSentOverWs = false;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "stop" }));
+      try {
+        ws.send(JSON.stringify({ type: "stop" }));
+        stopSentOverWs = true;
+      } catch {
+        stopSentOverWs = false;
+      }
+    }
+    // REST fallback: if the socket is down (or stop send failed), still run the
+    // full-accuracy finalize pass from disk PCM.
+    if (!stopSentOverWs && meetingId) {
+      try {
+        const result = await api.stopMeetingRecording(meetingId);
+        if (result?.ok && onFinalRef.current) {
+          onFinalRef.current({
+            type: "final_transcript",
+            text: result.text || "",
+            segments: result.segments || [],
+          });
+        }
+        setStatus("idle");
+        setLiveText("");
+      } catch (err) {
+        setStatus("error");
+        setMessage(err.message || "Could not finalize recording.");
+      }
     }
   }, [flushAndCleanupAudio]);
 
   useEffect(() => {
+    // Best-effort finalize if the tab closes mid-recording (WS stop may be lost).
+    const onUnload = () => {
+      const meetingId = meetingIdRef.current;
+      if (!meetingId || !reconnectRef.current.active) return;
+      try {
+        const token = getToken();
+        // keepalive:false + sendBeacon-style fetch may be cancelled; use sync XHR fallback.
+        const url = `/api/meetings/${meetingId}/stop`;
+        const body = "";
+        if (navigator.sendBeacon && token) {
+          // sendBeacon cannot set Authorization easily — fall through to fetch keepalive.
+        }
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body,
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("pagehide", onUnload);
     return () => {
+      window.removeEventListener("pagehide", onUnload);
       stoppingRef.current = true;
       reconnectRef.current.active = false;
       if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);

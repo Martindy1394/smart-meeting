@@ -42,9 +42,10 @@ def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
 def _has_audio(m: Meeting) -> bool:
     if m.audio_path and os.path.exists(os.path.abspath(m.audio_path)):
         return True
-    # Audio may still be in Redis memory storage (live or cached WAV).
+    # Live recording PCM on disk, Redis rolling buffer, or cached WAV.
     return bool(
-        redis_store.get_wav_bytes(m.id)
+        audio.get_raw_pcm_length(m.id) > 0
+        or redis_store.get_wav_bytes(m.id)
         or redis_store.get_pcm_length(m.id) > 0
     )
 
@@ -247,7 +248,7 @@ def get_meeting_audio(
 
     wav_bytes = redis_store.get_wav_bytes(meeting_id)
     if not wav_bytes:
-        pcm = redis_store.get_pcm(meeting_id)
+        pcm = audio.read_raw_pcm(meeting_id) or redis_store.get_pcm(meeting_id)
         if pcm:
             wav_bytes = audio.build_wav_bytes(pcm)
     if not wav_bytes:
@@ -325,6 +326,53 @@ async def retranscribe_meeting(
     return await _run_whisper_on_meeting_async(meeting, db)
 
 
+@router.post("/{meeting_id}/stop")
+async def stop_meeting_recording(
+    meeting_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Finalize a live recording without relying on the WebSocket stop message.
+
+    Use this when the socket dropped before ``{type: stop}`` could be sent
+    (tab close, reconnect gap, proxy drop). Idempotent if already finalized.
+    """
+    from ..services import finalize
+
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    if meeting.status in ("finalized",):
+        return {
+            "ok": True,
+            "already_done": True,
+            "text": meeting.final_transcript or "",
+            "status": meeting.status,
+        }
+
+    meta = redis_store.get_session_meta(meeting_id)
+    live_caption = meta.get("live_caption") or ""
+    result = await asyncio.to_thread(
+        finalize.finalize_meeting_recording,
+        meeting_id,
+        live_caption,
+        language=meeting.language,
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result.get("message") or "Finalization failed.",
+        )
+    db.refresh(meeting)
+    return {
+        "ok": True,
+        "already_done": bool(result.get("already_done")),
+        "text": result.get("text") or meeting.final_transcript or "",
+        "segments": result.get("segments") or [],
+        "engine": result.get("engine"),
+        "status": meeting.status,
+        "meeting": _to_detail(meeting),
+    }
+
+
 @router.patch("/{meeting_id}", response_model=MeetingDetail)
 def update_meeting(
     meeting_id: str,
@@ -360,6 +408,7 @@ def delete_meeting(
         except OSError:
             pass
     redis_store.clear_meeting_audio(meeting_id, keep_wav=False)
+    audio.delete_raw_pcm(meeting_id)
     db.delete(meeting)
     db.commit()
     return None
