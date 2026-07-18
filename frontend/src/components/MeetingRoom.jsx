@@ -119,12 +119,18 @@ export default function MeetingRoom({
       setSummarizing(true);
       setSummaryError("");
       try {
+        // Backend: mBART full-transcript → English, then contextual BART summary.
         const res = await api.summarize({
           meeting_id: meeting.id,
           output_format: format,
         });
         setSummary(res.summary);
         setSummaryEngine(res.engine);
+        if (res.translation) {
+          setTranslation(res.translation);
+          setTranslationLang(res.translation_language || "English");
+          autoTranslateRef.current = (meeting.final_transcript || "").trim();
+        }
         autoSummaryRef.current = `${meeting.id}:${format}`;
         if (onMeetingUpdated) onMeetingUpdated();
       } catch (err) {
@@ -133,7 +139,7 @@ export default function MeetingRoom({
         setSummarizing(false);
       }
     },
-    [meeting.id, onMeetingUpdated, summaryFormat]
+    [meeting.final_transcript, meeting.id, onMeetingUpdated, summaryFormat]
   );
 
   const translateToEnglish = useCallback(
@@ -178,10 +184,9 @@ export default function MeetingRoom({
       if (onMeetingUpdated) onMeetingUpdated();
       await loadAudio(meeting.id);
       if (text.trim()) {
-        await Promise.all([
-          summarizeFromTranscript(summaryFormat),
-          translateToEnglish(text),
-        ]);
+        // Summarize translates the full transcript to English first, then
+        // builds a context-aware English summary (also refreshes translation).
+        await summarizeFromTranscript(summaryFormat);
       }
     },
     [
@@ -192,7 +197,6 @@ export default function MeetingRoom({
       saveDetails,
       summarizeFromTranscript,
       summaryFormat,
-      translateToEnglish,
     ]
   );
 
@@ -289,16 +293,7 @@ export default function MeetingRoom({
     return () => revokeAudioUrl();
   }, [revokeAudioUrl]);
 
-  // Auto-translate existing finalized transcripts that don't have English yet.
-  useEffect(() => {
-    const text = (meeting.final_transcript || "").trim();
-    if (!text) return;
-    if (meeting.translation) return;
-    translateToEnglish(text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, meeting.final_transcript, meeting.translation]);
-
-  // Auto-summarize finalized transcripts that don't have a summary yet.
+  // Auto-summarize finalized transcripts (also produces English translation).
   useEffect(() => {
     const text = (meeting.final_transcript || "").trim();
     if (!text) return;
@@ -307,6 +302,16 @@ export default function MeetingRoom({
     summarizeFromTranscript(summaryFormat);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id, meeting.final_transcript, meeting.summary]);
+
+  // If a summary already exists but English translation is missing, translate only.
+  useEffect(() => {
+    const text = (meeting.final_transcript || "").trim();
+    if (!text) return;
+    if (meeting.translation) return;
+    if (!meeting.summary) return; // summarize pipeline will create both
+    translateToEnglish(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meeting.id, meeting.final_transcript, meeting.translation, meeting.summary]);
 
   // Preload the AudioWorklet so Start recording does not wait on the network.
   useEffect(() => {

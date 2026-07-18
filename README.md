@@ -51,9 +51,10 @@ behind a secure JWT authentication system with per-user meeting history.
   Final pass tries Tagalog + Philippine HF models
   (`WHISPER_TAGALOG_MODEL` → `WHISPER_HILIGAYNON_MODEL`), then faster-whisper,
   with `tl` coverage retries for thin auto-detect results.
-- **BART summarization** — topic-aware divide-and-conquer: long transcripts are
-  split into topic chunks (under the BART token limit), summarized per topic,
-  then formatted as bullet points or numbered lists.
+- **English meeting summaries** — mBART first translates the **full** transcript
+  into English (Tagalog / Hiligaynon / mixed speech included), then
+  topic-aware BART summarizes that English with coverage restore so decisions
+  and context are retained as bullets or numbered points.
 - **mBART translation** — translate the finalized transcript into Spanish,
   French, German, Italian, Portuguese, Arabic, Hindi, Japanese, Chinese,
   Russian, Dutch, Korean, Hiligaynon, Tagalog (+ English).

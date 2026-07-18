@@ -99,6 +99,48 @@ def test_short_summarize_stays_idea_preserving():
     assert "Mic" in summary or "sound" in summary.lower()
 
 
+def test_english_source_kind_summarizes_in_english():
+    text = (
+        "The board approved the quarterly budget after review. "
+        "Marketing will launch the campaign next week. "
+        "Facilities will prepare the hall and stage lighting. "
+        "Security assigned entrance badges for all guests."
+    )
+    summary, engine = llm.summarize(
+        text, output_format="bullets", source_kind="english_translation"
+    )
+    assert "english" in engine
+    assert summary.startswith("- ")
+    assert "budget" in summary.lower() or "Marketing" in summary or "campaign" in summary.lower()
+
+
+def test_english_covers_transcript_helper():
+    assert llm._english_covers_transcript(
+        "The team approved the budget and scheduled the launch next week for everyone.",
+        "The team approved the budget and scheduled the launch next week for everyone present.",
+    )
+    assert not llm._english_covers_transcript("Hi", "long transcript " * 40)
+
+
+def test_summarize_to_english_reuses_cached_translation(monkeypatch=None):
+    english = (
+        "The committee approved the venue budget. "
+        "Catering confirmed the menu for guests. "
+        "IT prepared livestream equipment for attendees. "
+        "Education outlined workshop modules for mentors."
+    )
+    summary, engine, out_en, tr_engine = llm.summarize_to_english(
+        english,
+        source_language="en",
+        output_format="bullets",
+        existing_english=english,
+    )
+    assert tr_engine == "cached-english"
+    assert out_en == english or out_en.startswith("The committee")
+    assert summary.startswith("- ")
+    assert "english" in engine or engine.startswith("bart")
+
+
 if __name__ == "__main__":
     test_segment_transcript_topics_respects_token_budget()
     test_segment_transcript_topics_splits_on_low_similarity()
@@ -106,4 +148,7 @@ if __name__ == "__main__":
     test_summary_sentences_to_units_makes_bullets()
     test_format_topic_summaries_with_headers()
     test_short_summarize_stays_idea_preserving()
+    test_english_source_kind_summarizes_in_english()
+    test_english_covers_transcript_helper()
+    test_summarize_to_english_reuses_cached_translation()
     print("all_topic_summarize_tests_passed")

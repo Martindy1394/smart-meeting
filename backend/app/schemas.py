@@ -224,6 +224,9 @@ class SummarizeResponse(BaseModel):
     summary: str
     output_format: str
     engine: str
+    # English text produced (or reused) before BART summarization.
+    translation: str = ""
+    translation_language: str = "English"
 
 
 class TranslateRequest(BaseModel):

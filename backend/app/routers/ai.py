@@ -47,24 +47,32 @@ def summarize(
     db: Session = Depends(get_db),
 ):
     meeting = _get_owned_meeting(payload.meeting_id, current_user, db)
-    # Summarize the finalized transcript directly (BART runs after transcription).
     source = _require_transcript(meeting)
+    # Full transcript → English (mBART) → contextual BART summary.
     try:
-        summary, engine = llm.invoke_llm(
-            "summarize",
+        summary, summary_engine, english, translate_engine = llm.summarize_to_english(
             source,
+            source_language=meeting.language or "auto",
             output_format=payload.output_format,
-            source_kind="transcript",
+            existing_english=(meeting.translation or "").strip() or None,
         )
     except llm.LLMUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
+    engine = f"{translate_engine}+{summary_engine}"
     meeting.summary = summary
     meeting.summary_format = payload.output_format
+    if english:
+        meeting.translation = english
+        meeting.translation_language = "English"
     db.commit()
     return SummarizeResponse(
-        summary=summary, output_format=payload.output_format, engine=engine
+        summary=summary,
+        output_format=payload.output_format,
+        engine=engine,
+        translation=english or "",
+        translation_language="English",
     )
 
 
