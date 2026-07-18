@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     whisper_live_model: str = "small"
     whisper_final_model: str = "medium"
     # Your own Hiligaynon fine-tune (HF repo id or local transformers folder).
-    # Tried first for hil/PH meetings when set; leave empty until you have one.
+    # Tried first for hil meetings when set; leave empty until you have one.
     whisper_hiligaynon_fine_tuned_model: str = ""
     # Philippine / Hiligaynon-capable HF fallback (used when no custom fine-tune,
     # or after the custom checkpoint fails).
@@ -91,23 +91,36 @@ class Settings(BaseSettings):
     # Optional faster-whisper / CTranslate2 export of a Hiligaynon fine-tune
     # for live captions (local dir or compatible HF repo). Empty = use live model.
     whisper_live_hiligaynon_model: str = ""
+    # Your own Tagalog fine-tune (HF/local). Tried first for tl/fil meetings.
+    whisper_tagalog_fine_tuned_model: str = ""
+    # Tagalog-focused HF model (FLEURS fil_ph fine-tune). Used after custom
+    # Tagalog fine-tune and before the broader Philippine medium fallback.
+    whisper_tagalog_model: str = "LWobole/whisper-small-tagalog"
+    # Optional CT2 Tagalog fine-tune for live captions.
+    whisper_live_tagalog_model: str = ""
     # auto | huggingface | faster-whisper
-    # auto: for Hiligaynon/PH meetings try HF fine-tune candidates, then FW.
+    # auto: for Hiligaynon/Tagalog/PH meetings try HF candidates, then FW.
     whisper_final_backend: str = "auto"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    # Meeting language label (Hiligaynon). Whisper has no native ``hil`` token —
-    # decode uses ``whisper_decode_language`` (default ``tl``) or auto-detect.
+    # Meeting language label default (hil | tl | en).
     whisper_default_language: str = "hil"
-    # Live Whisper decode language (``tl`` = Tagalog/PH closest supported code).
+    # Live Whisper decode language for PH labels without a native token (hil→tl).
+    # Tagalog meetings always force Whisper's native ``tl`` code.
     whisper_decode_language: str = "tl"
-    # Optional initial prompt biasing Hiligaynon / Filipino / English meetings.
+    # Optional prompts — keep short to avoid Whisper echoing them.
     whisper_initial_prompt: str = (
         "Board meeting discussion in Hiligaynon (Ilonggo), Filipino, and English."
+    )
+    whisper_tagalog_initial_prompt: str = (
+        "Talakayan sa board meeting sa Tagalog at English. "
+        "Filipino at English speech."
     )
     # Final-pass language: "auto" (detect), "forced" (whisper_decode_language),
     # or "prefer_forced" (forced first, auto retry if coverage is poor).
     whisper_final_language_mode: str = "auto"
+    # Tagalog has a native Whisper token — prefer forced ``tl`` then auto retry.
+    whisper_tagalog_final_language_mode: str = "prefer_forced"
     # Final-pass VAD: aggressive VAD was dropping long spans of real speech
     # (especially clipped mic audio / mixed EN+PH). Default off for coverage.
     whisper_final_vad_filter: bool = False

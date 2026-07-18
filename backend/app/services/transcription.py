@@ -2,12 +2,14 @@
 
 Implements the two-pass pipeline:
 
-* **Live pass** — fast Whisper (or an optional CTranslate2 Hiligaynon fine-tune)
-  on overlapping 10s windows (5s hop). App language ``hil`` maps to Whisper
-  decode code ``tl`` (Whisper has no native Hiligaynon token).
-* **Final pass** — prefers a fine-tuned Hiligaynon/PH transformers checkpoint
-  (``WHISPER_HILIGAYNON_MODEL``) when ``WHISPER_FINAL_BACKEND=auto|huggingface``,
-  with faster-whisper fallback for coverage / availability.
+* **Live pass** — fast Whisper (or an optional CTranslate2 Tagalog/Hiligaynon
+  fine-tune) on overlapping 10s windows (5s hop). Tagalog (``tl``) uses
+  Whisper's native ``tl`` token; Hiligaynon (``hil``) also decodes as ``tl``
+  (Whisper has no native Hiligaynon token).
+* **Final pass** — when ``WHISPER_FINAL_BACKEND=auto|huggingface``:
+  Tagalog prefers custom → ``WHISPER_TAGALOG_MODEL`` → PH medium;
+  Hiligaynon prefers custom → ``WHISPER_HILIGAYNON_MODEL``; then
+  faster-whisper fallback for coverage / availability.
 
 Fine-tuning itself is done *outside* this repo; point the env vars at your
 checkpoint (see ``docs/FINE_TUNE_HILIGAYNON.md``).
@@ -54,6 +56,8 @@ _PH_LANGUAGE_LABELS = frozenset(
         "filipino",
     }
 )
+_TAGALOG_LANGUAGE_LABELS = frozenset({"tl", "tagalog", "fil", "filipino"})
+_HILIGAYNON_LANGUAGE_LABELS = frozenset({"hil", "hiligaynon", "ilonggo"})
 
 # Common Whisper spam / silence hallucinations to drop entirely.
 _HALLUCINATION_PHRASES = (
@@ -260,25 +264,67 @@ def warm_live_model() -> bool:
         return False
 
 
-def hiligaynon_hf_candidates() -> list[str]:
-    """Ordered HF/local Whisper ids for Hiligaynon final ASR.
-
-    1. User fine-tune (``WHISPER_HILIGAYNON_FINE_TUNED_MODEL``) when set
-    2. Philippine fallback (``WHISPER_HILIGAYNON_MODEL``, default
-       ``rbcurzon/whisper-medium-ph``)
-    """
-    ordered = [
-        (settings.whisper_hiligaynon_fine_tuned_model or "").strip(),
-        (settings.whisper_hiligaynon_model or "").strip(),
-    ]
+def _dedupe_model_ids(ordered: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for mid in ordered:
+        mid = (mid or "").strip()
         if not mid or mid in seen:
             continue
         seen.add(mid)
         out.append(mid)
     return out
+
+
+def is_tagalog_language(language: str | None) -> bool:
+    lang = (language or "").strip().lower()
+    return lang in _TAGALOG_LANGUAGE_LABELS
+
+
+def is_hiligaynon_language(language: str | None) -> bool:
+    lang = (language or settings.whisper_default_language or "").strip().lower()
+    return lang in _HILIGAYNON_LANGUAGE_LABELS
+
+
+def is_philippine_language(language: str | None) -> bool:
+    """True when the meeting language should use the Philippine ASR path."""
+    lang = (language or settings.whisper_default_language or "").strip().lower()
+    return lang in _PH_LANGUAGE_LABELS
+
+
+def hiligaynon_hf_candidates() -> list[str]:
+    """Ordered HF/local Whisper ids for Hiligaynon final ASR."""
+    return _dedupe_model_ids(
+        [
+            settings.whisper_hiligaynon_fine_tuned_model,
+            settings.whisper_hiligaynon_model,
+        ]
+    )
+
+
+def tagalog_hf_candidates() -> list[str]:
+    """Ordered HF/local Whisper ids for Tagalog / Filipino final ASR.
+
+    1. User Tagalog fine-tune
+    2. Tagalog-specific HF model (default ``LWobole/whisper-small-tagalog``)
+    3. Broader Philippine medium model (``rbcurzon/whisper-medium-ph``)
+    """
+    return _dedupe_model_ids(
+        [
+            settings.whisper_tagalog_fine_tuned_model,
+            settings.whisper_tagalog_model,
+            settings.whisper_hiligaynon_model,
+        ]
+    )
+
+
+def philippine_hf_candidates(language: str | None) -> list[str]:
+    """HF candidates for the meeting language (Tagalog vs Hiligaynon path)."""
+    if is_tagalog_language(language):
+        return tagalog_hf_candidates()
+    if is_philippine_language(language):
+        return hiligaynon_hf_candidates()
+    return []
 
 
 def hiligaynon_model_id() -> str:
@@ -289,19 +335,22 @@ def hiligaynon_model_id() -> str:
     return (settings.whisper_final_model or "medium").strip()
 
 
-def is_philippine_language(language: str | None) -> bool:
-    """True when the meeting language should use the Hiligaynon/PH ASR path."""
-    lang = (language or settings.whisper_default_language or "").strip().lower()
-    return lang in _PH_LANGUAGE_LABELS
-
-
-def initial_prompt() -> str | None:
+def initial_prompt(language: str | None = None) -> str | None:
+    """Language-aware short prompt (avoid long prompts — Whisper may echo them)."""
+    if is_tagalog_language(language):
+        prompt = (settings.whisper_tagalog_initial_prompt or "").strip()
+        if prompt:
+            return prompt
     prompt = (settings.whisper_initial_prompt or "").strip()
     return prompt or None
 
 
 def live_model_id(language: str | None) -> str:
-    """faster-whisper model for live captions (optional Hiligaynon CT2 fine-tune)."""
+    """faster-whisper model for live captions (optional PH CT2 fine-tune)."""
+    if is_tagalog_language(language):
+        custom = (settings.whisper_live_tagalog_model or "").strip()
+        if custom:
+            return custom
     custom = (settings.whisper_live_hiligaynon_model or "").strip()
     if custom and is_philippine_language(language):
         return custom
@@ -310,7 +359,10 @@ def live_model_id(language: str | None) -> str:
 
 def final_faster_model_id(language: str | None) -> str:
     """faster-whisper model for final fallback / FW-only backend."""
-    # Prefer a CT2 export of the Hiligaynon fine-tune when configured.
+    if is_tagalog_language(language):
+        custom = (settings.whisper_live_tagalog_model or "").strip()
+        if custom:
+            return custom
     custom = (settings.whisper_live_hiligaynon_model or "").strip()
     if custom and is_philippine_language(language):
         return custom
@@ -320,8 +372,8 @@ def final_faster_model_id(language: str | None) -> str:
 def resolve_final_backend(language: str | None) -> str:
     """Normalize final ASR backend selection.
 
-    ``auto`` prefers the fine-tuned Hugging Face Hiligaynon checkpoint for
-    Philippine-language meetings, otherwise faster-whisper.
+    ``auto`` prefers HF Tagalog/Hiligaynon candidates for PH meetings,
+    otherwise faster-whisper.
     """
     backend = (settings.whisper_final_backend or "auto").strip().lower()
     if backend in {"huggingface", "hf", "transformers"}:
@@ -329,7 +381,7 @@ def resolve_final_backend(language: str | None) -> str:
     if backend in {"faster-whisper", "fw", "ctranslate2", "ct2"}:
         return "faster-whisper"
     # auto / default
-    if is_philippine_language(language) and hiligaynon_hf_candidates():
+    if philippine_hf_candidates(language):
         return "huggingface"
     return "faster-whisper"
 
@@ -356,29 +408,39 @@ def _collapse_hallucinations(text: str) -> str:
 def _forced_language(requested: str | None = None) -> str:
     """Map app language labels to a Whisper-supported decode code.
 
-    Whisper has no native ``hil`` token. Hiligaynon / Filipino meetings use the
-    closest supported Philippine code (default ``tl``).
+    Tagalog/Filipino map to Whisper's native ``tl``. Hiligaynon has no native
+    token and uses ``whisper_decode_language`` (default ``tl``).
     """
     app_lang = (requested or "").strip().lower()
     if app_lang in {"en", "english"}:
         return "en"
-    # hil / fil / tl / tagalog → configured PH decode code
+    if is_tagalog_language(app_lang):
+        return "tl"
+    # hil / other PH → configured decode code (usually tl)
     lang = (settings.whisper_decode_language or "tl").strip().lower()
     return lang or "tl"
+
+
+def _final_language_mode(requested: str | None) -> str:
+    """Resolve final language mode, with Tagalog-specific default."""
+    if is_tagalog_language(requested):
+        return (
+            settings.whisper_tagalog_final_language_mode
+            or settings.whisper_final_language_mode
+            or "prefer_forced"
+        ).strip().lower()
+    return (settings.whisper_final_language_mode or "auto").strip().lower()
 
 
 def _final_decode_language(requested: str | None) -> str | None:
     """Language for the final pass.
 
-    Board meetings mix English + PH languages. Forcing ``tl`` caused Whisper to
-    skip long spans of clearly spoken English. Default is auto-detect.
-    For Hiligaynon-only meetings, ``prefer_forced`` / ``forced`` still map
-    through ``_forced_language`` (``hil`` → ``tl``).
+    Tagalog meetings default to ``prefer_forced`` (force ``tl``, then coverage
+    retries can still try auto). Mixed Hiligaynon/EN meetings keep global
+    ``auto`` by default so English spans are not dropped.
     """
-    mode = (settings.whisper_final_language_mode or "auto").strip().lower()
-    if mode in {"forced", "force", "tl"}:
-        return _forced_language(requested)
-    if mode in {"prefer_forced", "prefer-tl", "prefer_tl"}:
+    mode = _final_language_mode(requested)
+    if mode in {"forced", "force", "tl", "prefer_forced", "prefer-tl", "prefer_tl"}:
         return _forced_language(requested)
     # auto / detect / none
     return None
@@ -519,14 +581,17 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     model_id = live_model_id(language)
     model = cache.get_faster_whisper(model_id)
     lang = _forced_language(language)
-    # Bias live decode toward Hiligaynon only when using a PH fine-tune; stock
-    # Whisper often echoes long prompts into captions.
-    live_prompt = (
-        initial_prompt()
-        if (settings.whisper_live_hiligaynon_model or "").strip()
-        and is_philippine_language(language)
-        else None
-    )
+    # Tagalog: short prompt is safe with Whisper's native ``tl`` token.
+    # Hiligaynon: only attach a prompt when a PH CT2 fine-tune is loaded
+    # (stock Whisper often echoes long prompts into captions).
+    if is_tagalog_language(language):
+        live_prompt = initial_prompt(language)
+    elif (settings.whisper_live_hiligaynon_model or "").strip() and is_philippine_language(
+        language
+    ):
+        live_prompt = initial_prompt(language)
+    else:
+        live_prompt = None
     t0 = time.perf_counter()
 
     def _run(decode_language: str | None):
@@ -873,7 +938,7 @@ def _transcribe_final_hf(
     if is_philippine_language(language) and primary is None:
         lang_attempts.append(_forced_language(language))
 
-    prompt_ids = _hf_prompt_ids(pipe, initial_prompt())
+    prompt_ids = _hf_prompt_ids(pipe, initial_prompt(language))
     best: list[Segment] = []
     best_score = -1.0
     t0 = time.perf_counter()
@@ -948,6 +1013,7 @@ def _run_faster_whisper_final(
     *,
     language: str | None,
     vad_filter: bool,
+    meeting_language: str | None = None,
 ) -> tuple[list[Segment], object]:
     with get_model_cache().fw_infer_lock(model_id):
         segments, info = model.transcribe(
@@ -962,7 +1028,7 @@ def _run_faster_whisper_final(
             # Continuity across phrases — False caused more dropped clauses.
             condition_on_previous_text=True,
             without_timestamps=False,
-            initial_prompt=initial_prompt(),
+            initial_prompt=initial_prompt(meeting_language),
             no_speech_threshold=0.6,
             compression_ratio_threshold=2.4,
             log_prob_threshold=-1.0,
@@ -996,7 +1062,7 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
             samples = _audio_to_float32(audio_source)
             duration = float(samples.size) / float(settings.audio_sample_rate)
 
-    mode = (settings.whisper_final_language_mode or "auto").strip().lower()
+    mode = _final_language_mode(language)
     primary_lang = _final_decode_language(language)
     use_vad = bool(settings.whisper_final_vad_filter)
     min_cov = min(0.95, max(0.2, float(settings.whisper_final_min_coverage)))
@@ -1006,6 +1072,7 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
     ]
     # Coverage retries — order matters.
     if primary_lang is not None:
+        # Tagalog prefer_forced: after forced tl, try auto for code-switched EN.
         attempts.append(("auto_retry", None, use_vad))
     if use_vad:
         attempts.append(("no_vad", primary_lang, False))
@@ -1016,6 +1083,9 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
             attempts.append(("forced_tl_retry", _forced_language(language), False))
         else:
             attempts.append(("auto_retry2", None, False))
+    # Tagalog: if primary was auto somehow, still ensure a forced-tl attempt.
+    if is_tagalog_language(language) and mode in {"auto", "detect", "none"}:
+        attempts.insert(0, ("tagalog_forced_tl", "tl", use_vad))
 
     # Deduplicate attempt signatures.
     seen: set[tuple[str | None, bool]] = set()
@@ -1033,7 +1103,12 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
     for label, lang, vad in unique_attempts:
         try:
             segs, info = _run_faster_whisper_final(
-                model, model_id, audio_in, language=lang, vad_filter=vad
+                model,
+                model_id,
+                audio_in,
+                language=lang,
+                vad_filter=vad,
+                meeting_language=language,
             )
         except Exception as exc:
             logger.warning("Final ASR attempt %s failed: %s", label, exc)
@@ -1095,8 +1170,8 @@ def _looks_like_hf_repo(model_id: str) -> bool:
 def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
     """Single-shot final ASR.
 
-    ``WHISPER_FINAL_BACKEND=auto`` (default) tries Hiligaynon HF candidates in
-    order (user fine-tune → Philippine fallback), then faster-whisper.
+    ``WHISPER_FINAL_BACKEND=auto`` (default) tries Tagalog/Hiligaynon HF
+    candidates for PH meetings, then faster-whisper.
     """
     backend = resolve_final_backend(language)
     configured = (settings.whisper_final_backend or "auto").strip().lower()
@@ -1104,7 +1179,9 @@ def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
 
     if backend == "huggingface":
         candidates = [
-            mid for mid in hiligaynon_hf_candidates() if _looks_like_hf_repo(mid)
+            mid
+            for mid in philippine_hf_candidates(language)
+            if _looks_like_hf_repo(mid)
         ]
         for model_id in candidates:
             try:
@@ -1112,7 +1189,7 @@ def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
                 joined = " ".join(s.text for s in segs)
                 if segs and not _is_junk_transcript(joined):
                     logger.info(
-                        "Final ASR using Hiligaynon HF model '%s' "
+                        "Final ASR using PH HF model '%s' "
                         "(meeting_language=%s)",
                         model_id,
                         language,

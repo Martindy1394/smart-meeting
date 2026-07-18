@@ -58,6 +58,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ? nowLocalInput()
       : toLocalInput(meeting.meeting_date) || nowLocalInput()
   );
+  const [language, setLanguage] = useState(meeting.language || "hil");
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -73,6 +74,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         ? nowLocalInput()
         : toLocalInput(meeting.meeting_date) || nowLocalInput()
     );
+    setLanguage(meeting.language || "hil");
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
     setError("");
@@ -89,7 +91,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   useEffect(() => {
     if (onValidityChange) onValidityChange(isComplete());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput]);
+  }, [title, venue, dateTime, language, attendees, attendeeInput]);
 
   function useCurrentDateTime() {
     const current = nowLocalInput();
@@ -130,6 +132,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         title: title.trim(),
         venue: venue.trim(),
         meeting_date: meetingDateIso,
+        language,
         attendees: finalAttendees,
       });
       setAttendees(finalAttendees);
@@ -141,6 +144,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           title: title.trim(),
           venue: venue.trim(),
           meeting_date: meetingDateIso,
+          language,
           attendees: finalAttendees,
         });
       }
@@ -235,6 +239,20 @@ const MeetingDetails = forwardRef(function MeetingDetails(
               Now
             </button>
           </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="meeting-language">Spoken language</label>
+          <select
+            id="meeting-language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            title="Select before Start a meeting — drives Whisper ASR routing"
+          >
+            <option value="hil">Hiligaynon (Ilonggo)</option>
+            <option value="tl">Tagalog / Filipino</option>
+            <option value="en">English</option>
+          </select>
         </div>
 
         <div className="field attendees-field">

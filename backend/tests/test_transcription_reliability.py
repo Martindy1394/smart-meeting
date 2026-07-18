@@ -12,15 +12,20 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.transcription import (  # noqa: E402
     _ModelCache,
+    _final_decode_language,
+    _final_language_mode,
     _forced_language,
     final_faster_model_id,
     hiligaynon_hf_candidates,
     hiligaynon_model_id,
+    initial_prompt,
     is_philippine_language,
+    is_tagalog_language,
     live_model_id,
     merge_live_caption,
     resolve_final_backend,
     set_model_cache,
+    tagalog_hf_candidates,
 )
 
 
@@ -83,6 +88,21 @@ def test_hiligaynon_maps_to_whisper_tl():
     assert _forced_language("en") == "en"
 
 
+def test_tagalog_uses_native_tl_and_prefer_forced():
+    assert is_tagalog_language("tl")
+    assert is_tagalog_language("Tagalog")
+    assert is_tagalog_language("fil")
+    assert is_tagalog_language("filipino")
+    assert not is_tagalog_language("hil")
+    assert _forced_language("tl") == "tl"
+    assert _forced_language("tagalog") == "tl"
+    assert _final_language_mode("tl") == "prefer_forced"
+    assert _final_decode_language("tl") == "tl"
+    prompt = initial_prompt("tl")
+    assert prompt
+    assert "Tagalog" in prompt or "Filipino" in prompt
+
+
 def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
     # Prefer HF fine-tune for hil when backend=auto.
     from app.config import settings
@@ -118,11 +138,52 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         settings.whisper_hiligaynon_model = prev_ph
 
 
+def test_auto_final_backend_prefers_hf_for_tagalog():
+    from app.config import settings
+
+    prev = settings.whisper_final_backend
+    prev_ft = settings.whisper_tagalog_fine_tuned_model
+    prev_tl = settings.whisper_tagalog_model
+    prev_ph = settings.whisper_hiligaynon_model
+    prev_live = settings.whisper_live_tagalog_model
+    try:
+        settings.whisper_final_backend = "auto"
+        settings.whisper_tagalog_fine_tuned_model = ""
+        settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
+        settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
+        assert resolve_final_backend("tl") == "huggingface"
+        assert resolve_final_backend("fil") == "huggingface"
+        assert tagalog_hf_candidates() == [
+            "LWobole/whisper-small-tagalog",
+            "rbcurzon/whisper-medium-ph",
+        ]
+
+        settings.whisper_tagalog_fine_tuned_model = "/models/my-tl-ft"
+        assert tagalog_hf_candidates() == [
+            "/models/my-tl-ft",
+            "LWobole/whisper-small-tagalog",
+            "rbcurzon/whisper-medium-ph",
+        ]
+
+        settings.whisper_live_tagalog_model = "/models/tl-ct2"
+        assert live_model_id("tl") == "/models/tl-ct2"
+        assert live_model_id("hil") != "/models/tl-ct2"
+        assert final_faster_model_id("tl") == "/models/tl-ct2"
+    finally:
+        settings.whisper_final_backend = prev
+        settings.whisper_tagalog_fine_tuned_model = prev_ft
+        settings.whisper_tagalog_model = prev_tl
+        settings.whisper_hiligaynon_model = prev_ph
+        settings.whisper_live_tagalog_model = prev_live
+
+
 if __name__ == "__main__":
     test_merge_live_caption_appends_novel_overlap()
     test_merge_live_caption_never_shrinks()
     test_model_cache_lru_eviction()
     test_per_model_locks_are_distinct()
     test_hiligaynon_maps_to_whisper_tl()
+    test_tagalog_uses_native_tl_and_prefer_forced()
     test_auto_final_backend_prefers_hf_for_hiligaynon()
+    test_auto_final_backend_prefers_hf_for_tagalog()
     print("all_unit_tests_passed")

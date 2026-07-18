@@ -1,5 +1,12 @@
 # Fine-tuning Whisper for Hiligaynon
 
+> **Tagalog note:** Tagalog/Filipino meetings (`tl`) already use Whisper’s native
+> `tl` token. Runtime order is custom fine-tune → `WHISPER_TAGALOG_MODEL`
+> (default `LWobole/whisper-small-tagalog`) → `rbcurzon/whisper-medium-ph` →
+> faster-whisper, with `WHISPER_TAGALOG_FINAL_LANGUAGE_MODE=prefer_forced`.
+> You can reuse the same training scripts below with Tagalog audio/transcripts
+> and set `WHISPER_TAGALOG_FINE_TUNED_MODEL` instead.
+
 Stock Whisper has **no native Hiligaynon (`hil`) language token**. Smart Meeting
 labels meetings as `hil` but decodes with the closest supported Philippine code
 (`tl` / Tagalog) or auto-detect. That mismatch is a major source of Hiligaynon

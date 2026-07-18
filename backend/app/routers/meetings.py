@@ -390,6 +390,17 @@ def update_meeting(
         meeting.meeting_date = payload.meeting_date
     if payload.attendees is not None:
         meeting.attendees = _clean_attendees(payload.attendees)
+    if payload.language is not None:
+        lang = (payload.language or "").strip().lower()
+        if lang in {"hil", "hiligaynon", "ilonggo", "tl", "tagalog", "fil", "filipino", "en", "english"}:
+            # Normalize UI aliases to stable meeting labels.
+            if lang in {"hiligaynon", "ilonggo"}:
+                lang = "hil"
+            elif lang in {"tagalog", "fil", "filipino"}:
+                lang = "tl"
+            elif lang == "english":
+                lang = "en"
+            meeting.language = lang
     db.commit()
     db.refresh(meeting)
     return _to_detail(meeting)

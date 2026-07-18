@@ -46,6 +46,11 @@ behind a secure JWT authentication system with per-user meeting history.
   [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
   `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
   (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
+- **Tagalog / Filipino** — set meeting language to `tl` (Spoken language in
+  meeting details). Whisper uses native `tl`, a Tagalog HF model
+  (`WHISPER_TAGALOG_MODEL`, default `LWobole/whisper-small-tagalog`), then the
+  Philippine medium fallback, with `prefer_forced` decode (force `tl`, auto
+  retry for English code-switching).
 - **BART summarization** — topic-aware divide-and-conquer: long transcripts are
   split into topic chunks (under the BART token limit), summarized per topic,
   then formatted as bullet points or numbered lists.
@@ -130,11 +135,11 @@ All AI features flow through single, consistent integration surfaces:
   - `persist_transcript(...)` writes segments onto the meeting
 - `app/services/transcription.py` — Whisper backends used by the ASR facade:
   - **Live:** faster-whisper with **10s windows overlapping by 5s**, decode
-    language `tl` (optional CT2 Hiligaynon fine-tune via
-    `WHISPER_LIVE_HILIGAYNON_MODEL`)
-  - **Final (Stop Recording):** `WHISPER_FINAL_BACKEND=auto` prefers the
-    fine-tuned Hiligaynon/PH HF model (`WHISPER_HILIGAYNON_MODEL`), then falls
-    back to faster-whisper
+    language `tl` for PH meetings (optional CT2 via
+    `WHISPER_LIVE_TAGALOG_MODEL` / `WHISPER_LIVE_HILIGAYNON_MODEL`)
+  - **Final (Stop Recording):** `WHISPER_FINAL_BACKEND=auto` prefers language
+    HF candidates — Tagalog: custom → `WHISPER_TAGALOG_MODEL` → PH medium;
+    Hiligaynon: custom → `WHISPER_HILIGAYNON_MODEL` — then faster-whisper
 
 ## Configuration
 
@@ -146,13 +151,17 @@ See `backend/.env.example`. Key variables:
 | `DATABASE_URL` | `sqlite:///./smart_meeting.db` | Use a PostgreSQL DSN in prod. |
 | `WHISPER_LIVE_MODEL` | `small` | Fast live-caption Whisper model. |
 | `WHISPER_FINAL_MODEL` | `medium` | faster-whisper fallback if HF final model fails. |
-| `WHISPER_FINAL_BACKEND` | `auto` | `auto` prefers HF Hiligaynon candidates, then FW. |
+| `WHISPER_FINAL_BACKEND` | `auto` | `auto` prefers HF Tagalog/Hiligaynon candidates, then FW. |
 | `WHISPER_HILIGAYNON_FINE_TUNED_MODEL` | _(empty)_ | Your Hiligaynon fine-tune (HF/local); tried first. |
 | `WHISPER_HILIGAYNON_MODEL` | `rbcurzon/whisper-medium-ph` | Philippine HF fallback for Stop Recording. |
 | `WHISPER_LIVE_HILIGAYNON_MODEL` | _(empty)_ | Optional CT2 fine-tune for live captions. |
+| `WHISPER_TAGALOG_FINE_TUNED_MODEL` | _(empty)_ | Your Tagalog fine-tune (HF/local); tried first. |
+| `WHISPER_TAGALOG_MODEL` | `LWobole/whisper-small-tagalog` | Tagalog HF model for `tl` meetings. |
+| `WHISPER_LIVE_TAGALOG_MODEL` | _(empty)_ | Optional CT2 Tagalog fine-tune for live captions. |
+| `WHISPER_TAGALOG_FINAL_LANGUAGE_MODE` | `prefer_forced` | Force `tl` then auto retry for code-switch. |
 | `WHISPER_LIVE_WINDOW_SECONDS` | `10.0` | Live ASR window length. |
 | `WHISPER_LIVE_HOP_SECONDS` | `5.0` | Live ASR hop (10s window overlapping by 5s). |
-| `WHISPER_DEFAULT_LANGUAGE` | `hil` | Meeting label; Whisper decode uses `tl`. |
+| `WHISPER_DEFAULT_LANGUAGE` | `hil` | Default meeting label; set `tl` for Tagalog. |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis memory store for recorded PCM/WAV. |
 | `REDIS_AUDIO_TTL_SECONDS` | `172800` | TTL for Redis audio keys (48h; 0 = no expiry). |
 | `MAX_MEETING_HOURS` | `16` | Soft cap for one live recording (board meetings). |

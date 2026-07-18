@@ -129,6 +129,8 @@ class MeetingUpdate(BaseModel):
     venue: str | None = Field(default=None, max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] | None = None
+    # ASR language label: hil | tl | fil | en
+    language: str | None = Field(default=None, max_length=16)
 
 
 class TranscriptSegmentResponse(BaseModel):
