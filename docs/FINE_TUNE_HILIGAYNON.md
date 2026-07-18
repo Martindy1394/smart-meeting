@@ -2,36 +2,48 @@
 
 Stock Whisper has **no native Hiligaynon (`hil`) language token**. Smart Meeting
 labels meetings as `hil` but decodes with the closest supported Philippine code
-(`tl` / Tagalog) or auto-detect. That mismatch is the main source of Hiligaynon
+(`tl` / Tagalog) or auto-detect. That mismatch is a major source of Hiligaynon
 transcription discrepancy.
 
-**Fine-tuning is the most effective fix.** This repo does not train models
-in-place (that needs your labeled audio). It **loads** a fine-tuned checkpoint
-you produce externally.
+**Fine-tuning is the most effective fix** (same approach as low-resource
+languages such as Basque on `whisper-medium`). This repo:
 
-## Why fine-tune?
+1. **Loads** a fine-tuned checkpoint at runtime (final + optional live CT2).
+2. Ships **training / eval / export scripts** so you can produce that checkpoint
+   from your own labeled Hiligaynon audio.
 
-Research on other low-resource languages (e.g. Basque with ~116h on
-`whisper-medium`) shows large WER drops versus out-of-the-box Whisper. The same
-approach applies to Hiligaynon: teach the model your dialect, domain vocabulary
-(board meetings), and code-switching with Filipino / English.
+## Suggestion vs what Smart Meeting does
 
-## Recommended workflow (outside this repo)
+| Suggestion | Status in this project |
+|---|---|
+| Fine-tune Whisper on Hiligaynon audio + transcripts | Supported via `scripts/hiligaynon_asr/finetune_whisper.py` (HF Transformers). SpeechBrain is also fine — export a transformers-compatible folder. |
+| Use ~tens–100+ hours when possible (Basque ~116h → ~8.7% WER) | Documented; you supply the dataset. Even a few clean hours helps. |
+| faster-whisper / SpeechBrain fine-tunes | Final ASR uses HF transformers checkpoints. Live captions use a **CTranslate2** export (`export_ct2.sh`) with faster-whisper. |
+| Improve accuracy beyond stock Whisper | Runtime path: custom fine-tune → `rbcurzon/whisper-medium-ph` → faster-whisper, plus prompt bias and auto/`tl` coverage retries. |
 
-1. **Collect data** — Hiligaynon (and mixed EN/FIL) audio with verified text.
-   Aim for tens of hours when possible; even a few carefully cleaned hours helps.
-2. **Format** — 16 kHz mono WAV/FLAC + matching transcripts (CSV / JSONL /
-   Hugging Face `Dataset`).
-3. **Fine-tune** — start from `openai/whisper-medium` (or `small` for CPU-only
-   live use) with Hugging Face Transformers / SpeechBrain / OpenAI Whisper
-   fine-tune scripts. Keep `task=transcribe`.
-4. **Export**
-   - **Final ASR (transformers):** save a normal HF Whisper folder or push a
-     private/public Hub repo.
-   - **Live ASR (faster-whisper):** convert the fine-tune to CTranslate2 with
-     [`ct2-transformers-converter`](https://github.com/OpenNMT/CTranslate2) so
-     low-latency captions can use it.
-5. **Point Smart Meeting at the checkpoint** (see below). Restart the API.
+## Scripts (train → evaluate → plug in)
+
+```bash
+# 1) Build JSONL from WAV+TXT pairs (or CSV)
+python scripts/hiligaynon_asr/prepare_dataset.py \
+  --input-dir ./hil-data --output ./hil-train.jsonl
+
+# 2) Fine-tune whisper-medium (GPU recommended)
+python scripts/hiligaynon_asr/finetune_whisper.py \
+  --train-jsonl ./hil-train.jsonl \
+  --output-dir ./models/whisper-medium-hiligaynon \
+  --model-name openai/whisper-medium \
+  --fp16
+
+# 3) Measure WER on a held-out set
+python scripts/hiligaynon_asr/wer.py \
+  --reference ./eval/ref.txt --hypothesis ./eval/hyp.txt
+
+# 4) Optional: export CT2 for live captions
+./scripts/hiligaynon_asr/export_ct2.sh \
+  ./models/whisper-medium-hiligaynon \
+  ./models/whisper-medium-hiligaynon-ct2
+```
 
 ## Configure Smart Meeting
 
@@ -81,12 +93,12 @@ curl -s http://127.0.0.1:8000/api/health | jq '{
 ```
 
 Then re-transcribe a known Hiligaynon meeting from History and compare WER
-against a human transcript.
+against a human transcript with `scripts/hiligaynon_asr/wer.py`.
 
 ## Practical tips
 
 - Prefer **medium** for accuracy; use **small** CT2 for live if CPU-bound.
 - Include **code-switched** EN/FIL/Hiligaynon clips — board meetings are mixed.
 - Keep evaluation clips held out from training.
-- If the fine-tune hallucinates, Smart Meeting falls back to faster-whisper
-  automatically for that pass.
+- If the fine-tune hallucinates, Smart Meeting falls back to the next HF
+  candidate, then faster-whisper, automatically.

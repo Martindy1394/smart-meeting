@@ -796,47 +796,12 @@ def _audio_to_float32(audio_source) -> np.ndarray:
     return audio_svc.load_audio_float32(str(audio_source))
 
 
-def _transcribe_final_hf(
-    audio_source,
-    language: str | None,
-    model_id: str | None = None,
-) -> list[Segment]:
-    """Final pass with a Hugging Face fine-tuned Whisper checkpoint."""
-    model_id = (model_id or hiligaynon_model_id()).strip()
-    cache = get_model_cache()
-    pipe = cache.get_hf_pipeline(model_id)
-    samples = _audio_to_float32(audio_source)
-    if samples.size == 0:
-        return []
-
-    lang = _final_decode_language(language)
-    logger.info(
-        "Final Whisper ASR with fine-tuned model '%s' (language=%s, task=%s)",
-        model_id,
-        lang,
-        _WHISPER_TASK,
-    )
-    t0 = time.perf_counter()
-    gen_kwargs = {"task": _WHISPER_TASK}
-    if lang:
-        gen_kwargs["language"] = lang
-    with cache.hf_infer_lock(model_id):
-        result = pipe(
-            {"array": samples, "sampling_rate": int(settings.audio_sample_rate)},
-            generate_kwargs=gen_kwargs,
-            return_timestamps=True,
-        )
-    logger.info(
-        "asr.final_hf duration_ms=%d samples=%d model=%s",
-        int((time.perf_counter() - t0) * 1000),
-        int(samples.size),
-        model_id,
-    )
-
+def _parse_hf_asr_result(result, samples: np.ndarray) -> list[Segment]:
+    """Normalize Hugging Face ASR pipeline output into ``Segment`` rows."""
     chunks = result.get("chunks") if isinstance(result, dict) else None
     if chunks:
         out: list[Segment] = []
-        for i, chunk in enumerate(chunks):
+        for chunk in chunks:
             text = _collapse_hallucinations((chunk.get("text") or "").strip())
             if not text:
                 continue
@@ -854,8 +819,126 @@ def _transcribe_final_hf(
         text = _collapse_hallucinations(result.strip())
     if not text:
         return []
-    duration = float(samples.size) / float(settings.audio_sample_rate)
+    duration = float(samples.size) / float(settings.audio_sample_rate or 16000)
     return [Segment(text=text, start=0.0, end=duration)]
+
+
+def _hf_prompt_ids(pipe, prompt: str | None):
+    """Encode an optional initial prompt for Whisper ``generate``."""
+    text = (prompt or "").strip()
+    if not text:
+        return None
+    tokenizer = getattr(pipe, "tokenizer", None)
+    if tokenizer is None:
+        return None
+    try:
+        encoded = tokenizer(text, return_tensors=None, add_special_tokens=False)
+        ids = encoded.get("input_ids") if isinstance(encoded, dict) else encoded
+        if isinstance(ids, list) and ids and isinstance(ids[0], list):
+            ids = ids[0]
+        if ids:
+            return ids
+    except Exception as exc:
+        logger.debug("Could not encode HF Whisper prompt: %s", exc)
+    return None
+
+
+def _score_segments(segments: list[Segment], duration: float) -> float:
+    words = sum(len((s.text or "").split()) for s in segments)
+    cov = _segment_time_coverage(segments, duration)
+    return float(words) * max(0.15, cov)
+
+
+def _transcribe_final_hf(
+    audio_source,
+    language: str | None,
+    model_id: str | None = None,
+) -> list[Segment]:
+    """Final pass with a Hugging Face fine-tuned Whisper checkpoint.
+
+    For Hiligaynon/PH meetings, if the primary decode (usually auto) is thin,
+    retry with forced ``tl`` and keep the higher-scoring transcript. This
+    mirrors the coverage-aware strategy used by the faster-whisper final path.
+    """
+    model_id = (model_id or hiligaynon_model_id()).strip()
+    cache = get_model_cache()
+    pipe = cache.get_hf_pipeline(model_id)
+    samples = _audio_to_float32(audio_source)
+    if samples.size == 0:
+        return []
+
+    duration = float(samples.size) / float(settings.audio_sample_rate or 16000)
+    primary = _final_decode_language(language)
+    lang_attempts: list[str | None] = [primary]
+    if is_philippine_language(language) and primary is None:
+        lang_attempts.append(_forced_language(language))
+
+    prompt_ids = _hf_prompt_ids(pipe, initial_prompt())
+    best: list[Segment] = []
+    best_score = -1.0
+    t0 = time.perf_counter()
+
+    for lang in lang_attempts:
+        logger.info(
+            "Final Whisper ASR with HF model '%s' (language=%s, task=%s, prompt=%s)",
+            model_id,
+            lang,
+            _WHISPER_TASK,
+            bool(prompt_ids),
+        )
+        gen_kwargs: dict = {"task": _WHISPER_TASK}
+        if lang:
+            gen_kwargs["language"] = lang
+        if prompt_ids is not None:
+            gen_kwargs["prompt_ids"] = prompt_ids
+        try:
+            with cache.hf_infer_lock(model_id):
+                result = pipe(
+                    {
+                        "array": samples,
+                        "sampling_rate": int(settings.audio_sample_rate),
+                    },
+                    generate_kwargs=gen_kwargs,
+                    return_timestamps=True,
+                )
+        except TypeError:
+            # Older pipeline builds may reject prompt_ids.
+            gen_kwargs.pop("prompt_ids", None)
+            with cache.hf_infer_lock(model_id):
+                result = pipe(
+                    {
+                        "array": samples,
+                        "sampling_rate": int(settings.audio_sample_rate),
+                    },
+                    generate_kwargs=gen_kwargs,
+                    return_timestamps=True,
+                )
+
+        segs = _parse_hf_asr_result(result, samples)
+        joined = " ".join(s.text for s in segs)
+        if not segs or _is_junk_transcript(joined):
+            continue
+        score = _score_segments(segs, duration)
+        if score > best_score:
+            best = segs
+            best_score = score
+        # Good enough coverage — skip forced-tl retry.
+        if (
+            lang is None
+            and _segment_time_coverage(segs, duration)
+            >= float(settings.whisper_final_min_coverage)
+            and sum(len(s.text.split()) for s in segs) >= 8
+        ):
+            break
+
+    logger.info(
+        "asr.final_hf duration_ms=%d samples=%d model=%s best_score=%.1f",
+        int((time.perf_counter() - t0) * 1000),
+        int(samples.size),
+        model_id,
+        best_score if best_score >= 0 else 0.0,
+    )
+    return best
 
 
 def _run_faster_whisper_final(

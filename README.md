@@ -42,7 +42,9 @@ behind a secure JWT authentication system with per-user meeting history.
   the finalized transcript (**Refined** badge).
 - **Hiligaynon dialect** — meetings are labeled `hil`; Whisper has no native
   `hil` token, so decode uses `tl` / auto-detect. For best accuracy, fine-tune
-  Whisper on Hiligaynon audio and set `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
+  Whisper on Hiligaynon audio with
+  [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
+  `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
   (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
 - **BART summarization** — topic-aware divide-and-conquer: long transcripts are
   split into topic chunks (under the BART token limit), summarized per topic,
