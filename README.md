@@ -165,7 +165,6 @@ See `backend/.env.example`. Key variables:
 | GET | `/api/meetings/{id}` | ✓ | Detail (details + transcript/summary/translation) |
 | PATCH | `/api/meetings/{id}` | ✓ | Update title / venue / date / attendees |
 | DELETE | `/api/meetings/{id}` | ✓ | Delete |
-| GET | `/api/meetings/{id}/audio` | ✓ | Stream / download saved WAV |
 | POST | `/api/meetings/{id}/audio` | ✓ | Upload WAV/PCM (+ Whisper ASR) |
 | POST | `/api/meetings/{id}/retranscribe` | ✓ | Re-run Whisper ASR on saved audio |
 | GET | `/api/ai/languages` | ✓ | Supported languages |

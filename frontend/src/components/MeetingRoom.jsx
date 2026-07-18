@@ -64,43 +64,11 @@ export default function MeetingRoom({
   const [translateError, setTranslateError] = useState("");
   const autoTranslateRef = useRef("");
   const autoSummaryRef = useRef("");
-  const [audioUrl, setAudioUrl] = useState(null);
-  const [audioLoading, setAudioLoading] = useState(false);
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrError, setAsrError] = useState("");
   const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
   const [copyState, setCopyState] = useState("");
-  const [actionBusy, setActionBusy] = useState("");
-  const [showPlayer, setShowPlayer] = useState(false);
-  const audioUrlRef = useRef(null);
   const uploadInputRef = useRef(null);
-  const playerRef = useRef(null);
-
-  const revokeAudioUrl = useCallback(() => {
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = null;
-    }
-    setAudioUrl(null);
-  }, []);
-
-  const loadAudio = useCallback(async (meetingId) => {
-    setAudioLoading(true);
-    try {
-      const url = await api.getMeetingAudioUrl(meetingId);
-      if (!url) {
-        revokeAudioUrl();
-        return;
-      }
-      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = url;
-      setAudioUrl(url);
-    } catch {
-      revokeAudioUrl();
-    } finally {
-      setAudioLoading(false);
-    }
-  }, [revokeAudioUrl]);
 
   const saveDetails = useCallback(async ({ silent = false } = {}) => {
     if (!detailsRef.current) return false;
@@ -168,13 +136,12 @@ export default function MeetingRoom({
         "";
       setFinalTranscript(text);
       setStatus(detailOrPayload.status || "finalized");
-      setHasAudio(Boolean(detailOrPayload.has_audio || text || audioUrl));
+      setHasAudio(Boolean(detailOrPayload.has_audio || text));
       setAsrError("");
       if (persistDetails) {
         await saveDetails({ silent: true });
       }
       if (onMeetingUpdated) onMeetingUpdated();
-      await loadAudio(meeting.id);
       if (text.trim()) {
         await Promise.all([
           summarizeFromTranscript(summaryFormat),
@@ -183,9 +150,6 @@ export default function MeetingRoom({
       }
     },
     [
-      audioUrl,
-      loadAudio,
-      meeting.id,
       onMeetingUpdated,
       saveDetails,
       summarizeFromTranscript,
@@ -274,17 +238,8 @@ export default function MeetingRoom({
     autoSummaryRef.current = meeting.summary
       ? `${meeting.id}:${meeting.summary_format || "bullets"}`
       : "";
-    revokeAudioUrl();
-    // Load whenever the meeting may already have a saved WAV.
-    if (meeting.has_audio || meeting.status === "finalized") {
-      loadAudio(meeting.id);
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
-
-  useEffect(() => {
-    return () => revokeAudioUrl();
-  }, [revokeAudioUrl]);
 
   // Auto-translate existing finalized transcripts that don't have English yet.
   useEffect(() => {
@@ -403,43 +358,6 @@ export default function MeetingRoom({
     URL.revokeObjectURL(url);
   }
 
-  async function playSavedAudio() {
-    setAsrError("");
-    setShowPlayer(true);
-    setActionBusy("play");
-    try {
-      let url = audioUrl;
-      if (!url) {
-        await loadAudio(meeting.id);
-        url = audioUrlRef.current;
-      }
-      if (!url) {
-        setAsrError("Audio file not found.");
-        return;
-      }
-      // Allow the player to mount, then play.
-      requestAnimationFrame(() => {
-        const el = playerRef.current;
-        if (el) el.play().catch(() => {});
-      });
-    } finally {
-      setActionBusy("");
-    }
-  }
-
-  async function downloadSavedAudio() {
-    setActionBusy("download-audio");
-    setAsrError("");
-    try {
-      const name = (meeting.title || "recording").trim() || "recording";
-      await api.downloadMeetingAudio(meeting.id, name);
-    } catch (err) {
-      setAsrError(err.message || "Audio download failed.");
-    } finally {
-      setActionBusy("");
-    }
-  }
-
   return (
     <div className={`content ${historyView ? "history-detail" : ""}`}>
       {historyView && (
@@ -469,7 +387,7 @@ export default function MeetingRoom({
               type="button"
               className="icon-btn"
               onClick={copyTranscript}
-              disabled={!hasTranscript || Boolean(actionBusy)}
+              disabled={!hasTranscript}
               title={copyState === "Copied" ? "Copied" : "Copy text"}
               aria-label={copyState === "Copied" ? "Copied" : "Copy text"}
             >
@@ -486,7 +404,7 @@ export default function MeetingRoom({
               type="button"
               className="icon-btn"
               onClick={downloadTranscript}
-              disabled={!hasTranscript || Boolean(actionBusy)}
+              disabled={!hasTranscript}
               title="Download transcript"
               aria-label="Download transcript"
             >
@@ -497,60 +415,24 @@ export default function MeetingRoom({
               </MiniIcon>
             </button>
             {hasAudio && (
-              <>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={playSavedAudio}
-                  disabled={Boolean(actionBusy) || audioLoading}
-                  title="Play audio"
-                  aria-label="Play audio"
-                >
-                  {actionBusy === "play" || audioLoading ? (
-                    <span className="spinner" />
-                  ) : (
-                    <MiniIcon>
-                      <polygon points="6 3 20 12 6 21 6 3" />
-                    </MiniIcon>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={downloadSavedAudio}
-                  disabled={Boolean(actionBusy)}
-                  title="Download audio"
-                  aria-label="Download audio"
-                >
-                  {actionBusy === "download-audio" ? (
-                    <span className="spinner" />
-                  ) : (
-                    <MiniIcon>
-                      <path d="M9 18V5l12-2v13" />
-                      <circle cx="6" cy="18" r="3" />
-                      <circle cx="18" cy="16" r="3" />
-                    </MiniIcon>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={runWhisperAsr}
-                  disabled={asrBusy || Boolean(actionBusy)}
-                  title={hasTranscript ? "Re-transcribe" : "Transcribe"}
-                  aria-label={hasTranscript ? "Re-transcribe" : "Transcribe"}
-                >
-                  {asrBusy ? (
-                    <span className="spinner" />
-                  ) : (
-                    <MiniIcon>
-                      <polyline points="23 4 23 10 17 10" />
-                      <polyline points="1 20 1 14 7 14" />
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                    </MiniIcon>
-                  )}
-                </button>
-              </>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={runWhisperAsr}
+                disabled={asrBusy}
+                title={hasTranscript ? "Re-transcribe" : "Transcribe"}
+                aria-label={hasTranscript ? "Re-transcribe" : "Transcribe"}
+              >
+                {asrBusy ? (
+                  <span className="spinner" />
+                ) : (
+                  <MiniIcon>
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                  </MiniIcon>
+                )}
+              </button>
             )}
           </div>
         </div>
@@ -710,30 +592,6 @@ export default function MeetingRoom({
           </div>
 
           {!recorder.recording && (
-            <div
-              className="audio-player-wrap"
-              title={
-                audioUrl
-                  ? "Meeting recording"
-                  : "Recording available after you end the meeting"
-              }
-            >
-              {audioLoading ? (
-                <span className="card-tag">Loading audio…</span>
-              ) : audioUrl ? (
-                <audio className="meeting-audio-player" controls src={audioUrl} preload="metadata">
-                  Your browser does not support audio playback.
-                </audio>
-              ) : (
-                <div className="audio-player-empty">
-                  <span className="audio-player-label">Audio</span>
-                  <span className="audio-player-hint">No recording yet</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {!recorder.recording && (
             <>
               <input
                 ref={uploadInputRef}
@@ -751,7 +609,7 @@ export default function MeetingRoom({
               >
                 {asrBusy ? <span className="spinner" /> : "Upload audio"}
               </button>
-              {(hasAudio || audioUrl) && (
+              {hasAudio && (
                 <button
                   type="button"
                   className="btn secondary"
@@ -787,31 +645,6 @@ export default function MeetingRoom({
           {recorder.connectionState === "connecting" && (
             <span className="card-tag">connecting…</span>
           )}
-        </div>
-      )}
-
-      {hideLiveUploadActions && (hasAudio || audioUrl || showPlayer) && (
-        <div className="recorder-bar history-audio-bar">
-          <div className="audio-player-wrap" title="Saved meeting recording">
-            {audioLoading && !audioUrl ? (
-              <span className="card-tag">Loading audio…</span>
-            ) : audioUrl ? (
-              <audio
-                ref={playerRef}
-                className="meeting-audio-player"
-                controls
-                src={audioUrl}
-                preload="metadata"
-              >
-                Your browser does not support audio playback.
-              </audio>
-            ) : (
-              <div className="audio-player-empty">
-                <span className="audio-player-label">Audio</span>
-                <span className="audio-player-hint">No recording file</span>
-              </div>
-            )}
-          </div>
         </div>
       )}
 

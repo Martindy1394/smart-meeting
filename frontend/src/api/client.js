@@ -124,41 +124,6 @@ export const api = {
     }
     return data;
   },
-  /**
-   * Fetch meeting audio as a blob URL for <audio> playback.
-   * Returns null when no recording exists yet.
-   */
-  getMeetingAudioUrl: async (id) => {
-    const token = getToken();
-    const res = await fetch(`/api/meetings/${id}/audio`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      throw new ApiError("Could not load meeting audio.", res.status);
-    }
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
-  },
-  downloadMeetingAudio: async (id, filename = "recording.wav") => {
-    const token = getToken();
-    const res = await fetch(`/api/meetings/${id}/audio?download=true`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) {
-      throw new ApiError("Could not download meeting audio.", res.status);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename.endsWith(".wav") ? filename : `${filename}.wav`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  },
-
   // AI
   languages: () => request("/ai/languages"),
   summarize: (payload) => request("/ai/summarize", { method: "POST", body: payload }),
