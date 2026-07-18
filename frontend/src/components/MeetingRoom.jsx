@@ -64,11 +64,43 @@ export default function MeetingRoom({
   const [translateError, setTranslateError] = useState("");
   const autoTranslateRef = useRef("");
   const autoSummaryRef = useRef("");
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [audioLoading, setAudioLoading] = useState(false);
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrError, setAsrError] = useState("");
   const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
   const [copyState, setCopyState] = useState("");
+  const audioUrlRef = useRef(null);
   const uploadInputRef = useRef(null);
+
+  const revokeAudioUrl = useCallback(() => {
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+    setAudioUrl(null);
+  }, []);
+
+  const loadAudio = useCallback(
+    async (meetingId) => {
+      setAudioLoading(true);
+      try {
+        const url = await api.getMeetingAudioUrl(meetingId);
+        if (!url) {
+          revokeAudioUrl();
+          return;
+        }
+        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = url;
+        setAudioUrl(url);
+      } catch {
+        revokeAudioUrl();
+      } finally {
+        setAudioLoading(false);
+      }
+    },
+    [revokeAudioUrl]
+  );
 
   const saveDetails = useCallback(async ({ silent = false } = {}) => {
     if (!detailsRef.current) return false;
@@ -136,12 +168,13 @@ export default function MeetingRoom({
         "";
       setFinalTranscript(text);
       setStatus(detailOrPayload.status || "finalized");
-      setHasAudio(Boolean(detailOrPayload.has_audio || text));
+      setHasAudio(Boolean(detailOrPayload.has_audio || text || audioUrl));
       setAsrError("");
       if (persistDetails) {
         await saveDetails({ silent: true });
       }
       if (onMeetingUpdated) onMeetingUpdated();
+      await loadAudio(meeting.id);
       if (text.trim()) {
         await Promise.all([
           summarizeFromTranscript(summaryFormat),
@@ -150,6 +183,9 @@ export default function MeetingRoom({
       }
     },
     [
+      audioUrl,
+      loadAudio,
+      meeting.id,
       onMeetingUpdated,
       saveDetails,
       summarizeFromTranscript,
@@ -238,8 +274,16 @@ export default function MeetingRoom({
     autoSummaryRef.current = meeting.summary
       ? `${meeting.id}:${meeting.summary_format || "bullets"}`
       : "";
+    revokeAudioUrl();
+    if (meeting.has_audio || meeting.status === "finalized") {
+      loadAudio(meeting.id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
+
+  useEffect(() => {
+    return () => revokeAudioUrl();
+  }, [revokeAudioUrl]);
 
   // Auto-translate existing finalized transcripts that don't have English yet.
   useEffect(() => {
@@ -647,6 +691,41 @@ export default function MeetingRoom({
           )}
         </div>
       )}
+
+      <div className="recording-player-bar" aria-label="Meeting recording player">
+        <div className="recording-player-meta">
+          <span className="recording-player-label">Recording</span>
+          <span className="card-tag">
+            {audioLoading
+              ? "Loading…"
+              : audioUrl || hasAudio
+                ? "Saved audio"
+                : "No recording yet"}
+          </span>
+        </div>
+        <div className="audio-player-wrap">
+          {audioLoading && !audioUrl ? (
+            <div className="audio-player-empty">
+              <span className="audio-player-hint">Loading recording…</span>
+            </div>
+          ) : audioUrl ? (
+            <audio
+              className="meeting-audio-player"
+              controls
+              src={audioUrl}
+              preload="metadata"
+            >
+              Your browser does not support audio playback.
+            </audio>
+          ) : (
+            <div className="audio-player-empty">
+              <span className="audio-player-hint">
+                Record or upload audio to play it here.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="cards bottom-cards">
         {/* Summary card (BART) — from finalized transcript */}

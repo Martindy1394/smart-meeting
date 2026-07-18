@@ -7,6 +7,7 @@ import logging
 import os
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -213,6 +214,52 @@ def get_meeting(
 ):
     meeting = _get_owned_meeting(meeting_id, current_user, db)
     return _to_detail(meeting)
+
+
+@router.get("/{meeting_id}/audio")
+def get_meeting_audio(
+    meeting_id: str,
+    download: bool = Query(default=False),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream the saved WAV recording for playback or download.
+
+    Prefers disk archive; falls back to Redis-cached WAV, then Redis PCM
+    encoded on the fly.
+    """
+    from fastapi.responses import Response
+
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    safe_title = (meeting.title or "meeting").strip() or "meeting"
+    safe_title = "".join(
+        ch if ch.isalnum() or ch in " -_" else "_" for ch in safe_title
+    )
+    filename = f"{safe_title}.wav"
+    disposition = "attachment" if download else "inline"
+
+    if meeting.audio_path and os.path.exists(os.path.abspath(meeting.audio_path)):
+        return FileResponse(
+            path=os.path.abspath(meeting.audio_path),
+            media_type="audio/wav",
+            filename=filename,
+            content_disposition_type=disposition,
+        )
+
+    wav_bytes = redis_store.get_wav_bytes(meeting_id)
+    if not wav_bytes:
+        pcm = audio.read_raw_pcm(meeting_id) or redis_store.get_pcm(meeting_id)
+        if pcm:
+            wav_bytes = audio.build_wav_bytes(pcm)
+    if not wav_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No audio recording is available for this meeting yet.",
+        )
+    headers = {
+        "Content-Disposition": f'{disposition}; filename="{filename}"'
+    }
+    return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
 
 
 @router.post("/{meeting_id}/audio", response_model=MeetingDetail)
