@@ -107,7 +107,13 @@ def finalize_meeting_recording(
         prefer_ratio = min(1.0, max(0.0, float(settings.live_caption_prefer_ratio)))
         min_live_words = max(1, int(settings.live_caption_prefer_min_words))
         final_threshold = max(1, int(live_words * prefer_ratio))
-        prefer_live = live_words >= min_live_words and final_words < final_threshold
+        # Only prefer live when the final pass is drastically shorter — never
+        # replace a solid final transcript with a partial live merge.
+        prefer_live = (
+            live_words >= min_live_words
+            and final_words < final_threshold
+            and final_words < max(8, int(live_words * 0.35))
+        )
         logger.info(
             "asr.finalize_choice meeting=%s live_words=%d final_words=%d "
             "prefer_ratio=%.2f min_live_words=%d threshold=%d prefer_live=%s",

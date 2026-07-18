@@ -26,13 +26,13 @@ from ..config import settings
 
 logger = logging.getLogger("smart_meeting.transcription")
 
-# Soft VAD for the faster-whisper fallback final path.
+# Soft VAD only used when explicitly enabled for the final path.
 _FINAL_VAD_PARAMS = {
-    "onset": 0.35,
-    "offset": 0.25,
-    "min_speech_duration_ms": 150,
-    "min_silence_duration_ms": 700,
-    "speech_pad_ms": 400,
+    "onset": 0.25,
+    "offset": 0.20,
+    "min_speech_duration_ms": 100,
+    "min_silence_duration_ms": 500,
+    "speech_pad_ms": 500,
 }
 
 # Forced Whisper decode settings (never leave language as None).
@@ -273,9 +273,66 @@ def _collapse_hallucinations(text: str) -> str:
 
 
 def _forced_language(_requested: str | None) -> str:
-    """Return configured Whisper language — never leave it as None."""
+    """Return configured Whisper language for live decode — never None."""
     lang = (settings.whisper_decode_language or "tl").strip().lower()
     return lang or "tl"
+
+
+def _final_decode_language(requested: str | None) -> str | None:
+    """Language for the final pass.
+
+    Board meetings mix English + PH languages. Forcing ``tl`` caused Whisper to
+    skip long spans of clearly spoken English. Default is auto-detect.
+    """
+    mode = (settings.whisper_final_language_mode or "auto").strip().lower()
+    if mode in {"forced", "force", "tl"}:
+        return _forced_language(requested)
+    if mode in {"prefer_forced", "prefer-tl", "prefer_tl"}:
+        return _forced_language(requested)
+    # auto / detect / none
+    return None
+
+
+def _segment_time_coverage(segments: list[Segment], duration: float) -> float:
+    """Fraction of ``duration`` covered by segment [start,end] intervals."""
+    if duration <= 0 or not segments:
+        return 0.0
+    spans = sorted(
+        (max(0.0, float(s.start)), max(0.0, float(s.end)))
+        for s in segments
+        if (s.text or "").strip()
+    )
+    if not spans:
+        return 0.0
+    covered = 0.0
+    cur_a, cur_b = spans[0]
+    for a, b in spans[1:]:
+        if a <= cur_b:
+            cur_b = max(cur_b, b)
+        else:
+            covered += max(0.0, cur_b - cur_a)
+            cur_a, cur_b = a, b
+    covered += max(0.0, cur_b - cur_a)
+    return min(1.0, covered / duration)
+
+
+def _largest_segment_gap(segments: list[Segment], duration: float) -> float:
+    if duration <= 0:
+        return 0.0
+    points = sorted(
+        (max(0.0, float(s.start)), max(0.0, float(s.end)))
+        for s in segments
+        if (s.text or "").strip()
+    )
+    if not points:
+        return duration
+    gap = points[0][0]  # leading silence/gap
+    prev_end = points[0][1]
+    for start, end in points[1:]:
+        gap = max(gap, start - prev_end)
+        prev_end = max(prev_end, end)
+    gap = max(gap, duration - prev_end)
+    return max(0.0, gap)
 
 
 def _is_junk_transcript(text: str) -> bool:
@@ -358,11 +415,13 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     """Low-latency transcription of a live audio window.
 
     Uses overlapping windows upstream; decode uses ``task=transcribe`` and a
-    configured language code (default ``tl``), never ``None``.
+    configured language code (default ``tl``), with an auto-detect retry when
+    forced-language output is empty/junk (common on English board speech).
     """
     if pcm is None or len(pcm) == 0:
         return []
-    if not _energy_ok(pcm):
+    # Soften energy gate — clipped/quiet phrases were skipped entirely.
+    if not _energy_ok(pcm, min_rms=0.004):
         return []
 
     cache = get_model_cache()
@@ -380,18 +439,18 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
                 beam_size=3,
                 best_of=3,
                 temperature=0.0,
-                # Light VAD reduces silence hallucinations on live windows.
+                # Softer live VAD — prior onset/offset dropped real speech.
                 vad_filter=True,
                 vad_parameters={
-                    "onset": 0.45,
-                    "offset": 0.35,
-                    "min_speech_duration_ms": 120,
-                    "min_silence_duration_ms": 400,
-                    "speech_pad_ms": 200,
+                    "onset": 0.30,
+                    "offset": 0.20,
+                    "min_speech_duration_ms": 80,
+                    "min_silence_duration_ms": 350,
+                    "speech_pad_ms": 300,
                 },
                 condition_on_previous_text=False,
                 without_timestamps=False,
-                no_speech_threshold=0.5,
+                no_speech_threshold=0.65,
                 compression_ratio_threshold=2.4,
                 log_prob_threshold=-1.0,
                 initial_prompt=None,
@@ -497,16 +556,17 @@ def _novel_suffix_from_window(
     overlap = _token_overlap_size(prev_n, cur_n, min_size=3)
 
     if overlap == 0:
-        # No reliable overlap — append only the hop region (newest half by default).
+        # No reliable overlap — keep most of the window (not just the hop).
+        # Using only ~50% previously dropped mid-window words when Whisper
+        # rephrased the overlap enough to break exact token matching.
         frac = hop_fraction
         if frac is None:
-            window_s = float(settings.whisper_live_window_seconds) or 10.0
-            hop_s = float(settings.whisper_live_hop_seconds) or 5.0
-            frac = min(1.0, max(0.25, hop_s / window_s))
+            frac = 0.85
+        frac = min(1.0, max(0.5, float(frac)))
         cut = max(1, int(round(len(cur_tokens) * frac)))
         novel = " ".join(cur_tokens[-cut:]).strip()
         logger.debug(
-            "live.merge overlap=0 fallback_hop_tokens=%d/%d",
+            "live.merge overlap=0 fallback_keep_tokens=%d/%d",
             cut,
             len(cur_tokens),
         )
@@ -646,7 +706,7 @@ def _transcribe_final_hf(audio_source, language: str | None) -> list[Segment]:
     if samples.size == 0:
         return []
 
-    lang = _forced_language(language)
+    lang = _final_decode_language(language)
     logger.info(
         "Final Whisper ASR with fine-tuned model '%s' (language=%s, task=%s)",
         model_id,
@@ -654,13 +714,13 @@ def _transcribe_final_hf(audio_source, language: str | None) -> list[Segment]:
         _WHISPER_TASK,
     )
     t0 = time.perf_counter()
+    gen_kwargs = {"task": _WHISPER_TASK}
+    if lang:
+        gen_kwargs["language"] = lang
     with cache.hf_infer_lock(model_id):
         result = pipe(
             {"array": samples, "sampling_rate": int(settings.audio_sample_rate)},
-            generate_kwargs={
-                "language": lang,
-                "task": _WHISPER_TASK,
-            },
+            generate_kwargs=gen_kwargs,
             return_timestamps=True,
         )
     logger.info(
@@ -695,44 +755,150 @@ def _transcribe_final_hf(audio_source, language: str | None) -> list[Segment]:
     return [Segment(text=text, start=0.0, end=duration)]
 
 
-def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list[Segment]:
-    """Fallback final pass via faster-whisper (stock or converted model id)."""
-    model_id = settings.whisper_final_model
-    cache = get_model_cache()
-    model = cache.get_faster_whisper(model_id)
-    lang = _forced_language(language)
-    audio_in = (
-        audio_source
-        if isinstance(audio_source, str)
-        else _audio_to_float32(audio_source)
-    )
-    t0 = time.perf_counter()
-    with cache.fw_infer_lock(model_id):
+def _run_faster_whisper_final(
+    model,
+    model_id: str,
+    audio_in,
+    *,
+    language: str | None,
+    vad_filter: bool,
+) -> tuple[list[Segment], object]:
+    with get_model_cache().fw_infer_lock(model_id):
         segments, info = model.transcribe(
             audio_in,
-            language=lang,
+            language=language,
             task=_WHISPER_TASK,
             beam_size=5,
             best_of=5,
-            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-            vad_filter=True,
-            vad_parameters=_FINAL_VAD_PARAMS,
-            condition_on_previous_text=False,
+            temperature=[0.0, 0.2, 0.4],
+            vad_filter=vad_filter,
+            vad_parameters=_FINAL_VAD_PARAMS if vad_filter else None,
+            # Continuity across phrases — False caused more dropped clauses.
+            condition_on_previous_text=True,
             without_timestamps=False,
             initial_prompt=_INITIAL_PROMPT,
-            no_speech_threshold=0.55,
+            no_speech_threshold=0.6,
             compression_ratio_threshold=2.4,
             log_prob_threshold=-1.0,
         )
+    return _segments_to_list(segments), info
+
+
+def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list[Segment]:
+    """Final pass via faster-whisper with coverage-aware retries.
+
+    Root cause of missing spoken words on board meetings:
+    forcing ``language=tl`` + aggressive VAD skipped long spans of real English
+    speech (verified on production WAVs with continuous energy but empty
+    transcript gaps of 20–30s). We now default to auto language and no VAD,
+    and retry if timeline coverage is still poor.
+    """
+    model_id = settings.whisper_final_model
+    cache = get_model_cache()
+    model = cache.get_faster_whisper(model_id)
+    samples = (
+        audio_source
+        if isinstance(audio_source, np.ndarray)
+        else _audio_to_float32(audio_source)
+    )
+    audio_in = samples
+    duration = float(samples.size) / float(settings.audio_sample_rate) if isinstance(samples, np.ndarray) else 0.0
+    if isinstance(audio_source, str):
+        audio_in = audio_source
+        # duration still from loaded samples above when ndarray; for path reload:
+        if duration <= 0:
+            samples = _audio_to_float32(audio_source)
+            duration = float(samples.size) / float(settings.audio_sample_rate)
+
+    mode = (settings.whisper_final_language_mode or "auto").strip().lower()
+    primary_lang = _final_decode_language(language)
+    use_vad = bool(settings.whisper_final_vad_filter)
+    min_cov = min(0.95, max(0.2, float(settings.whisper_final_min_coverage)))
+
+    attempts: list[tuple[str, str | None, bool]] = [
+        ("primary", primary_lang, use_vad),
+    ]
+    # Coverage retries — order matters.
+    if primary_lang is not None:
+        attempts.append(("auto_retry", None, use_vad))
+    if use_vad:
+        attempts.append(("no_vad", primary_lang, False))
+        attempts.append(("auto_no_vad", None, False))
+    else:
+        # Even with VAD off, a forced-language miss should retry auto / tl.
+        if primary_lang is None:
+            attempts.append(("forced_tl_retry", _forced_language(language), False))
+        else:
+            attempts.append(("auto_retry2", None, False))
+
+    # Deduplicate attempt signatures.
+    seen: set[tuple[str | None, bool]] = set()
+    unique_attempts: list[tuple[str, str | None, bool]] = []
+    for label, lang, vad in attempts:
+        key = (lang, vad)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_attempts.append((label, lang, vad))
+
+    best: list[Segment] = []
+    best_score = (-1.0, -1, -1.0, 0.0)  # weighted words, words, cov, -gap
+    t0 = time.perf_counter()
+    for label, lang, vad in unique_attempts:
+        try:
+            segs, info = _run_faster_whisper_final(
+                model, model_id, audio_in, language=lang, vad_filter=vad
+            )
+        except Exception as exc:
+            logger.warning("Final ASR attempt %s failed: %s", label, exc)
+            continue
+        detected = getattr(info, "language", None)
+        cov = _segment_time_coverage(segs, duration)
+        words = len(" ".join(s.text for s in segs).split())
+        gap = _largest_segment_gap(segs, duration)
+        # Penalize long low-density spans ("we will talk" covering 30s).
+        sparse_penalty = 0.0
+        for s in segs:
+            seg_dur = max(0.01, float(s.end) - float(s.start))
+            seg_words = len((s.text or "").split())
+            if seg_dur >= 8.0 and (seg_words / seg_dur) < 0.35:
+                sparse_penalty += seg_dur
+        density = words / max(duration, 1.0)
+        logger.info(
+            "asr.final_fw attempt=%s lang=%s vad=%s detected=%s "
+            "coverage=%.2f gap=%.1fs words=%d density=%.2f sparse_pen=%.1f",
+            label,
+            lang,
+            vad,
+            detected,
+            cov,
+            gap,
+            words,
+            density,
+            sparse_penalty,
+        )
+        # Word mass first (coverage-weighted), then raw words, then coverage.
+        score = (words * cov - sparse_penalty, words, cov, -gap)
+        if score > best_score:
+            best_score = score
+            best = segs
+        # Early exit only when dense + well covered.
+        if (
+            cov >= max(min_cov, 0.75)
+            and gap <= 10.0
+            and sparse_penalty < 8.0
+            and words >= max(12, int(duration * 0.8))
+        ):
+            break
+
     logger.info(
-        "asr.final_fw duration_ms=%d model=%s",
+        "asr.final_fw duration_ms=%d model=%s best_score_words_x_cov=%.1f best_words=%d",
         int((time.perf_counter() - t0) * 1000),
         model_id,
+        best_score[0] if best_score[0] >= 0 else 0.0,
+        best_score[1] if best_score[1] >= 0 else 0,
     )
-    detected = getattr(info, "language", None)
-    if detected:
-        logger.info("faster-whisper final language reported: %s", detected)
-    return _segments_to_list(segments)
+    return best
 
 
 def _looks_like_hf_repo(model_id: str) -> bool:
@@ -811,8 +977,9 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
     """Full-accuracy transcription for Stop Recording / re-transcribe / upload.
 
     Prefer the configured fine-tuned Hiligaynon (or PH-dialect) Hugging Face
-    Whisper model. Fall back to faster-whisper if that checkpoint cannot load.
-    Always forces ``language="tl"`` and ``task="transcribe"``.
+    Whisper model when enabled. Fall back to faster-whisper with auto language
+    detection and coverage-aware retries (forced ``tl`` + aggressive VAD was
+    dropping spoken English spans).
 
     Long board-meeting audio (hours) is processed in overlapping chunks so the
     final pass stays within model/memory limits.

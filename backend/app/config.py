@@ -86,8 +86,15 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "int8"
     # Meeting language label (Hiligaynon). Decode language for Whisper is ``tl``.
     whisper_default_language: str = "hil"
-    # Whisper decode language code — always set (never None). ``tl`` = Tagalog.
+    # Live Whisper decode language (``tl`` = Tagalog/PH). Live stays forced for
+    # low-latency captions; final pass uses ``whisper_final_language_mode``.
     whisper_decode_language: str = "tl"
+    # Final-pass language: "auto" (detect), "forced" (whisper_decode_language),
+    # or "prefer_forced" (forced first, auto retry if coverage is poor).
+    whisper_final_language_mode: str = "auto"
+    # Final-pass VAD: aggressive VAD was dropping long spans of real speech
+    # (especially clipped mic audio / mixed EN+PH). Default off for coverage.
+    whisper_final_vad_filter: bool = False
     # Live caption windowing: 10s buffer overlapping by 5s (hop = 5s).
     whisper_live_window_seconds: float = 10.0
     whisper_live_hop_seconds: float = 5.0
@@ -97,6 +104,9 @@ class Settings(BaseSettings):
     # Final ASR chunk size for multi-hour recordings (seconds of audio per pass).
     whisper_final_chunk_seconds: float = 600.0
     whisper_final_chunk_overlap_seconds: float = 15.0
+    # If final segments cover less than this fraction of audio duration, retry
+    # with alternate language / no-VAD settings before accepting the result.
+    whisper_final_min_coverage: float = 0.55
     # How often to persist live segments to SQLite during long meetings.
     # 1 = every window; 12 ≈ once per minute with a 5s hop.
     live_segment_persist_every: int = 12
