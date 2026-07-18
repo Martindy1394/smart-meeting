@@ -133,8 +133,15 @@ export default function Workspace() {
   const confirmSaveMeeting = useCallback(async () => {
     if (!saveControls?.save) return;
     setSaveConfirmOpen(false);
-    await saveControls.save();
-  }, [saveControls]);
+    const ok = await saveControls.save();
+    if (!ok) return;
+    // After saving a finished recording, return to the dashboard overview.
+    setSection("dashboard");
+    setHistoryView(false);
+    setSaveControls(null);
+    setLoadingMeeting(false);
+    loadMeetings(search);
+  }, [loadMeetings, saveControls, search]);
 
   const refreshActive = useCallback(
     async (updated) => {
