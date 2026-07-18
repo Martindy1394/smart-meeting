@@ -223,6 +223,7 @@ export default function MeetingRoom({
   const canSaveMeeting =
     !recorder.recording &&
     recorder.status !== "starting" &&
+    recorder.status !== "paused" &&
     recorder.status !== "finalizing" &&
     (Boolean(finalTranscript) ||
       hasAudio ||
@@ -343,13 +344,16 @@ export default function MeetingRoom({
   const showLive =
     recorder.recording ||
     recorder.status === "finalizing" ||
-    recorder.status === "starting";
+    recorder.status === "starting" ||
+    recorder.status === "paused";
   const isStarting = recorder.status === "starting";
+  const isPaused = Boolean(recorder.paused || recorder.status === "paused");
   // History detail: never show Start live transcription. New meetings keep it.
   const hideLiveUploadActions =
     historyView &&
     !recorder.recording &&
     recorder.status !== "starting" &&
+    recorder.status !== "paused" &&
     recorder.status !== "finalizing";
 
   async function runSummarize() {
@@ -549,7 +553,9 @@ export default function MeetingRoom({
               <span className="transcript-live">
                 {isStarting
                   ? "Starting meeting and microphone…"
-                  : recorder.message || "Listening…"}
+                  : isPaused
+                    ? recorder.message || "Paused"
+                    : recorder.message || "Listening…"}
               </span>
             ) : asrBusy ? (
               <div className="center-spin">
@@ -590,13 +596,41 @@ export default function MeetingRoom({
                   ? "■ End meeting"
                   : "● Start live transcription"}
             </button>
+            <div className="transport-row" role="group" aria-label="Pause and play">
+              <button
+                type="button"
+                className={`btn secondary transport-btn ${
+                  recorder.recording && !isPaused ? "transport-active" : ""
+                }`}
+                onClick={() => recorder.pause()}
+                disabled={!recorder.recording || isStarting || isPaused || asrBusy}
+                title="Pause live transcription"
+                aria-label="Pause live transcription"
+              >
+                ❚❚ Pause
+              </button>
+              <button
+                type="button"
+                className={`btn secondary transport-btn ${
+                  isPaused ? "transport-active" : ""
+                }`}
+                onClick={() => recorder.resume()}
+                disabled={!recorder.recording || isStarting || !isPaused || asrBusy}
+                title="Resume live transcription"
+                aria-label="Play live transcription"
+              >
+                ▶ Play
+              </button>
+            </div>
             <div
               className={`record-duration ${
-                recorder.recording || recorder.status === "starting"
+                recorder.recording && !isPaused
                   ? "active"
-                  : recorder.status === "finalizing"
-                    ? "finalizing"
-                    : ""
+                  : isPaused
+                    ? "paused"
+                    : recorder.status === "finalizing"
+                      ? "finalizing"
+                      : ""
               }`}
               aria-live="polite"
               aria-label={`Meeting duration ${fmtTime(recorder.elapsed)}`}
@@ -606,11 +640,15 @@ export default function MeetingRoom({
                 recorder.status === "finalizing" ||
                 recorder.elapsed > 0) && (
                 <>
-                  {(recorder.recording || recorder.status === "starting") && (
+                  {recorder.recording && !isPaused && (
                     <span className="dot-live" />
                   )}
                   <span className="record-duration-label">
-                    {recorder.status === "finalizing" ? "Duration" : "Time"}
+                    {recorder.status === "finalizing"
+                      ? "Duration"
+                      : isPaused
+                        ? "Paused"
+                        : "Time"}
                   </span>
                   <span className="record-duration-value">
                     {fmtTime(recorder.elapsed)}

@@ -5,7 +5,8 @@ import { api, getToken } from "../api/client";
 // to the backend over a WebSocket, exposing live caption + finalization state.
 export function useRecorder({ onFinalTranscript } = {}) {
   const [recording, setRecording] = useState(false);
-  const [status, setStatus] = useState("idle"); // idle|starting|recording|finalizing|error
+  const [paused, setPaused] = useState(false);
+  const [status, setStatus] = useState("idle"); // idle|starting|recording|paused|finalizing|error
   const [liveText, setLiveText] = useState("");
   const [message, setMessage] = useState("");
   const [transcriptionAvailable, setTranscriptionAvailable] = useState(true);
@@ -20,6 +21,9 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const liveSegmentsRef = useRef({});
   const timerRef = useRef(null);
   const startedAtRef = useRef(null);
+  const pausedTotalMsRef = useRef(0);
+  const pauseStartedAtRef = useRef(null);
+  const pausedRef = useRef(false);
   const meetingIdRef = useRef(null);
   const reconnectRef = useRef({ attempts: 0, timer: null, active: false });
   const stoppingRef = useRef(false);
@@ -28,6 +32,16 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const onFinalRef = useRef(onFinalTranscript);
   const pendingPcmRef = useRef([]);
   const bytesSentRef = useRef(0);
+
+  const computeElapsedSec = useCallback(() => {
+    const started = startedAtRef.current;
+    if (!started) return 0;
+    let pausedMs = pausedTotalMsRef.current;
+    if (pausedRef.current && pauseStartedAtRef.current) {
+      pausedMs += Date.now() - pauseStartedAtRef.current;
+    }
+    return Math.max(0, Math.floor((Date.now() - started - pausedMs) / 1000));
+  }, []);
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript;
@@ -300,16 +314,19 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setStatus("starting");
       setMessage("Starting meeting and microphone…");
       setRecording(true);
+      setPaused(false);
+      pausedRef.current = false;
+      pausedTotalMsRef.current = 0;
+      pauseStartedAtRef.current = null;
       startedAtRef.current = Date.now();
       setElapsed(0);
       pendingPcmRef.current = [];
       bytesSentRef.current = 0;
       if (timerRef.current) clearInterval(timerRef.current);
       // Wall-clock based so long board meetings stay accurate if the tab throttles.
+      // Pause time is excluded from the displayed duration.
       timerRef.current = setInterval(() => {
-        const started = startedAtRef.current;
-        if (!started) return;
-        setElapsed(Math.floor((Date.now() - started) / 1000));
+        setElapsed(computeElapsedSec());
       }, 250);
 
       // Open the WebSocket in parallel with mic setup (biggest perceived win).
@@ -413,6 +430,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
       pendingPcmRef.current = [];
       node.port.onmessage = (event) => {
         if (event.data && event.data.type === "flushed") return;
+        // Drop mic audio while paused — do not buffer silence into ASR.
+        if (pausedRef.current || stoppingRef.current) return;
         const chunk = event.data;
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -455,8 +474,66 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       }, 1000);
     },
-    [cleanupAudio, openSocket]
+    [cleanupAudio, computeElapsedSec, openSocket]
   );
+
+  const pause = useCallback(() => {
+    if (!recording || pausedRef.current || stoppingRef.current) return;
+    if (status !== "recording" && status !== "starting") return;
+    pausedRef.current = true;
+    pauseStartedAtRef.current = Date.now();
+    setPaused(true);
+    setStatus("paused");
+    setMessage("Paused — press Play to continue live transcription.");
+    // Mute the hardware track so the OS/browser shows pause clearly.
+    try {
+      streamRef.current?.getAudioTracks?.().forEach((t) => {
+        t.enabled = false;
+      });
+    } catch {
+      /* ignore */
+    }
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "pause", ts: Date.now() }));
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [recording, status]);
+
+  const resume = useCallback(() => {
+    if (!recording || !pausedRef.current || stoppingRef.current) return;
+    if (pauseStartedAtRef.current) {
+      pausedTotalMsRef.current += Date.now() - pauseStartedAtRef.current;
+      pauseStartedAtRef.current = null;
+    }
+    pausedRef.current = false;
+    setPaused(false);
+    setStatus("recording");
+    setMessage("Listening…");
+    try {
+      streamRef.current?.getAudioTracks?.().forEach((t) => {
+        t.enabled = true;
+      });
+    } catch {
+      /* ignore */
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "resume", ts: Date.now() }));
+      } catch {
+        /* ignore */
+      }
+    }
+    setElapsed(computeElapsedSec());
+  }, [computeElapsedSec, recording]);
 
   const stop = useCallback(async () => {
     stoppingRef.current = true;
@@ -467,9 +544,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
       timerRef.current = null;
     }
     // Freeze the final elapsed time for the UI while Whisper finalizes.
-    if (startedAtRef.current) {
-      setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
+    if (pausedRef.current && pauseStartedAtRef.current) {
+      pausedTotalMsRef.current += Date.now() - pauseStartedAtRef.current;
+      pauseStartedAtRef.current = null;
     }
+    pausedRef.current = false;
+    setPaused(false);
+    setElapsed(computeElapsedSec());
     if (keepaliveRef.current) {
       clearInterval(keepaliveRef.current);
       keepaliveRef.current = null;
@@ -512,7 +593,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         setMessage(err.message || "Could not finalize recording.");
       }
     }
-  }, [flushAndCleanupAudio]);
+  }, [computeElapsedSec, flushAndCleanupAudio]);
 
   useEffect(() => {
     // Best-effort finalize if the tab closes mid-recording (WS stop may be lost).
@@ -556,6 +637,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
   return {
     recording,
+    paused,
     status,
     liveText,
     message,
@@ -564,5 +646,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
     connectionState,
     start,
     stop,
+    pause,
+    resume,
   };
 }

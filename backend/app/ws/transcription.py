@@ -587,8 +587,8 @@ async def transcribe_ws(websocket: WebSocket):
                 except json.JSONDecodeError:
                     continue
                 ctype = control.get("type")
-                if ctype in ("pong", "ping", "start"):
-                    # Client keepalive / session hello — ignore payload.
+                if ctype in ("pong", "ping", "start", "pause", "resume"):
+                    # Client keepalive / session hello / pause-play — ignore payload.
                     if redis_ok:
                         redis_store.touch_session(meeting_id)
                     continue

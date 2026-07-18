@@ -1128,9 +1128,26 @@ select.inline {
 .record-control {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
-  min-width: 168px;
+  min-width: 220px;
+}
+.transport-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.transport-btn {
+  flex: 1;
+  min-width: 0;
+  padding-left: 10px;
+  padding-right: 10px;
+  font-size: 13px;
+}
+.transport-btn.transport-active {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fecaca;
+  background: rgba(185, 28, 28, 0.12);
 }
 .record-duration {
   display: inline-flex;
@@ -1150,6 +1167,11 @@ select.inline {
   color: #fecaca;
   background: rgba(185, 28, 28, 0.18);
   border-color: rgba(239, 68, 68, 0.45);
+}
+.record-duration.paused {
+  color: #fde68a;
+  background: rgba(180, 120, 20, 0.16);
+  border-color: rgba(234, 179, 8, 0.4);
 }
 .record-duration.finalizing {
   color: var(--text);
