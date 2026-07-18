@@ -103,10 +103,17 @@ def health():
         "asr_engine": asr.engine_name(),
         "whisper_available": whisper_ok,
         "whisper_live_model": settings.whisper_live_model,
+        "whisper_live_hiligaynon_model": settings.whisper_live_hiligaynon_model or None,
         "whisper_final_model": settings.whisper_final_model,
         "whisper_final_backend": settings.whisper_final_backend,
+        "whisper_final_backend_resolved_hil": transcription_svc.resolve_final_backend("hil"),
         "whisper_decode_language": settings.whisper_decode_language,
-        "whisper_hiligaynon_model": transcription_svc.hiligaynon_model_id(),
+        "whisper_hiligaynon_fine_tuned_model": (
+            settings.whisper_hiligaynon_fine_tuned_model or None
+        ),
+        "whisper_hiligaynon_model": settings.whisper_hiligaynon_model or None,
+        "whisper_hiligaynon_hf_candidates": transcription_svc.hiligaynon_hf_candidates(),
+        "whisper_hiligaynon_primary": transcription_svc.hiligaynon_model_id(),
         "whisper_live_window_seconds": settings.whisper_live_window_seconds,
         "whisper_live_hop_seconds": settings.whisper_live_hop_seconds,
         "redis_available": redis_ok,

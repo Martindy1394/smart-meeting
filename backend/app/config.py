@@ -78,21 +78,33 @@ class Settings(BaseSettings):
     audio_channels: int = 1
 
     # Whisper model sizes for the two-pass pipeline.
-    # Live + final default to faster-whisper (reliable on CPU). Optional HF
-    # fine-tune can be enabled with WHISPER_FINAL_BACKEND=huggingface.
+    # Live uses faster-whisper. Final prefers a fine-tuned Hiligaynon/PH
+    # checkpoint when backend is ``auto`` / ``huggingface``.
     whisper_live_model: str = "small"
     whisper_final_model: str = "medium"
-    # Hugging Face id (or local path) for an optional fine-tuned final ASR model.
+    # Your own Hiligaynon fine-tune (HF repo id or local transformers folder).
+    # Tried first for hil/PH meetings when set; leave empty until you have one.
+    whisper_hiligaynon_fine_tuned_model: str = ""
+    # Philippine / Hiligaynon-capable HF fallback (used when no custom fine-tune,
+    # or after the custom checkpoint fails).
     whisper_hiligaynon_model: str = "rbcurzon/whisper-medium-ph"
-    # "faster-whisper" (default, stable) or "huggingface" (fine-tuned checkpoint).
-    whisper_final_backend: str = "faster-whisper"
+    # Optional faster-whisper / CTranslate2 export of a Hiligaynon fine-tune
+    # for live captions (local dir or compatible HF repo). Empty = use live model.
+    whisper_live_hiligaynon_model: str = ""
+    # auto | huggingface | faster-whisper
+    # auto: for Hiligaynon/PH meetings try HF fine-tune candidates, then FW.
+    whisper_final_backend: str = "auto"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    # Meeting language label (Hiligaynon). Decode language for Whisper is ``tl``.
+    # Meeting language label (Hiligaynon). Whisper has no native ``hil`` token —
+    # decode uses ``whisper_decode_language`` (default ``tl``) or auto-detect.
     whisper_default_language: str = "hil"
-    # Live Whisper decode language (``tl`` = Tagalog/PH). Live stays forced for
-    # low-latency captions; final pass uses ``whisper_final_language_mode``.
+    # Live Whisper decode language (``tl`` = Tagalog/PH closest supported code).
     whisper_decode_language: str = "tl"
+    # Optional initial prompt biasing Hiligaynon / Filipino / English meetings.
+    whisper_initial_prompt: str = (
+        "Board meeting discussion in Hiligaynon (Ilonggo), Filipino, and English."
+    )
     # Final-pass language: "auto" (detect), "forced" (whisper_decode_language),
     # or "prefer_forced" (forced first, auto retry if coverage is poor).
     whisper_final_language_mode: str = "auto"

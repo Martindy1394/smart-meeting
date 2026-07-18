@@ -37,11 +37,13 @@ behind a secure JWT authentication system with per-user meeting history.
   (no MediaRecorder / WebM decoding), streamed over WebSockets, decoded live
   with a fast Whisper model for word-by-word captions.
 - **Two-pass accuracy** — when you stop recording the server re-transcribes the
-  whole recording with `large-v3` (`beam_size=5`, `best_of=5`, VAD filtering,
-  `condition_on_previous_text=True`) and replaces the live captions with the
-  finalized transcript, flagged with a **Refined** badge.
-- **Hiligaynon dialect** — language pinned to `hil` (falls back to the closest
-  supported Philippine language if a Whisper build lacks the token, logged).
+  whole recording with a stronger Whisper pass (fine-tuned Hiligaynon/PH model
+  when available, else faster-whisper `medium`) and replaces live captions with
+  the finalized transcript (**Refined** badge).
+- **Hiligaynon dialect** — meetings are labeled `hil`; Whisper has no native
+  `hil` token, so decode uses `tl` / auto-detect. For best accuracy, fine-tune
+  Whisper on Hiligaynon audio and set `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
+  (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
 - **BART summarization** — topic-aware divide-and-conquer: long transcripts are
   split into topic chunks (under the BART token limit), summarized per topic,
   then formatted as bullet points or numbered lists.
@@ -125,10 +127,12 @@ All AI features flow through single, consistent integration surfaces:
   - `transcribe_file(path)` for saved or uploaded WAV recordings
   - `persist_transcript(...)` writes segments onto the meeting
 - `app/services/transcription.py` — Whisper backends used by the ASR facade:
-  - **Live:** faster-whisper with **10s windows overlapping by 5s**, forced
-    `language="tl"` and `task="transcribe"`
-  - **Final (Stop Recording):** fine-tuned Hiligaynon / PH Whisper from Hugging
-    Face (`WHISPER_HILIGAYNON_MODEL`, default `rbcurzon/whisper-medium-ph`)
+  - **Live:** faster-whisper with **10s windows overlapping by 5s**, decode
+    language `tl` (optional CT2 Hiligaynon fine-tune via
+    `WHISPER_LIVE_HILIGAYNON_MODEL`)
+  - **Final (Stop Recording):** `WHISPER_FINAL_BACKEND=auto` prefers the
+    fine-tuned Hiligaynon/PH HF model (`WHISPER_HILIGAYNON_MODEL`), then falls
+    back to faster-whisper
 
 ## Configuration
 
@@ -140,7 +144,10 @@ See `backend/.env.example`. Key variables:
 | `DATABASE_URL` | `sqlite:///./smart_meeting.db` | Use a PostgreSQL DSN in prod. |
 | `WHISPER_LIVE_MODEL` | `small` | Fast live-caption Whisper model. |
 | `WHISPER_FINAL_MODEL` | `medium` | faster-whisper fallback if HF final model fails. |
-| `WHISPER_HILIGAYNON_MODEL` | `rbcurzon/whisper-medium-ph` | Fine-tuned HF Whisper for Stop Recording. |
+| `WHISPER_FINAL_BACKEND` | `auto` | `auto` prefers HF Hiligaynon candidates, then FW. |
+| `WHISPER_HILIGAYNON_FINE_TUNED_MODEL` | _(empty)_ | Your Hiligaynon fine-tune (HF/local); tried first. |
+| `WHISPER_HILIGAYNON_MODEL` | `rbcurzon/whisper-medium-ph` | Philippine HF fallback for Stop Recording. |
+| `WHISPER_LIVE_HILIGAYNON_MODEL` | _(empty)_ | Optional CT2 fine-tune for live captions. |
 | `WHISPER_LIVE_WINDOW_SECONDS` | `10.0` | Live ASR window length. |
 | `WHISPER_LIVE_HOP_SECONDS` | `5.0` | Live ASR hop (10s window overlapping by 5s). |
 | `WHISPER_DEFAULT_LANGUAGE` | `hil` | Meeting label; Whisper decode uses `tl`. |

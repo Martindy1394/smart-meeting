@@ -6,7 +6,9 @@ This is the single integration surface for turning audio into text:
 * Saved / uploaded WAV files → ``transcribe_file`` (full-accuracy pass)
 * Meeting pipeline → ``process_meeting_audio`` (persist segments + transcript)
 
-All paths use OpenAI Whisper via ``faster-whisper`` (see ``transcription.py``).
+Live captions use faster-whisper (optional CT2 Hiligaynon fine-tune). Final
+pass prefers a fine-tuned Hiligaynon HF checkpoint when configured, then
+falls back to faster-whisper (see ``transcription.py``).
 """
 from __future__ import annotations
 
