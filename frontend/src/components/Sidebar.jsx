@@ -25,16 +25,6 @@ export default function Sidebar({
           <div className="brand">
             <span className="dot" /> Smart Meeting
           </div>
-          <button
-            className="btn"
-            style={{ width: "100%", marginTop: 14 }}
-            onClick={() => {
-              onCreate();
-              onClose && onClose();
-            }}
-          >
-            + New meeting
-          </button>
         </div>
 
         <nav className="side-menu" aria-label="Main menu">
