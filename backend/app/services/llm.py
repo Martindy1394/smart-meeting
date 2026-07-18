@@ -3,11 +3,11 @@
 Both features are exposed through a single ``invoke_llm(task, ...)`` entry point
 so every AI integration in the codebase flows through one consistent surface.
 
-* ``task="summarize"`` builds meeting minutes that preserve distinct spoken
-  points. Short transcripts are segmented into idea units (so middle topics and
-  language/context shifts — e.g. English lyrics vs Filipino commentary — stay
-  on separate bullets). Longer transcripts use ``facebook/bart-large-cnn`` with
-  coverage merge that restores any missing points.
+* ``task="summarize"`` uses a divide-and-conquer pipeline for long transcripts:
+  (1) segment discourse into topic chunks (TF-cosine topic breaks + BART token
+  budget), (2) run ``facebook/bart-large-cnn`` per topic, (3) format each
+  topic summary as bullet / numbered points. Short transcripts still use
+  idea-unit extraction so middle topics stay distinct.
 * ``task="translate"`` uses ``facebook/mbart-large-50-many-to-many-mmt``.
 
 ``transformers``/``torch`` are imported lazily. Summarization degrades to the
@@ -16,8 +16,10 @@ idea-preserving extractive path when BART is unavailable.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import threading
+from collections import Counter
 
 from ..config import settings
 from ..languages import mbart_code
@@ -25,6 +27,10 @@ from ..languages import mbart_code
 logger = logging.getLogger("smart_meeting.llm")
 
 _MAX_CHUNK_CHARS = 3500
+_SPEAKER_TURN_RE = re.compile(
+    r"^(?:Speaker\s*\d+|[\w][\w .'-]{0,40})\s*:\s+(.+)$",
+    re.IGNORECASE,
+)
 
 _FILLER_RE = re.compile(
     r"\b(okay so|ok so|um+|uh+|you know|like|actually|basically|so yeah|"
@@ -368,6 +374,7 @@ def _dedupe_units(units: list[str]) -> list[str]:
 
 
 def _chunk_text(text: str, size: int = _MAX_CHUNK_CHARS) -> list[str]:
+    """Character-budget chunker (used by mBART translation)."""
     text = text.strip()
     if len(text) <= size:
         return [text] if text else []
@@ -391,6 +398,202 @@ def _format_summary(units: list[str], output_format: str) -> str:
     if output_format == "numbered":
         return "\n".join(f"{i}. {s}" for i, s in enumerate(units, start=1))
     return "\n".join(f"- {s}" for s in units)
+
+
+def _strip_list_prefix(text: str) -> str:
+    return re.sub(r"^(?:[-*•]|\d+[.)])\s+", "", text.strip())
+
+
+def _summary_sentences_to_units(summary: str) -> list[str]:
+    """Turn a paragraph-style BART summary into bullet-ready sentences."""
+    units: list[str] = []
+    for sentence in _split_sentences(summary):
+        cleaned = _clean_unit(_strip_list_prefix(sentence))
+        if cleaned and len(_content_words(cleaned)) >= 2:
+            units.append(cleaned)
+    if units:
+        return _dedupe_units(units)
+    # Fallback: idea-unit segmentation if BART returned one long clause.
+    return _segment_idea_units(summary)
+
+
+def _discourse_units(text: str) -> list[str]:
+    """Split transcript into speaker turns when labeled, else sentences."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    turns: list[str] = []
+    if lines and sum(1 for ln in lines if _SPEAKER_TURN_RE.match(ln)) >= max(
+        2, len(lines) // 2
+    ):
+        for ln in lines:
+            m = _SPEAKER_TURN_RE.match(ln)
+            turns.append((m.group(1) if m else ln).strip())
+        return [t for t in turns if t]
+
+    # Prefer idea units (handles run-on ASR) over raw sentence splits.
+    units = _segment_idea_units(text)
+    return units or _split_sentences(text)
+
+
+def _bow_vector(text: str) -> Counter[str]:
+    return Counter(_content_words(text))
+
+
+def _cosine_similarity(a: Counter[str], b: Counter[str]) -> float:
+    if not a or not b:
+        return 0.0
+    keys = set(a) | set(b)
+    dot = sum(a.get(k, 0) * b.get(k, 0) for k in keys)
+    na = math.sqrt(sum(v * v for v in a.values()))
+    nb = math.sqrt(sum(v * v for v in b.values()))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _estimate_tokens(text: str, tokenizer=None) -> int:
+    text = (text or "").strip()
+    if not text:
+        return 0
+    if tokenizer is not None:
+        try:
+            return len(tokenizer.encode(text, add_special_tokens=False))
+        except Exception:
+            pass
+    # ~0.75 words/token heuristic for English-ish ASR text.
+    return max(1, int(len(text.split()) / 0.75))
+
+
+def _hard_split_unit(unit: str, max_tokens: int, tokenizer=None) -> list[str]:
+    """Split an oversized unit by words so it fits the BART token budget."""
+    words = unit.split()
+    if not words:
+        return []
+    if _estimate_tokens(unit, tokenizer) <= max_tokens:
+        return [unit]
+    parts: list[str] = []
+    current: list[str] = []
+    for word in words:
+        trial = " ".join(current + [word])
+        if current and _estimate_tokens(trial, tokenizer) > max_tokens:
+            parts.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        parts.append(" ".join(current))
+    return parts
+
+
+def _topic_label(chunk: str, index: int) -> str:
+    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ0-9']+", chunk) if w.lower() not in _STOP]
+    if not words:
+        return f"Topic {index}"
+    label = " ".join(words[:6])
+    if len(label) > 48:
+        label = label[:45].rstrip() + "…"
+    return label[0].upper() + label[1:] if label else f"Topic {index}"
+
+
+def segment_transcript_topics(
+    text: str,
+    *,
+    max_tokens: int | None = None,
+    similarity_threshold: float | None = None,
+    min_units: int | None = None,
+    tokenizer=None,
+) -> list[str]:
+    """Split a long transcript into topic-sized chunks for BART.
+
+    Uses chunked linear accumulation of discourse units (speaker turns or
+    idea sentences). Starts a new topic when consecutive-unit TF cosine
+    similarity drops below ``similarity_threshold``, or when the BART token
+    budget would be exceeded. Never cuts mid-unit unless a single unit is
+    larger than the budget.
+    """
+    budget = max_tokens if max_tokens is not None else settings.bart_max_input_tokens
+    threshold = (
+        similarity_threshold
+        if similarity_threshold is not None
+        else settings.bart_topic_similarity_threshold
+    )
+    min_u = min_units if min_units is not None else settings.bart_topic_min_units
+    budget = max(128, int(budget))
+
+    units: list[str] = []
+    for unit in _discourse_units(text):
+        units.extend(_hard_split_unit(unit, budget, tokenizer))
+    if not units:
+        return []
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_vec: Counter[str] | None = None
+
+    def flush() -> None:
+        nonlocal current, current_vec
+        if current:
+            chunks.append(" ".join(current).strip())
+            current = []
+            current_vec = None
+
+    for unit in units:
+        unit_tokens = _estimate_tokens(unit, tokenizer)
+        unit_vec = _bow_vector(unit)
+        if not current:
+            current = [unit]
+            current_vec = unit_vec
+            continue
+
+        joined = " ".join(current + [unit])
+        joined_tokens = _estimate_tokens(joined, tokenizer)
+        sim = _cosine_similarity(current_vec or Counter(), unit_vec)
+        topic_break = len(current) >= min_u and sim < threshold
+        over_budget = joined_tokens > budget
+
+        if topic_break or over_budget:
+            flush()
+            current = [unit]
+            current_vec = unit_vec
+            # Extremely rare: single unit still over budget after hard split.
+            if unit_tokens > budget:
+                flush()
+            continue
+
+        current.append(unit)
+        if current_vec is None:
+            current_vec = unit_vec
+        else:
+            current_vec = current_vec + unit_vec
+
+    flush()
+    return [c for c in chunks if c]
+
+
+def _format_topic_summaries(
+    topic_sections: list[tuple[str, list[str]]],
+    output_format: str,
+) -> str:
+    """Format per-topic bullet/numbered lists, with headings when multi-topic."""
+    if not topic_sections:
+        return ""
+    show_headers = len(topic_sections) > 1
+    blocks: list[str] = []
+    counter = 1
+    for label, units in topic_sections:
+        units = [u for u in units if u and u.strip()]
+        if not units:
+            continue
+        lines: list[str] = []
+        if show_headers:
+            lines.append(label)
+        for unit in units:
+            if output_format == "numbered":
+                lines.append(f"{counter}. {unit}")
+                counter += 1
+            else:
+                lines.append(f"- {unit}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def _coverage_ratio(source: str, summary: str) -> float:
@@ -430,14 +633,30 @@ def _bart_summarize_chunk(summarizer, chunk: str) -> str:
     return out[0]["summary_text"].strip()
 
 
-def _bart_summarize(text: str) -> str:
+def _bart_summarize_topics(text: str) -> list[tuple[str, str]]:
+    """Return ``[(topic_label, paragraph_summary), ...]`` via divide-and-conquer."""
     summarizer = _pipelines.summarizer()
-    chunks = _chunk_text(text)
-    partials = [_bart_summarize_chunk(summarizer, chunk) for chunk in chunks]
-    combined = " ".join(partials)
-    if len(chunks) > 1 and len(combined.split()) > 180:
-        combined = _bart_summarize_chunk(summarizer, combined)
-    return combined
+    tokenizer = getattr(summarizer, "tokenizer", None)
+    topics = segment_transcript_topics(text, tokenizer=tokenizer)
+    if not topics:
+        return []
+    results: list[tuple[str, str]] = []
+    for idx, chunk in enumerate(topics, start=1):
+        label = _topic_label(chunk, idx)
+        try:
+            summary = _bart_summarize_chunk(summarizer, chunk)
+        except Exception as exc:
+            logger.warning("BART failed on topic %s (%s); using extractive.", idx, exc)
+            summary = " ".join(_segment_idea_units(chunk)[:4])
+        if summary:
+            results.append((label, summary))
+    return results
+
+
+def _bart_summarize(text: str) -> str:
+    """Backward-compatible flat summary string (joined topic summaries)."""
+    parts = [summary for _, summary in _bart_summarize_topics(text)]
+    return " ".join(parts)
 
 
 def _merge_missing_units(source_units: list[str], summary_units: list[str]) -> list[str]:
@@ -463,9 +682,8 @@ def summarize(
 ) -> tuple[str, str]:
     """Return (formatted_summary, engine_name).
 
-    When ``source_kind="english_translation"``, the text is already cleaned
-    English from mBART. In that mode we preserve every distinct point
-    (meeting-minutes fidelity) instead of aggressively compressing.
+    Long transcripts use topic segmentation → per-topic BART → bullet/numbered
+    formatting. Short transcripts keep idea-unit fidelity.
     """
     text = _normalize_spoken_transcript(text or "")
     if not text:
@@ -479,12 +697,23 @@ def summarize(
     if from_english:
         units = source_units
         engine = "bart-from-english"
-        # Light BART polish only when the translation is long enough that a
-        # single pass helps wording — then restore any dropped points.
         if word_count > 220 and len(source_units) > 8:
             try:
-                raw = _bart_summarize(text)
-                units = _merge_missing_units(source_units, _segment_idea_units(raw))
+                topic_parts = _bart_summarize_topics(text)
+                topic_sections: list[tuple[str, list[str]]] = []
+                all_units: list[str] = []
+                for label, raw in topic_parts:
+                    units_i = _summary_sentences_to_units(raw)
+                    topic_sections.append((label, units_i))
+                    all_units.extend(units_i)
+                units = _merge_missing_units(source_units, all_units)
+                # Prefer flat merged bullets when coverage restore added points
+                # that don't map cleanly to a single topic heading.
+                if len(topic_sections) > 1 and len(units) == len(all_units):
+                    return (
+                        _format_topic_summaries(topic_sections, output_format),
+                        "bart-topic-chunks+english",
+                    )
                 engine = "bart-large-cnn+english"
             except Exception as exc:
                 logger.warning(
@@ -499,10 +728,22 @@ def summarize(
     if word_count <= 220 or len(source_units) <= 8:
         return _format_summary(source_units, output_format), "bart-meeting-minutes"
 
-    # Longer raw transcripts: abstractive BART + coverage restore.
+    # Longer raw transcripts: topic chunks → BART → bullets + coverage restore.
     try:
-        raw = _bart_summarize(text)
-        units = _merge_missing_units(source_units, _segment_idea_units(raw))
+        topic_parts = _bart_summarize_topics(text)
+        topic_sections = []
+        all_units: list[str] = []
+        for label, raw in topic_parts:
+            units_i = _summary_sentences_to_units(raw)
+            topic_sections.append((label, units_i))
+            all_units.extend(units_i)
+        units = _merge_missing_units(source_units, all_units)
+        if len(topic_sections) > 1 and len(units) == len(all_units):
+            return (
+                _format_topic_summaries(topic_sections, output_format),
+                "bart-topic-chunks",
+            )
+        # Coverage restore added extra points — keep a flat bullet list.
         engine = "bart-large-cnn"
     except LLMUnavailable:
         if not settings.allow_llm_fallback:

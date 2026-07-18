@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     # When true, allow lightweight non-ML fallbacks (extractive summary) so the
     # feature works even without the heavy model weights downloaded.
     allow_llm_fallback: bool = True
+    # Divide-and-conquer summarization: keep each topic chunk under this many
+    # BART input tokens (model limit is 1024; leave headroom for special tokens).
+    bart_max_input_tokens: int = 960
+    # Start a new topic when consecutive discourse-unit TF cosine similarity
+    # drops below this threshold (0–1). Lower = fewer / larger topics.
+    bart_topic_similarity_threshold: float = 0.22
+    # Minimum discourse units in a topic before a similarity drop can split.
+    bart_topic_min_units: int = 2
 
     # --- Rate limiting ---------------------------------------------------
     rate_limit_auth: str = "20/minute"

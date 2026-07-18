@@ -42,8 +42,9 @@ behind a secure JWT authentication system with per-user meeting history.
   finalized transcript, flagged with a **Refined** badge.
 - **Hiligaynon dialect** — language pinned to `hil` (falls back to the closest
   supported Philippine language if a Whisper build lacks the token, logged).
-- **BART summarization** — one click, two formats: bullet points or numbered
-  sentences within paragraphs.
+- **BART summarization** — topic-aware divide-and-conquer: long transcripts are
+  split into topic chunks (under the BART token limit), summarized per topic,
+  then formatted as bullet points or numbered lists.
 - **mBART translation** — translate the finalized transcript into Spanish,
   French, German, Italian, Portuguese, Arabic, Hindi, Japanese, Chinese,
   Russian, Dutch, Korean, Hiligaynon, Tagalog (+ English).
@@ -151,6 +152,9 @@ See `backend/.env.example`. Key variables:
 | `BART_MODEL` | `facebook/bart-large-cnn` | Summarization. |
 | `MBART_MODEL` | `facebook/mbart-large-50-many-to-many-mmt` | Translation. |
 | `ALLOW_LLM_FALLBACK` | `true` | Enable extractive summary fallback. |
+| `BART_MAX_INPUT_TOKENS` | `960` | Max tokens per topic chunk (under BART’s 1024 limit). |
+| `BART_TOPIC_SIMILARITY_THRESHOLD` | `0.22` | Split topics when consecutive-unit TF cosine falls below this. |
+| `BART_TOPIC_MIN_UNITS` | `2` | Min discourse units before a similarity split. |
 | `CORS_ORIGINS` | localhost dev | Comma-separated allowed origins. |
 
 ## API summary
