@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -196,7 +197,7 @@ def create_meeting(
         title=payload.title.strip(),
         language=payload.language or "hil",
         venue=payload.venue.strip(),
-        meeting_date=payload.meeting_date,
+        meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
         status="recording",
     )

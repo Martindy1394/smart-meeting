@@ -325,6 +325,8 @@ export default function MeetingRoom({
     }
     if (!detailsRef.current?.isComplete()) return;
     try {
+      // Stamp meeting date/time to the current moment when recording starts.
+      detailsRef.current.useCurrentDateTime?.();
       await recorder.start(meeting.id);
       setStatus("recording");
     } catch {

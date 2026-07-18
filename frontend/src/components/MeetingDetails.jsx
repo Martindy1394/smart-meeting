@@ -1,17 +1,43 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { api } from "../api/client";
 
-// Converts an ISO timestamp to the value expected by <input type="datetime-local">.
-function toLocalInput(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const offset = d.getTimezoneOffset();
-  return new Date(d.getTime() - offset * 60000).toISOString().slice(0, 16);
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+/** Format a Date as the value expected by <input type="datetime-local">. */
+function formatLocalInput(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
+  return (
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` +
+    `T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  );
 }
 
 function nowLocalInput() {
-  return toLocalInput(new Date().toISOString());
+  return formatLocalInput(new Date());
+}
+
+function toLocalInput(iso) {
+  if (!iso) return "";
+  return formatLocalInput(new Date(iso));
+}
+
+/** Convert datetime-local value to ISO-8601 for the API. */
+function toIsoFromLocalInput(local) {
+  if (!local) return null;
+  const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function isFreshMeeting(meeting) {
+  return (
+    meeting.status !== "finalized" &&
+    !(meeting.final_transcript || "").trim() &&
+    !(meeting.title || "").trim() &&
+    !(meeting.venue || "").trim()
+  );
 }
 
 function resolveAttendees(attendees, attendeeInput) {
@@ -27,8 +53,10 @@ const MeetingDetails = forwardRef(function MeetingDetails(
 ) {
   const [title, setTitle] = useState(meeting.title || "");
   const [venue, setVenue] = useState(meeting.venue || "");
-  const [dateTime, setDateTime] = useState(
-    toLocalInput(meeting.meeting_date) || nowLocalInput()
+  const [dateTime, setDateTime] = useState(() =>
+    isFreshMeeting(meeting)
+      ? nowLocalInput()
+      : toLocalInput(meeting.meeting_date) || nowLocalInput()
   );
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
@@ -39,7 +67,12 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   useEffect(() => {
     setTitle(meeting.title || "");
     setVenue(meeting.venue || "");
-    setDateTime(toLocalInput(meeting.meeting_date) || nowLocalInput());
+    // New meetings always open on the current local date & time.
+    setDateTime(
+      isFreshMeeting(meeting)
+        ? nowLocalInput()
+        : toLocalInput(meeting.meeting_date) || nowLocalInput()
+    );
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
     setError("");
@@ -57,6 +90,12 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, venue, dateTime, attendees, attendeeInput]);
+
+  function useCurrentDateTime() {
+    const current = nowLocalInput();
+    setDateTime(current);
+    return current;
+  }
 
   async function save({ silent = false } = {}) {
     setError("");
@@ -79,12 +118,18 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       return false;
     }
 
+    const meetingDateIso = toIsoFromLocalInput(dateTime);
+    if (!meetingDateIso) {
+      if (!silent) setError("Date & time is invalid.");
+      return false;
+    }
+
     setSaving(true);
     try {
       await api.updateMeeting(meeting.id, {
         title: title.trim(),
         venue: venue.trim(),
-        meeting_date: dateTime,
+        meeting_date: meetingDateIso,
         attendees: finalAttendees,
       });
       setAttendees(finalAttendees);
@@ -95,7 +140,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           ...meeting,
           title: title.trim(),
           venue: venue.trim(),
-          meeting_date: dateTime,
+          meeting_date: meetingDateIso,
           attendees: finalAttendees,
         });
       }
@@ -112,6 +157,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     save,
     isComplete,
     isSaving: () => saving,
+    useCurrentDateTime,
   }));
 
   function addAttendee() {
@@ -173,12 +219,22 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           <label>
             Date &amp; time <span className="req">*</span>
           </label>
-          <input
-            type="datetime-local"
-            value={dateTime}
-            onChange={(e) => setDateTime(e.target.value)}
-            required
-          />
+          <div className="datetime-row">
+            <input
+              type="datetime-local"
+              value={dateTime}
+              onChange={(e) => setDateTime(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={useCurrentDateTime}
+              title="Set to the current date and time"
+            >
+              Now
+            </button>
+          </div>
         </div>
 
         <div className="field attendees-field">

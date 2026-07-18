@@ -1085,6 +1085,18 @@ select.inline {
 .chip-x:hover {
   color: #fca5a5;
 }
+.datetime-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.datetime-row input {
+  flex: 1;
+  min-width: 0;
+}
+.datetime-row .btn {
+  white-space: nowrap;
+}
 .attendee-input-row {
   display: flex;
   gap: 8px;
