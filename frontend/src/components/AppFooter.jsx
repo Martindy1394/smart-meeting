@@ -11,7 +11,7 @@ export default function AppFooter({ className = "" }) {
           ·
         </span>
         <span className="app-footer-property">
-          A property of Iloilo Science and Technology
+          A property of Iloilo Science and Technology University
         </span>
       </p>
     </footer>
