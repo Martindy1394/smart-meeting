@@ -51,13 +51,13 @@ behind a secure JWT authentication system with per-user meeting history.
   Final pass tries Tagalog + Philippine HF models
   (`WHISPER_TAGALOG_MODEL` → `WHISPER_HILIGAYNON_MODEL`), then faster-whisper,
   with `tl` coverage retries for thin auto-detect results.
-- **English meeting summaries** — mBART first translates the **full** transcript
-  into English (Tagalog / Hiligaynon / mixed speech included), then
-  topic-aware BART summarizes that English with coverage restore so decisions
-  and context are retained as bullets or numbered points.
-- **mBART translation** — translate the finalized transcript into Spanish,
-  French, German, Italian, Portuguese, Arabic, Hindi, Japanese, Chinese,
-  Russian, Dutch, Korean, Hiligaynon, Tagalog (+ English).
+- **English meeting summaries** — mBART translates the **full** transcript into
+  English with sliding context windows (PH/mixed via `id_ID`), then topic-aware
+  BART summarizes with topic overlap + coverage restore into meeting-minutes
+  sections (Discussion / Decisions / Action items).
+- **mBART translation** — context-aware English of the whole transcript, plus
+  Spanish, French, German, Italian, Portuguese, Arabic, Hindi, Japanese,
+  Chinese, Russian, Dutch, Korean, Hiligaynon, Tagalog.
 - **Meeting details** — capture each meeting's title, venue, date & time, and
   attendee list; shown and editable in the meeting room and surfaced in history.
 - **Dashboard** — overview of meeting counts (total, this week, transcript /

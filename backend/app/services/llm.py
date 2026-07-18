@@ -374,17 +374,32 @@ def _dedupe_units(units: list[str]) -> list[str]:
     return kept
 
 
-def _chunk_text(text: str, size: int = _MAX_CHUNK_CHARS) -> list[str]:
-    """Character-budget chunker (used by mBART translation)."""
+def _chunk_text(
+    text: str,
+    size: int = _MAX_CHUNK_CHARS,
+    *,
+    overlap_chars: int = 0,
+) -> list[str]:
+    """Sentence-aware character chunker for mBART (optional overlap)."""
     text = text.strip()
     if len(text) <= size:
         return [text] if text else []
+    overlap_chars = max(0, min(int(overlap_chars), size // 2))
+    sentences = _split_sentences(text)
     chunks: list[str] = []
     current = ""
-    for sentence in _split_sentences(text):
+    for sentence in sentences:
         if len(current) + len(sentence) + 1 > size and current:
             chunks.append(current.strip())
-            current = sentence
+            if overlap_chars > 0:
+                # Keep a trailing overlap window so discourse spans chunk edges.
+                tail = current[-overlap_chars:]
+                # Prefer starting overlap at a word boundary.
+                sp = tail.find(" ")
+                current = (tail[sp + 1 :] if sp >= 0 else tail).strip()
+                current = f"{current} {sentence}".strip() if current else sentence
+            else:
+                current = sentence
         else:
             current = f"{current} {sentence}".strip()
     if current:
@@ -597,6 +612,70 @@ def _format_topic_summaries(
     return "\n\n".join(blocks)
 
 
+_DECISION_RE = re.compile(
+    r"\b("
+    r"decid(?:e|ed|es|ing)|approv(?:e|ed|es|ing|al)|agree(?:d|s|ment)?|"
+    r"resolv(?:e|ed|ution)|motion\s+carried|passed|confirmed|adopted|"
+    r"finaliz(?:e|ed)|ratif(?:y|ied)|authorized|endorsed"
+    r")\b",
+    re.IGNORECASE,
+)
+_ACTION_RE = re.compile(
+    r"\b("
+    r"will|shall|need(?:s)?\s+to|must|should|assign(?:ed|ment)?|"
+    r"follow[\s-]?up|action\s+items?|responsible|deadline|by\s+next|"
+    r"schedule(?:d|s)?|prepare|submit|send|contact|implement|complete|"
+    r"deliver|coordinate|review\s+and|take\s+care\s+of"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_minute_unit(unit: str) -> str:
+    """Bucket a summary unit into meeting-minutes sections."""
+    text = unit or ""
+    if _DECISION_RE.search(text):
+        return "Decisions"
+    if _ACTION_RE.search(text):
+        return "Action items"
+    return "Discussion"
+
+
+def _format_meeting_minutes(units: list[str], output_format: str) -> str:
+    """Structure bullets as Discussion / Decisions / Action items."""
+    cleaned = [u.strip() for u in units if u and u.strip()]
+    if not cleaned:
+        return ""
+    buckets: dict[str, list[str]] = {
+        "Discussion": [],
+        "Decisions": [],
+        "Action items": [],
+    }
+    for unit in cleaned:
+        buckets[_classify_minute_unit(unit)].append(unit)
+
+    # Single-bucket short notes stay as a flat list (less chrome).
+    nonempty = [k for k, v in buckets.items() if v]
+    if len(nonempty) <= 1 and len(cleaned) <= 4:
+        return _format_summary(cleaned, output_format)
+
+    blocks: list[str] = []
+    counter = 1
+    for label in ("Discussion", "Decisions", "Action items"):
+        items = buckets[label]
+        if not items:
+            continue
+        lines = [label]
+        for unit in items:
+            if output_format == "numbered":
+                lines.append(f"{counter}. {unit}")
+                counter += 1
+            else:
+                lines.append(f"- {unit}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def _coverage_ratio(source: str, summary: str) -> float:
     src = _content_words(source)
     if not src:
@@ -611,23 +690,24 @@ def _idea_preserving_summary(text: str) -> list[str]:
 
 def _bart_summarize_chunk(summarizer, chunk: str) -> str:
     words = max(1, len(chunk.split()))
-    # Generous length budget so topic context / decisions are not crushed.
-    approx_tokens = max(20, int(words * 1.25))
+    # Frame as meeting notes so CNN-BART keeps decisions / actions in context.
+    framed = f"Board meeting discussion and decisions. {chunk.strip()}"
+    approx_tokens = max(20, int(words * 1.3))
     if words <= 150:
-        max_len = min(220, max(80, approx_tokens))
-        min_len = min(max_len - 5, max(30, int(approx_tokens * 0.45)))
+        max_len = min(240, max(90, approx_tokens))
+        min_len = min(max_len - 5, max(36, int(approx_tokens * 0.48)))
     elif words <= 400:
-        max_len = min(320, max(120, int(approx_tokens * 0.7)))
-        min_len = min(max_len - 10, max(50, int(approx_tokens * 0.3)))
+        max_len = min(340, max(140, int(approx_tokens * 0.72)))
+        min_len = min(max_len - 10, max(56, int(approx_tokens * 0.32)))
     else:
-        max_len = 280
-        min_len = 90
+        max_len = 300
+        min_len = 100
     out = summarizer(
-        chunk,
+        framed,
         max_length=max_len,
         min_length=min_len,
         do_sample=False,
-        num_beams=5,
+        num_beams=6,
         truncation=True,
         no_repeat_ngram_size=3,
     )
@@ -635,22 +715,36 @@ def _bart_summarize_chunk(summarizer, chunk: str) -> str:
 
 
 def _bart_summarize_topics(text: str) -> list[tuple[str, str]]:
-    """Return ``[(topic_label, paragraph_summary), ...]`` via divide-and-conquer."""
+    """Return ``[(topic_label, paragraph_summary), ...]`` via divide-and-conquer.
+
+    Carries a short overlap tail from the previous topic into the next BART
+    input so decisions that span topic boundaries keep discourse context.
+    """
     summarizer = _pipelines.summarizer()
     tokenizer = getattr(summarizer, "tokenizer", None)
     topics = segment_transcript_topics(text, tokenizer=tokenizer)
     if not topics:
         return []
     results: list[tuple[str, str]] = []
+    prev_tail = ""
     for idx, chunk in enumerate(topics, start=1):
         label = _topic_label(chunk, idx)
+        input_chunk = f"{prev_tail} {chunk}".strip() if prev_tail else chunk
         try:
-            summary = _bart_summarize_chunk(summarizer, chunk)
+            summary = _bart_summarize_chunk(summarizer, input_chunk)
         except Exception as exc:
             logger.warning("BART failed on topic %s (%s); using extractive.", idx, exc)
-            summary = " ".join(_segment_idea_units(chunk)[:4])
+            summary = " ".join(_segment_idea_units(chunk)[:5])
         if summary:
             results.append((label, summary))
+        # Overlap: last 1–2 sentences of this topic for the next pass.
+        sents = _split_sentences(chunk)
+        if len(sents) >= 2:
+            prev_tail = " ".join(sents[-2:])
+        elif sents:
+            prev_tail = sents[-1]
+        else:
+            prev_tail = ""
     return results
 
 
@@ -688,6 +782,7 @@ def _contextual_bart_summary(
     output_format: str,
     engine_prefix: str,
     min_overlap: float = 0.5,
+    minutes_structure: bool = False,
 ) -> tuple[str, str]:
     """Topic-aware BART + coverage restore against ``source_units``."""
     topic_parts = _bart_summarize_topics(text)
@@ -700,6 +795,11 @@ def _contextual_bart_summary(
     units = _merge_missing_units(
         source_units, all_units, min_overlap=min_overlap
     )
+    if minutes_structure:
+        return (
+            _format_meeting_minutes(units, output_format),
+            f"{engine_prefix}-minutes",
+        )
     if len(topic_sections) > 1 and len(units) == len(all_units):
         return (
             _format_topic_summaries(topic_sections, output_format),
@@ -717,7 +817,7 @@ def summarize(
 
     Prefer ``source_kind="english_translation"`` after mBART so BART sees
     English and can retain meeting context. Long text uses topic segmentation
-    → per-topic BART → coverage restore of omitted idea units.
+    → per-topic BART → coverage restore → meeting-minutes sections.
     """
     text = _normalize_spoken_transcript(text or "")
     if not text:
@@ -727,28 +827,29 @@ def summarize(
     word_count = len(text.split())
     from_english = source_kind == "english_translation"
 
-    # English path: contextual BART sooner, with looser coverage restore so
-    # decisions / action items are not dropped.
+    # English path: run contextual BART whenever there is enough substance so
+    # short mixed meetings still get topic-aware minutes (not only extractive).
     if from_english:
         units = source_units
         engine = "bart-from-english"
-        if word_count > 60 and len(source_units) > 3:
+        if word_count >= 35 and len(source_units) >= 2:
             try:
                 return _contextual_bart_summary(
                     text,
                     source_units,
                     output_format=output_format,
                     engine_prefix="bart-english",
-                    min_overlap=0.45,
+                    min_overlap=0.42,
+                    minutes_structure=True,
                 )
             except Exception as exc:
                 logger.warning(
                     "BART polish on English translation failed (%s); "
-                    "keeping full idea units.",
+                    "keeping full idea units as minutes.",
                     exc,
                 )
                 units = source_units
-        return _format_summary(units, output_format), engine
+        return _format_meeting_minutes(units, output_format), engine
 
     # Raw (often PH) transcript path — prefer translating first via
     # ``summarize_to_english``. Kept for direct/legacy callers.
@@ -762,6 +863,7 @@ def summarize(
             output_format=output_format,
             engine_prefix="bart",
             min_overlap=0.55,
+            minutes_structure=False,
         )
     except LLMUnavailable:
         if not settings.allow_llm_fallback:
@@ -780,15 +882,25 @@ def summarize(
 
 
 def _english_covers_transcript(english: str, transcript: str) -> bool:
-    """True when cached English looks long enough to represent the transcript."""
-    en_words = len((english or "").split())
-    src_words = len((transcript or "").split())
-    if en_words < 8:
+    """True when cached English is long enough and content-faithful."""
+    english = (english or "").strip()
+    transcript = (transcript or "").strip()
+    en_words = len(english.split())
+    src_words = len(transcript.split())
+    if en_words < 8 or not _looks_like_latin_script(english):
         return False
     if src_words <= 0:
         return True
     # Allow compression, but reject stubs that dropped most of the meeting.
-    return en_words >= max(8, int(src_words * 0.35))
+    if en_words < max(8, int(src_words * 0.35)):
+        return False
+    src_en, src_fi = _language_scores(transcript)
+    # Mostly-English source: require content-word overlap (reuse dead helper).
+    if src_fi < 0.08 and src_en >= src_fi:
+        return _coverage_ratio(transcript, english) >= 0.22
+    # PH / mixed source: length + Latin script is the practical gate
+    # (content words often change completely after translation).
+    return True
 
 
 def summarize_to_english(
@@ -848,16 +960,18 @@ def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
         bos_id = tokenizer.convert_tokens_to_ids(tgt)
 
     outputs: list[str] = []
-    for chunk in _chunk_text(text):
+    # Overlap long inputs so discourse across chunk edges is not lost.
+    for chunk in _chunk_text(text, overlap_chars=280 if len(text) > _MAX_CHUNK_CHARS else 0):
         tokenizer.src_lang = src
         encoded = tokenizer(chunk, return_tensors="pt", truncation=True, max_length=1024)
         generated = model.generate(
             **encoded,
             forced_bos_token_id=bos_id,
-            max_new_tokens=min(512, max(48, int(len(chunk.split()) * 2.5))),
-            num_beams=5,
+            max_new_tokens=min(512, max(64, int(len(chunk.split()) * 2.8))),
+            num_beams=6,
             early_stopping=True,
             no_repeat_ngram_size=4,
+            length_penalty=1.05,
         )
         raw = tokenizer.batch_decode(generated, skip_special_tokens=False)[0]
         # Drop any leaked language-code tokens the decoder may prepend after BOS.
@@ -913,105 +1027,147 @@ def _looks_like_latin_script(text: str) -> bool:
 
 
 def _is_mostly_english_sentence(sentence: str) -> bool:
+    """True only when the clause is clearly English (mixed PH must translate)."""
     en, fi = _language_scores(sentence)
-    # Strong Filipino signal → needs translation.
-    if fi >= 0.12 and fi > en:
+    # Any meaningful Filipino signal → translate (code-switched board speech).
+    if fi >= 0.08:
+        return False
+    if _FILIPINO_STARTER_RE.search(f"x {sentence}"):
         return False
     tokens = re.findall(r"[A-Za-zÀ-ÿ']+", sentence)
     if not tokens:
         return _looks_like_latin_script(sentence)
-    # Default: Latin meeting speech without Filipino markers stays as English.
-    return en >= fi
+    # Require English markers to dominate; ambiguous Latin text still translates
+    # when the meeting language is PH (handled by callers via src candidates).
+    return en >= fi and en >= 0.06
+
+
+def _extract_target_span(full_translation: str, unit: str, window: str) -> str:
+    """From a context-window translation, keep the span for ``unit``."""
+    full = (full_translation or "").strip()
+    if not full:
+        return ""
+    sentences = _split_sentences(full)
+    if len(sentences) <= 1:
+        return full
+    unit_ratio = len(unit.split()) / max(1, len(window.split()))
+    keep = max(1, min(len(sentences), int(math.ceil(len(sentences) * unit_ratio))))
+    # Prefer trailing sentences (context was prefixed).
+    return " ".join(sentences[-keep:]).strip()
+
+
+def _translate_unit_with_context(
+    unit: str,
+    prev_units: list[str],
+    src: str,
+    *,
+    context_n: int = 2,
+) -> str:
+    """Translate one unit with preceding units as discourse context."""
+    ctx = [u.strip() for u in prev_units[-context_n:] if (u or "").strip()]
+    if not ctx:
+        return _mbart_translate(unit, src, "en")
+    window = " ".join(ctx + [unit])
+    full = _mbart_translate(window, src, "en")
+    return _extract_target_span(full, unit, window) or full
 
 
 def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
-    """Translate the full meeting transcript into English.
+    """Translate the full meeting transcript into English with context.
 
     Strategy:
-    1. Split into idea units (preferred) or sentences so PH/English code-switch
-       keeps discourse context instead of mangling long Whisper runs.
-    2. Keep already-English units as-is (avoids broken en→en / tl→en paths).
-    3. Translate non-English units with a reliable mBART source (id_ID for hil/tl).
-    4. Validate Latin script; retry with Indonesian source if needed.
+    1. Split into idea units so PH/English code-switch keeps discourse turns.
+    2. Keep clearly-English units as-is (avoids broken en→en).
+    3. Translate other units with a sliding previous-unit context window so
+       pronouns / topics resolve across clauses.
+    4. Prefer ``id_ID`` source for Philippine speech (``tl_XX`` is unreliable).
+    5. Per-unit retries; never drop a clause — fall back to source text.
     """
     normalized = _normalize_spoken_transcript(text or "")
     if not normalized:
         return "", "none"
 
-    # Idea units preserve spoken turns better than period-only sentence splits.
     units = _segment_idea_units(normalized)
     if len(units) < 2:
         units = _split_sentences(_WS_RE.sub(" ", normalized).strip())
     if not units:
         return "", "none"
 
-    kept: list[str] = []
-    to_translate: list[tuple[int, str]] = []
-    for i, unit in enumerate(units):
-        if _is_mostly_english_sentence(unit):
-            kept.append(unit)
-        else:
-            kept.append("")  # placeholder
-            to_translate.append((i, unit))
-
-    if not to_translate:
-        return " ".join(s for s in kept if s).strip(), "passthrough-english"
-
     # Prefer Indonesian source for Philippine languages — tl_XX emits Pashto.
-    primary = (source_language or "en").strip().lower()
-    if primary in {"hil", "tl", "fil", "filipino", "tagalog", "auto", "detect", "id"}:
+    primary = (source_language or "auto").strip().lower()
+    if primary in {
+        "hil",
+        "tl",
+        "fil",
+        "filipino",
+        "tagalog",
+        "auto",
+        "detect",
+        "none",
+        "id",
+        "",
+    }:
         src_candidates = ["id", "en"]
     elif primary in {"en", "english"}:
-        # Mixed board speech often still contains Filipino clauses.
         src_candidates = ["id", "en"]
     else:
         src_candidates = [primary, "id", "en"]
 
-    translated_map: dict[int, str] = {}
-    last_err = None
-    for src in src_candidates:
-        try:
-            # Per-unit translation keeps order/context alignment for long meetings.
-            for idx, unit in to_translate:
-                piece = _mbart_translate(unit, src, "en")
+    out_units: list[str] = []
+    translated_any = False
+    for i, unit in enumerate(units):
+        if _is_mostly_english_sentence(unit):
+            out_units.append(unit)
+            continue
+
+        piece = ""
+        last_err = None
+        for src in src_candidates:
+            try:
+                piece = _translate_unit_with_context(
+                    unit, out_units if out_units else units[:i], src
+                )
                 if not _looks_like_latin_script(piece):
                     raise _NonEnglishTranslation(piece)
-                translated_map[idx] = piece
-            break
-        except _NonEnglishTranslation as exc:
-            last_err = exc
-            translated_map.clear()
-            logger.warning("English translation via src=%s failed script check.", src)
-            continue
-        except Exception as exc:
-            last_err = exc
-            translated_map.clear()
-            logger.warning("English translation via src=%s failed: %s", src, exc)
-            continue
+                translated_any = True
+                break
+            except _NonEnglishTranslation as exc:
+                last_err = exc
+                piece = ""
+                continue
+            except Exception as exc:
+                last_err = exc
+                piece = ""
+                logger.debug(
+                    "Unit translate src=%s failed: %s", src, exc
+                )
+                continue
+        if not piece:
+            logger.warning(
+                "Keeping source clause after mBART failures (last=%s): %s…",
+                last_err,
+                unit[:48],
+            )
+            piece = unit
+        out_units.append(piece)
 
-    if len(translated_map) != len(to_translate):
-        # Last resort: leave untranslated Filipino text rather than wrong script.
-        logger.error(
-            "mBART could not produce English (last=%s); keeping source clauses.",
-            last_err,
-        )
-        for idx, unit in to_translate:
-            translated_map.setdefault(idx, unit)
-
-    merged = []
-    for i, unit in enumerate(kept):
-        merged.append(translated_map.get(i, unit))
-    return " ".join(s for s in merged if s).strip(), "mbart-large-50"
+    engine = "mbart-large-50" if translated_any else "passthrough-english"
+    return " ".join(s for s in out_units if s).strip(), engine
 
 
-def translate(text: str, target_language: str, source_language: str = "en") -> tuple[str, str]:
+def translate(text: str, target_language: str, source_language: str = "auto") -> tuple[str, str]:
     text = (text or "").strip()
     if not text:
         return "", "none"
     tgt = (target_language or "en").strip().lower()
     if tgt == "en":
         return _translate_to_english(text, source_language)
-    return _mbart_translate(text, source_language, tgt), "mbart-large-50"
+    src = (source_language or "auto").strip().lower()
+    if src in {"auto", "detect", "none", ""}:
+        # Non-English targets: guess PH → Indonesian source like the EN path.
+        _, fi = _language_scores(text)
+        src = "id" if fi >= 0.08 else "en"
+    return _mbart_translate(text, src, tgt), "mbart-large-50"
 
 
 def invoke_llm(task: str, text: str, **kwargs):
@@ -1025,7 +1181,7 @@ def invoke_llm(task: str, text: str, **kwargs):
         return translate(
             text,
             target_language=kwargs["target_language"],
-            source_language=kwargs.get("source_language", "en"),
+            source_language=kwargs.get("source_language", "auto"),
         )
     raise ValueError(f"Unknown InvokeLLM task: {task}")
 

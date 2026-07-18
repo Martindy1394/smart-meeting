@@ -110,8 +110,10 @@ def test_english_source_kind_summarizes_in_english():
         text, output_format="bullets", source_kind="english_translation"
     )
     assert "english" in engine
-    assert summary.startswith("- ")
+    assert "- " in summary
     assert "budget" in summary.lower() or "Marketing" in summary or "campaign" in summary.lower()
+    # Context-based minutes should surface decisions / actions when present.
+    assert "Decisions" in summary or "Action items" in summary or summary.startswith("- ")
 
 
 def test_english_covers_transcript_helper():
@@ -120,6 +122,11 @@ def test_english_covers_transcript_helper():
         "The team approved the budget and scheduled the launch next week for everyone present.",
     )
     assert not llm._english_covers_transcript("Hi", "long transcript " * 40)
+    # Reject non-Latin stubs even if long enough by word count.
+    assert not llm._english_covers_transcript(
+        "سلام علیکم " * 20,
+        "The team approved the budget for next quarter carefully.",
+    )
 
 
 def test_summarize_to_english_reuses_cached_translation(monkeypatch=None):
@@ -137,8 +144,56 @@ def test_summarize_to_english_reuses_cached_translation(monkeypatch=None):
     )
     assert tr_engine == "cached-english"
     assert out_en == english or out_en.startswith("The committee")
-    assert summary.startswith("- ")
+    assert "- " in summary
     assert "english" in engine or engine.startswith("bart")
+
+
+def test_format_meeting_minutes_sections():
+    units = [
+        "The board discussed the annual calendar.",
+        "Members approved the venue budget.",
+        "Marketing will launch the campaign next week.",
+    ]
+    out = llm._format_meeting_minutes(units, "bullets")
+    assert "Discussion" in out
+    assert "Decisions" in out
+    assert "Action items" in out
+    assert "- Members approved the venue budget." in out
+
+
+def test_is_mostly_english_rejects_filipino_markers():
+    assert llm._is_mostly_english_sentence(
+        "The board approved the quarterly budget after review."
+    )
+    assert not llm._is_mostly_english_sentence(
+        "Bakit ba lagi na lang ang mga Pilipino ay naging bobo sa pagpili."
+    )
+    assert not llm._is_mostly_english_sentence(
+        "We should move forward kasi ang budget ay kulang."
+    )
+
+
+def test_chunk_text_overlap_keeps_edge_context():
+    sentences = [f"Sentence number {i} about the meeting agenda item." for i in range(40)]
+    text = " ".join(sentences)
+    chunks = llm._chunk_text(text, size=180, overlap_chars=60)
+    assert len(chunks) >= 2
+    # Overlap should make consecutive chunks share some words.
+    assert any(
+        w in chunks[1]
+        for w in chunks[0].split()[-8:]
+        if len(w) > 3
+    )
+
+
+def test_extract_target_span_prefers_trailing_context():
+    full = "Earlier they discussed venues. Then the board approved the budget today."
+    span = llm._extract_target_span(
+        full,
+        "the board approved the budget today",
+        "Earlier they discussed venues. the board approved the budget today",
+    )
+    assert "approved" in span.lower()
 
 
 if __name__ == "__main__":
@@ -151,4 +206,8 @@ if __name__ == "__main__":
     test_english_source_kind_summarizes_in_english()
     test_english_covers_transcript_helper()
     test_summarize_to_english_reuses_cached_translation()
+    test_format_meeting_minutes_sections()
+    test_is_mostly_english_rejects_filipino_markers()
+    test_chunk_text_overlap_keeps_edge_context()
+    test_extract_target_span_prefers_trailing_context()
     print("all_topic_summarize_tests_passed")

@@ -93,7 +93,8 @@ def translate(
             "translate",
             transcript,
             target_language=payload.target_language,
-            source_language=meeting.language or "en",
+            # Match summarize: auto-detect / PH → id_ID English path.
+            source_language=meeting.language or "auto",
         )
     except llm.LLMUnavailable as exc:
         raise HTTPException(
