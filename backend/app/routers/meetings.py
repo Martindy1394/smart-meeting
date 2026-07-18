@@ -73,6 +73,7 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         created_at=m.created_at,
         updated_at=m.updated_at,
         summary=summary_text,
+        summary_format=(m.summary_format or "").strip(),
         translation=translation_text,
         translation_language=(m.translation_language or "").strip(),
         has_summary=bool(summary_text),
