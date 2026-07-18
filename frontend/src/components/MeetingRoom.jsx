@@ -71,7 +71,6 @@ export default function MeetingRoom({
   const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
   const [copyState, setCopyState] = useState("");
   const audioUrlRef = useRef(null);
-  const uploadInputRef = useRef(null);
 
   const revokeAudioUrl = useCallback(() => {
     if (audioUrlRef.current) {
@@ -218,44 +217,37 @@ export default function MeetingRoom({
     }
   }, [applyTranscriptResult, meeting.id]);
 
-  const uploadForWhisper = useCallback(
-    async (file) => {
-      if (!file) return;
-      setAsrBusy(true);
-      setAsrError("");
-      try {
-        const detail = await api.uploadMeetingAudio(meeting.id, file, {
-          transcribe: true,
-        });
-        setHasAudio(true);
-        await applyTranscriptResult(detail);
-      } catch (err) {
-        setAsrError(err.message || "Audio upload / Whisper ASR failed.");
-      } finally {
-        setAsrBusy(false);
-        if (uploadInputRef.current) uploadInputRef.current.value = "";
-      }
-    },
-    [applyTranscriptResult, meeting.id]
-  );
-
   const recorder = useRecorder({ onFinalTranscript });
+
+  // Save is only available after a meeting/recording has finished.
+  const canSaveMeeting =
+    !recorder.recording &&
+    recorder.status !== "starting" &&
+    recorder.status !== "finalizing" &&
+    (Boolean(finalTranscript) ||
+      hasAudio ||
+      status === "finalized" ||
+      historyView);
 
   // Publish save controls so the parent can place the Save button in the topbar.
   useEffect(() => {
     if (!onSaveControls) return;
+    if (!canSaveMeeting) {
+      onSaveControls(null);
+      return;
+    }
     onSaveControls({
       save: () => saveDetails(),
       saving: savingDetails,
-      disabled: recorder.recording || recorder.status === "finalizing",
+      disabled: false,
     });
-  }, [
-    onSaveControls,
-    saveDetails,
-    savingDetails,
-    recorder.recording,
-    recorder.status,
-  ]);
+  }, [onSaveControls, saveDetails, savingDetails, canSaveMeeting]);
+
+  useEffect(() => {
+    return () => {
+      if (onSaveControls) onSaveControls(null);
+    };
+  }, [onSaveControls]);
 
   // Reset local state when the selected meeting changes.
   useEffect(() => {
@@ -351,8 +343,7 @@ export default function MeetingRoom({
     recorder.status === "finalizing" ||
     recorder.status === "starting";
   const isStarting = recorder.status === "starting";
-  // History / Recordings detail page: never show Start live transcription
-  // or Upload audio (product screenshot). New meetings keep those controls.
+  // History detail: never show Start live transcription. New meetings keep it.
   const hideLiveUploadActions =
     historyView &&
     !recorder.recording &&
@@ -564,18 +555,16 @@ export default function MeetingRoom({
               </div>
             ) : (
               <div className="placeholder">
-                Press <strong>Start recording</strong> for live Whisper captions,
-                or upload a WAV to transcribe with Whisper ASR. Ending a meeting
-                runs the full-accuracy Whisper pass automatically.
+                Press <strong>Start live transcription</strong> for live Whisper
+                captions. Ending a meeting runs the full-accuracy Whisper pass
+                automatically. Save becomes available after the recording ends.
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Live start / upload only for meetings that still need a transcript.
-          History detail (already transcribed) matches the product screenshot:
-          no "Start live transcription" / "Upload audio" — Copy + Download only. */}
+      {/* Live start for new meetings only. History detail uses toolbar actions. */}
       {!hideLiveUploadActions && (
         <div className="recorder-bar">
           <div className="record-control">
@@ -635,42 +624,22 @@ export default function MeetingRoom({
             </div>
           </div>
 
-          {!recorder.recording && (
-            <>
-              <input
-                ref={uploadInputRef}
-                type="file"
-                accept="audio/wav,audio/x-wav,.wav,.pcm,.raw"
-                hidden
-                onChange={(e) => uploadForWhisper(e.target.files?.[0])}
-              />
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={asrBusy || recorder.status === "finalizing" || !detailsReady}
-                onClick={() => uploadInputRef.current?.click()}
-                title="Upload WAV/PCM and run Whisper ASR"
-              >
-                {asrBusy ? <span className="spinner" /> : "Upload audio"}
-              </button>
-              {hasAudio && (
-                <button
-                  type="button"
-                  className="btn secondary"
-                  disabled={asrBusy || recorder.status === "finalizing"}
-                  onClick={runWhisperAsr}
-                  title="Run Whisper ASR on the saved recording"
-                >
-                  {asrBusy ? (
-                    <span className="spinner" />
-                  ) : hasTranscript ? (
-                    "Re-transcribe"
-                  ) : (
-                    "Transcribe with Whisper"
-                  )}
-                </button>
+          {!recorder.recording && hasAudio && (
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={asrBusy || recorder.status === "finalizing"}
+              onClick={runWhisperAsr}
+              title="Run Whisper ASR on the saved recording"
+            >
+              {asrBusy ? (
+                <span className="spinner" />
+              ) : hasTranscript ? (
+                "Re-transcribe"
+              ) : (
+                "Transcribe with Whisper"
               )}
-            </>
+            </button>
           )}
 
           {!detailsReady && !recorder.recording && (
@@ -720,7 +689,7 @@ export default function MeetingRoom({
           ) : (
             <div className="audio-player-empty">
               <span className="audio-player-hint">
-                Record or upload audio to play it here.
+                Finish a recording to play it here.
               </span>
             </div>
           )}

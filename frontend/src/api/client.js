@@ -86,45 +86,6 @@ export const api = {
   stopMeetingRecording: (id) =>
     request(`/meetings/${id}/stop`, { method: "POST" }),
   /**
-   * Upload a WAV/PCM file and run Whisper ASR on it (default).
-   */
-  uploadMeetingAudio: async (id, file, { transcribe = true } = {}) => {
-    const token = getToken();
-    const body = new FormData();
-    body.append("file", file);
-    const qs = transcribe ? "" : "?transcribe=false";
-    let res;
-    try {
-      res = await fetch(`/api/meetings/${id}/audio${qs}`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body,
-      });
-    } catch {
-      throw new ApiError(
-        "Network error — cannot reach the API. Use http://127.0.0.1:8000/ and make sure port 8000 is Forwarded in Cursor → Ports.",
-        0
-      );
-    }
-    const text = await res.text();
-    let data = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { detail: text };
-      }
-    }
-    if (!res.ok) {
-      let detail = data?.detail;
-      if (Array.isArray(detail)) {
-        detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
-      }
-      throw new ApiError(detail || `Upload failed (${res.status})`, res.status);
-    }
-    return data;
-  },
-  /**
    * Fetch meeting audio as a blob URL for <audio> playback.
    * Returns null when no recording exists yet.
    */
