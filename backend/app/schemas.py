@@ -147,7 +147,7 @@ class TranscriptSegmentResponse(BaseModel):
 
 
 class MeetingSummary(BaseModel):
-    """Lightweight meeting representation for list views."""
+    """Lightweight meeting representation for list / dashboard views."""
 
     id: str
     title: str
@@ -158,6 +158,8 @@ class MeetingSummary(BaseModel):
     duration_seconds: float
     created_at: datetime
     updated_at: datetime
+    # Full BART summary text when available (used by the Dashboard).
+    summary: str = ""
     has_summary: bool = False
     has_translation: bool = False
     has_audio: bool = False

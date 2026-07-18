@@ -40,6 +40,16 @@ export default function Sidebar({
         <nav className="side-menu" aria-label="Main menu">
           <button
             type="button"
+            className={`side-menu-item ${menuSection === "dashboard" ? "active" : ""}`}
+            onClick={() => {
+              onSectionChange("dashboard");
+              onClose && onClose();
+            }}
+          >
+            Dashboard
+          </button>
+          <button
+            type="button"
             className={`side-menu-item ${menuSection === "history" ? "active" : ""}`}
             onClick={() => {
               onSectionChange("history");

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
+import DashboardPanel from "../components/DashboardPanel.jsx";
 import HistoryPanel from "../components/HistoryPanel.jsx";
 import MeetingRoom from "../components/MeetingRoom.jsx";
 import SettingsPanel from "../components/SettingsPanel.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 
 export default function Workspace() {
-  const [section, setSection] = useState("history");
+  const [section, setSection] = useState("dashboard");
   const [meetings, setMeetings] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [search, setSearch] = useState("");
@@ -119,7 +120,7 @@ export default function Workspace() {
         setActiveMeeting(null);
         setSaveControls(null);
         setHistoryView(false);
-        setSection("history");
+        setSection("dashboard");
       }
       loadMeetings(search);
     } catch {
@@ -152,6 +153,7 @@ export default function Workspace() {
     [activeId, loadMeetings, search]
   );
 
+  const showDashboard = section === "dashboard";
   const showSettings = section === "settings";
   const showHistory = section === "history" || section === "recordings";
   const showMeeting = section === "meeting";
@@ -176,13 +178,15 @@ export default function Workspace() {
               ☰
             </button>
             <h1>
-              {showSettings
-                ? "Settings"
-                : showHistory
-                  ? "History"
-                  : activeMeeting
-                    ? activeMeeting.title || "Untitled meeting"
-                    : "Smart Meeting"}
+              {showDashboard
+                ? "Dashboard"
+                : showSettings
+                  ? "Settings"
+                  : showHistory
+                    ? "History"
+                    : activeMeeting
+                      ? activeMeeting.title || "Untitled meeting"
+                      : "Smart Meeting"}
             </h1>
           </div>
           {showMeeting && activeMeeting && saveControls && (
@@ -198,7 +202,15 @@ export default function Workspace() {
           )}
         </div>
 
-        {showSettings ? (
+        {showDashboard ? (
+          <DashboardPanel
+            meetings={meetings}
+            loading={loadingList}
+            onSelect={selectMeeting}
+            onCreate={createMeeting}
+            onGoHistory={() => setSection("history")}
+          />
+        ) : showSettings ? (
           <SettingsPanel />
         ) : showHistory ? (
           <HistoryPanel
@@ -225,18 +237,13 @@ export default function Workspace() {
             onBack={historyView ? backToHistory : undefined}
           />
         ) : (
-          <div className="empty-state">
-            <div style={{ fontSize: 48 }}>🗒️</div>
-            <h2>Welcome to Smart Meeting</h2>
-            <p>
-              Create a new meeting to start a meeting, then summarize
-              and translate the results. Open History anytime to revisit saved
-              meetings and recordings.
-            </p>
-            <button className="btn" onClick={createMeeting}>
-              + New meeting
-            </button>
-          </div>
+          <DashboardPanel
+            meetings={meetings}
+            loading={loadingList}
+            onSelect={selectMeeting}
+            onCreate={createMeeting}
+            onGoHistory={() => setSection("history")}
+          />
         )}
       </div>
 

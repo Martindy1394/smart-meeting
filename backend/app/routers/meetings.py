@@ -60,6 +60,7 @@ def _clean_attendees(names: list[str]) -> str:
 
 
 def _to_summary(m: Meeting) -> MeetingSummary:
+    summary_text = (m.summary or "").strip()
     return MeetingSummary(
         id=m.id,
         title=m.title,
@@ -70,7 +71,8 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         duration_seconds=m.duration_seconds,
         created_at=m.created_at,
         updated_at=m.updated_at,
-        has_summary=bool(m.summary),
+        summary=summary_text,
+        has_summary=bool(summary_text),
         has_translation=bool(m.translation),
         has_audio=_has_audio(m),
         has_transcript=bool((m.final_transcript or "").strip()),
