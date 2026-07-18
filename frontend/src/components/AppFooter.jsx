@@ -7,12 +7,6 @@ export default function AppFooter({ className = "" }) {
         <span className="app-footer-copy">
           © {YEAR} Smart Meeting. All rights reserved.
         </span>
-        <span className="app-footer-sep" aria-hidden="true">
-          ·
-        </span>
-        <span className="app-footer-property">
-          A property of Iloilo Science and Technology University
-        </span>
       </p>
     </footer>
   );
