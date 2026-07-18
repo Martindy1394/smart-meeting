@@ -514,12 +514,13 @@ export default function MeetingRoom({
             </h3>
             <div className="transcript-head-meta">
               {/* On saved-meeting pages, actions live in the top toolbar. */}
-              {!historyView && hasTranscript && (
+              {!historyView && (hasTranscript || hasAudio) && (
                 <div className="transcript-actions">
                   <button
                     type="button"
                     className="icon-btn"
                     onClick={copyTranscript}
+                    disabled={!hasTranscript}
                     title={copyState === "Copied" ? "Copied" : "Copy text"}
                     aria-label={copyState === "Copied" ? "Copied" : "Copy text"}
                   >
@@ -536,6 +537,7 @@ export default function MeetingRoom({
                     type="button"
                     className="icon-btn"
                     onClick={downloadTranscript}
+                    disabled={!hasTranscript}
                     title="Download transcript"
                     aria-label="Download transcript"
                   >
@@ -545,6 +547,34 @@ export default function MeetingRoom({
                       <line x1="12" y1="15" x2="12" y2="3" />
                     </MiniIcon>
                   </button>
+                  {hasAudio && !recorder.recording && (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={runWhisperAsr}
+                      disabled={asrBusy || recorder.status === "finalizing"}
+                      title={
+                        hasTranscript
+                          ? "Re-transcribe"
+                          : "Transcribe with Whisper"
+                      }
+                      aria-label={
+                        hasTranscript
+                          ? "Re-transcribe"
+                          : "Transcribe with Whisper"
+                      }
+                    >
+                      {asrBusy ? (
+                        <span className="spinner" />
+                      ) : (
+                        <MiniIcon>
+                          <polyline points="23 4 23 10 17 10" />
+                          <polyline points="1 20 1 14 7 14" />
+                          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                        </MiniIcon>
+                      )}
+                    </button>
+                  )}
                 </div>
               )}
               <span className="card-tag">Whisper ASR · {meeting.language}</span>
@@ -670,24 +700,6 @@ export default function MeetingRoom({
                 )}
             </div>
           </div>
-
-          {!recorder.recording && hasAudio && (
-            <button
-              type="button"
-              className="btn secondary"
-              disabled={asrBusy || recorder.status === "finalizing"}
-              onClick={runWhisperAsr}
-              title="Run Whisper ASR on the saved recording"
-            >
-              {asrBusy ? (
-                <span className="spinner" />
-              ) : hasTranscript ? (
-                "Re-transcribe"
-              ) : (
-                "Transcribe with Whisper"
-              )}
-            </button>
-          )}
 
           {!detailsReady && !recorder.recording && (
             <span className="card-tag">
