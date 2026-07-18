@@ -1634,19 +1634,27 @@ select.inline {
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--surface);
-  padding: 12px 24px;
-  text-align: center;
+  padding: 8px 24px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
+  gap: 8px 10px;
 }
 .app-footer-copy,
 .app-footer-property {
   margin: 0;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.35;
   color: var(--text-dim);
+  white-space: nowrap;
+}
+.app-footer-copy::after {
+  content: "·";
+  margin-left: 10px;
+  color: var(--border);
+  font-weight: 700;
 }
 .app-footer-property {
   font-weight: 600;
@@ -1662,6 +1670,12 @@ select.inline {
 }
 @media (max-width: 860px) {
   .app-footer {
-    padding: 10px 14px 14px;
+    padding: 8px 14px 10px;
+    gap: 6px 8px;
+  }
+  .app-footer-copy,
+  .app-footer-property {
+    white-space: normal;
+    text-align: center;
   }
 }
