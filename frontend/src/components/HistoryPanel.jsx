@@ -152,7 +152,7 @@ export default function HistoryPanel({
         <div className="card-body">
           <p className="settings-intro">
             All saved meetings and recordings in one place. Open a record to
-            play the recording, copy or download the transcript, or re-transcribe.
+            copy, download the transcript, or re-transcribe.
           </p>
 
           <div className="history-toolbar">

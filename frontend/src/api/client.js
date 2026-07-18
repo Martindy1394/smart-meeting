@@ -124,30 +124,6 @@ export const api = {
     }
     return data;
   },
-  /**
-   * Fetch meeting audio as a blob URL for <audio> playback.
-   * Returns null when no recording exists yet.
-   */
-  getMeetingAudioUrl: async (id) => {
-    const token = getToken();
-    let res;
-    try {
-      res = await fetch(`/api/meetings/${id}/audio`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    } catch {
-      throw new ApiError(
-        "Network error — cannot reach the API. Use http://127.0.0.1:8000/ and make sure port 8000 is Forwarded in Cursor → Ports.",
-        0
-      );
-    }
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      throw new ApiError("Could not load meeting audio.", res.status);
-    }
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
-  },
   // AI
   languages: () => request("/ai/languages"),
   summarize: (payload) => request("/ai/summarize", { method: "POST", body: payload }),
