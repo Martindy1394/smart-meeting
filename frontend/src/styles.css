@@ -359,9 +359,46 @@ button {
   justify-content: space-between;
   gap: 10px;
 }
+.user-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 4px 6px 4px 2px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.user-account:hover {
+  background: rgba(29, 111, 216, 0.08);
+}
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #3b82f6 0%, #1d6fd8 100%);
+  color: #fff;
+  border: 1px solid rgba(29, 111, 216, 0.35);
+  box-shadow: 0 2px 8px rgba(29, 111, 216, 0.22);
+}
+.user-avatar-initials {
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
 .user-chip {
   font-size: 13px;
-  color: var(--text-dim);
+  color: var(--text);
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -375,7 +412,7 @@ button {
 .user-chip-sub {
   font-size: 11px;
   color: var(--text-dim);
-  opacity: 0.85;
+  opacity: 0.9;
 }
 .settings-panel {
   max-width: 820px;
