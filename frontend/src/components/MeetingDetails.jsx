@@ -47,8 +47,13 @@ function resolveAttendees(attendees, attendeeInput) {
     : attendees;
 }
 
+function sameAttendees(a, b) {
+  if (a.length !== b.length) return false;
+  return a.every((name, i) => name === b[i]);
+}
+
 const MeetingDetails = forwardRef(function MeetingDetails(
-  { meeting, onUpdated, onValidityChange },
+  { meeting, onUpdated, onValidityChange, onDirtyChange },
   ref
 ) {
   const [title, setTitle] = useState(meeting.title || "");
@@ -86,10 +91,27 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     );
   };
 
+  const isDirty = () => {
+    const currentAttendees = resolveAttendees(attendees, attendeeInput);
+    const savedAttendees = Array.isArray(meeting.attendees)
+      ? meeting.attendees
+      : [];
+    const savedDateTime = meeting.meeting_date
+      ? toLocalInput(meeting.meeting_date)
+      : "";
+    return (
+      title.trim() !== (meeting.title || "").trim() ||
+      venue.trim() !== (meeting.venue || "").trim() ||
+      dateTime !== savedDateTime ||
+      !sameAttendees(currentAttendees, savedAttendees)
+    );
+  };
+
   useEffect(() => {
     if (onValidityChange) onValidityChange(isComplete());
+    if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput]);
+  }, [title, venue, dateTime, attendees, attendeeInput, meeting]);
 
   function useCurrentDateTime() {
     const current = nowLocalInput();
@@ -156,6 +178,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   useImperativeHandle(ref, () => ({
     save,
     isComplete,
+    isDirty,
     isSaving: () => saving,
     useCurrentDateTime,
   }));

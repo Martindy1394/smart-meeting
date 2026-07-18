@@ -44,6 +44,7 @@ export default function MeetingRoom({
 }) {
   const detailsRef = useRef(null);
   const [detailsReady, setDetailsReady] = useState(false);
+  const [detailsDirty, setDetailsDirty] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
 
   const [finalTranscript, setFinalTranscript] = useState(meeting.final_transcript || "");
@@ -233,6 +234,7 @@ export default function MeetingRoom({
       historyView);
 
   // Publish save controls so the parent can place the Save button in the topbar.
+  // In History, Save stays disabled until meeting details actually change.
   useEffect(() => {
     if (!onSaveControls) return;
     if (!canSaveMeeting) {
@@ -242,9 +244,16 @@ export default function MeetingRoom({
     onSaveControls({
       save: () => saveDetails(),
       saving: savingDetails,
-      disabled: false,
+      disabled: historyView ? !detailsDirty : false,
     });
-  }, [onSaveControls, saveDetails, savingDetails, canSaveMeeting]);
+  }, [
+    onSaveControls,
+    saveDetails,
+    savingDetails,
+    canSaveMeeting,
+    historyView,
+    detailsDirty,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -499,6 +508,7 @@ export default function MeetingRoom({
           meeting={meeting}
           onUpdated={onMeetingUpdated}
           onValidityChange={setDetailsReady}
+          onDirtyChange={setDetailsDirty}
         />
 
         <div className="card transcript-card">
