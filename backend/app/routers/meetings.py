@@ -97,7 +97,7 @@ def _prepare_whisper_job(meeting: Meeting, db: Session) -> tuple[str, str]:
         )
     meeting.status = "processing"
     db.commit()
-    return os.path.abspath(meeting.audio_path), meeting.language or "hil"
+    return os.path.abspath(meeting.audio_path), "auto"
 
 
 def _persist_whisper_result(
@@ -195,7 +195,7 @@ def create_meeting(
     meeting = Meeting(
         owner_id=current_user.id,
         title=payload.title.strip(),
-        language=payload.language or "hil",
+        language=payload.language or "auto",
         venue=payload.venue.strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
@@ -355,7 +355,7 @@ async def stop_meeting_recording(
         finalize.finalize_meeting_recording,
         meeting_id,
         live_caption,
-        language=meeting.language,
+        language="auto",
     )
     if not result.get("ok"):
         raise HTTPException(
@@ -392,9 +392,23 @@ def update_meeting(
         meeting.attendees = _clean_attendees(payload.attendees)
     if payload.language is not None:
         lang = (payload.language or "").strip().lower()
-        if lang in {"hil", "hiligaynon", "ilonggo", "tl", "tagalog", "fil", "filipino", "en", "english"}:
-            # Normalize UI aliases to stable meeting labels.
-            if lang in {"hiligaynon", "ilonggo"}:
+        if lang in {
+            "auto",
+            "detect",
+            "hil",
+            "hiligaynon",
+            "ilonggo",
+            "tl",
+            "tagalog",
+            "fil",
+            "filipino",
+            "en",
+            "english",
+        }:
+            # Normalize aliases to stable meeting labels.
+            if lang in {"detect"}:
+                lang = "auto"
+            elif lang in {"hiligaynon", "ilonggo"}:
                 lang = "hil"
             elif lang in {"tagalog", "fil", "filipino"}:
                 lang = "tl"

@@ -103,14 +103,16 @@ class Settings(BaseSettings):
     whisper_final_backend: str = "auto"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    # Meeting language label default (hil | tl | en).
-    whisper_default_language: str = "hil"
-    # Live Whisper decode language for PH labels without a native token (hil→tl).
-    # Tagalog meetings always force Whisper's native ``tl`` code.
+    # Meeting language label default. ``auto`` = Whisper language detection
+    # (no Spoken language UI; detected code is stored after finalize).
+    whisper_default_language: str = "auto"
+    # Coverage retry / legacy forced decode code for PH speech (hil has no token).
     whisper_decode_language: str = "tl"
     # Optional prompts — keep short to avoid Whisper echoing them.
+    # Used for auto-detect and Hiligaynon-biased meetings.
     whisper_initial_prompt: str = (
-        "Board meeting discussion in Hiligaynon (Ilonggo), Filipino, and English."
+        "Board meeting discussion in Hiligaynon (Ilonggo), Filipino Tagalog, "
+        "and English."
     )
     whisper_tagalog_initial_prompt: str = (
         "Talakayan sa board meeting sa Tagalog at English. "
@@ -118,8 +120,9 @@ class Settings(BaseSettings):
     )
     # Final-pass language: "auto" (detect), "forced" (whisper_decode_language),
     # or "prefer_forced" (forced first, auto retry if coverage is poor).
+    # Default auto — Spoken language is no longer selected in the UI.
     whisper_final_language_mode: str = "auto"
-    # Tagalog has a native Whisper token — prefer forced ``tl`` then auto retry.
+    # Only used when meeting language is explicitly Tagalog (API/legacy).
     whisper_tagalog_final_language_mode: str = "prefer_forced"
     # Final-pass VAD: aggressive VAD was dropping long spans of real speech
     # (especially clipped mic audio / mixed EN+PH). Default off for coverage.

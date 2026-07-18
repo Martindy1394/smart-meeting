@@ -276,19 +276,33 @@ def _dedupe_model_ids(ordered: list[str]) -> list[str]:
     return out
 
 
+def is_auto_language(language: str | None) -> bool:
+    """True when Whisper should detect language (no user Spoken language pick)."""
+    lang = (language or "").strip().lower()
+    # Unset / empty always means detect — do not inherit a stale .env hil/tl.
+    if not lang:
+        return True
+    return lang in {"auto", "detect", "none"}
+
+
 def is_tagalog_language(language: str | None) -> bool:
     lang = (language or "").strip().lower()
     return lang in _TAGALOG_LANGUAGE_LABELS
 
 
 def is_hiligaynon_language(language: str | None) -> bool:
-    lang = (language or settings.whisper_default_language or "").strip().lower()
+    lang = (language or "").strip().lower()
     return lang in _HILIGAYNON_LANGUAGE_LABELS
 
 
 def is_philippine_language(language: str | None) -> bool:
-    """True when the meeting language should use the Philippine ASR path."""
-    lang = (language or settings.whisper_default_language or "").strip().lower()
+    """True when ASR should use the Philippine model path.
+
+    ``auto`` counts as PH-oriented (board meetings in hil/tl/fil/en mix).
+    """
+    if is_auto_language(language):
+        return True
+    lang = (language or "").strip().lower()
     return lang in _PH_LANGUAGE_LABELS
 
 
@@ -318,12 +332,30 @@ def tagalog_hf_candidates() -> list[str]:
     )
 
 
+def auto_hf_candidates() -> list[str]:
+    """HF candidates when language is unknown / auto-detected.
+
+    Prefer the broadest PH coverage: custom fine-tunes, Tagalog small, then
+    Philippine medium (handles Tagalog + related PH speech well).
+    """
+    return _dedupe_model_ids(
+        [
+            settings.whisper_hiligaynon_fine_tuned_model,
+            settings.whisper_tagalog_fine_tuned_model,
+            settings.whisper_tagalog_model,
+            settings.whisper_hiligaynon_model,
+        ]
+    )
+
+
 def philippine_hf_candidates(language: str | None) -> list[str]:
-    """HF candidates for the meeting language (Tagalog vs Hiligaynon path)."""
+    """HF candidates for the meeting language (auto / Tagalog / Hiligaynon)."""
     if is_tagalog_language(language):
         return tagalog_hf_candidates()
-    if is_philippine_language(language):
+    if is_hiligaynon_language(language):
         return hiligaynon_hf_candidates()
+    if is_auto_language(language) or is_philippine_language(language):
+        return auto_hf_candidates()
     return []
 
 
@@ -351,9 +383,21 @@ def live_model_id(language: str | None) -> str:
         custom = (settings.whisper_live_tagalog_model or "").strip()
         if custom:
             return custom
-    custom = (settings.whisper_live_hiligaynon_model or "").strip()
-    if custom and is_philippine_language(language):
-        return custom
+    if is_hiligaynon_language(language):
+        custom = (settings.whisper_live_hiligaynon_model or "").strip()
+        if custom:
+            return custom
+    if is_auto_language(language):
+        for custom in (
+            (settings.whisper_live_hiligaynon_model or "").strip(),
+            (settings.whisper_live_tagalog_model or "").strip(),
+        ):
+            if custom:
+                return custom
+    if is_philippine_language(language):
+        custom = (settings.whisper_live_hiligaynon_model or "").strip()
+        if custom:
+            return custom
     return (settings.whisper_live_model or "small").strip()
 
 
@@ -363,16 +407,28 @@ def final_faster_model_id(language: str | None) -> str:
         custom = (settings.whisper_live_tagalog_model or "").strip()
         if custom:
             return custom
-    custom = (settings.whisper_live_hiligaynon_model or "").strip()
-    if custom and is_philippine_language(language):
-        return custom
+    if is_hiligaynon_language(language):
+        custom = (settings.whisper_live_hiligaynon_model or "").strip()
+        if custom:
+            return custom
+    if is_auto_language(language):
+        for custom in (
+            (settings.whisper_live_hiligaynon_model or "").strip(),
+            (settings.whisper_live_tagalog_model or "").strip(),
+        ):
+            if custom:
+                return custom
+    if is_philippine_language(language):
+        custom = (settings.whisper_live_hiligaynon_model or "").strip()
+        if custom:
+            return custom
     return (settings.whisper_final_model or "medium").strip()
 
 
 def resolve_final_backend(language: str | None) -> str:
     """Normalize final ASR backend selection.
 
-    ``auto`` prefers HF Tagalog/Hiligaynon candidates for PH meetings,
+    ``auto`` prefers HF Tagalog/Hiligaynon/PH candidates for PH/auto meetings,
     otherwise faster-whisper.
     """
     backend = (settings.whisper_final_backend or "auto").strip().lower()
@@ -384,6 +440,13 @@ def resolve_final_backend(language: str | None) -> str:
     if philippine_hf_candidates(language):
         return "huggingface"
     return "faster-whisper"
+
+
+def _normalize_detected_language(code: str | None) -> str | None:
+    lang = (code or "").strip().lower()
+    if not lang or lang in {"auto", "detect", "none"}:
+        return None
+    return lang
 
 
 _REPEAT_WORD_RE = re.compile(r"\b(\w+)(?:\s+\1){3,}\b", re.IGNORECASE)
@@ -408,21 +471,27 @@ def _collapse_hallucinations(text: str) -> str:
 def _forced_language(requested: str | None = None) -> str:
     """Map app language labels to a Whisper-supported decode code.
 
-    Tagalog/Filipino map to Whisper's native ``tl``. Hiligaynon has no native
-    token and uses ``whisper_decode_language`` (default ``tl``).
+    Tagalog/Filipino map to Whisper's native ``tl``. Hiligaynon / auto use
+    ``whisper_decode_language`` (default ``tl``) for coverage retries only.
     """
     app_lang = (requested or "").strip().lower()
     if app_lang in {"en", "english"}:
         return "en"
     if is_tagalog_language(app_lang):
         return "tl"
-    # hil / other PH → configured decode code (usually tl)
+    # auto / hil / other PH → configured decode code (usually tl)
     lang = (settings.whisper_decode_language or "tl").strip().lower()
     return lang or "tl"
 
 
 def _final_language_mode(requested: str | None) -> str:
-    """Resolve final language mode, with Tagalog-specific default."""
+    """Resolve final language mode.
+
+    Auto-detect is the default product path. Explicit Tagalog may still use
+    ``prefer_forced`` via settings.
+    """
+    if is_auto_language(requested):
+        return (settings.whisper_final_language_mode or "auto").strip().lower()
     if is_tagalog_language(requested):
         return (
             settings.whisper_tagalog_final_language_mode
@@ -435,9 +504,8 @@ def _final_language_mode(requested: str | None) -> str:
 def _final_decode_language(requested: str | None) -> str | None:
     """Language for the final pass.
 
-    Tagalog meetings default to ``prefer_forced`` (force ``tl``, then coverage
-    retries can still try auto). Mixed Hiligaynon/EN meetings keep global
-    ``auto`` by default so English spans are not dropped.
+    Auto / default: detect (``None``). Explicit Tagalog may force ``tl`` first
+    when ``prefer_forced`` is configured; coverage retries still try auto.
     """
     mode = _final_language_mode(requested)
     if mode in {"forced", "force", "tl", "prefer_forced", "prefer-tl", "prefer_tl"}:
@@ -564,27 +632,40 @@ def _energy_ok(pcm: np.ndarray, *, min_rms: float = 0.008) -> bool:
     return rms >= min_rms or peak >= 0.02
 
 
-def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
+def transcribe_live(
+    pcm: np.ndarray, language: str | None
+) -> tuple[list[Segment], str | None]:
     """Low-latency transcription of a live audio window.
 
-    Uses overlapping windows upstream; decode uses ``task=transcribe`` and a
-    configured language code (default ``tl``), with an auto-detect retry when
-    forced-language output is empty/junk (common on English board speech).
+    Uses overlapping windows upstream. Default product path is Whisper
+    **auto language detection** (Spoken language is not user-selected). Explicit
+    Tagalog/English labels still force a decode code; empty/junk output retries
+    with auto or ``tl`` as appropriate.
+
+    Returns ``(segments, detected_language)``.
     """
     if pcm is None or len(pcm) == 0:
-        return []
+        return [], None
     # Soften energy gate — clipped/quiet phrases were skipped entirely.
     if not _energy_ok(pcm, min_rms=0.004):
-        return []
+        return [], None
 
     cache = get_model_cache()
     model_id = live_model_id(language)
     model = cache.get_faster_whisper(model_id)
-    lang = _forced_language(language)
-    # Tagalog: short prompt is safe with Whisper's native ``tl`` token.
-    # Hiligaynon: only attach a prompt when a PH CT2 fine-tune is loaded
-    # (stock Whisper often echoes long prompts into captions).
-    if is_tagalog_language(language):
+    # Auto (default): detect. Explicit labels: force Whisper code.
+    if is_auto_language(language):
+        primary_lang: str | None = None
+    elif (language or "").strip().lower() in {"en", "english"}:
+        primary_lang = "en"
+    elif is_tagalog_language(language):
+        primary_lang = "tl"
+    else:
+        # Legacy hil / PH label — closest Whisper token.
+        primary_lang = _forced_language(language)
+
+    # Short multilingual prompt biases PH board speech without forcing a token.
+    if is_auto_language(language) or is_tagalog_language(language):
         live_prompt = initial_prompt(language)
     elif (settings.whisper_live_hiligaynon_model or "").strip() and is_philippine_language(
         language
@@ -593,6 +674,7 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
     else:
         live_prompt = None
     t0 = time.perf_counter()
+    detected_lang: str | None = None
 
     def _run(decode_language: str | None):
         with cache.fw_infer_lock(model_id):
@@ -620,7 +702,8 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
                 initial_prompt=live_prompt,
             )
 
-    segments, info = _run(lang)
+    segments, info = _run(primary_lang)
+    detected_lang = _normalize_detected_language(getattr(info, "language", None))
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
@@ -630,30 +713,39 @@ def transcribe_live(pcm: np.ndarray, language: str | None) -> list[Segment]:
             continue
         out.append(Segment(text=text, start=s.start, end=s.end))
 
-    # If forced-language decode produced only junk, retry once with auto-detect
-    # so English / mixed board speech still captions.
+    # Empty/junk: retry the other strategy (auto ↔ tl) for mixed board speech.
     if not out:
-        try:
-            segments, info = _run(None)
-            detected = getattr(info, "language", None)
-            if detected:
-                logger.info("Live auto-detect retry language=%s", detected)
-            for s in segments:
-                text = _collapse_hallucinations((s.text or "").strip())
-                if text and any(ch.isalnum() for ch in text) and not _is_junk_transcript(text):
-                    out.append(Segment(text=text, start=s.start, end=s.end))
-        except Exception as exc:
-            logger.debug("Live auto-detect retry failed: %s", exc)
+        retry_lang = None if primary_lang is not None else _forced_language(language)
+        if retry_lang != primary_lang:
+            try:
+                segments, info = _run(retry_lang)
+                detected_lang = (
+                    _normalize_detected_language(getattr(info, "language", None))
+                    or detected_lang
+                )
+                if detected_lang:
+                    logger.info("Live decode retry language=%s", detected_lang)
+                for s in segments:
+                    text = _collapse_hallucinations((s.text or "").strip())
+                    if (
+                        text
+                        and any(ch.isalnum() for ch in text)
+                        and not _is_junk_transcript(text)
+                    ):
+                        out.append(Segment(text=text, start=s.start, end=s.end))
+            except Exception as exc:
+                logger.debug("Live decode retry failed: %s", exc)
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     logger.info(
-        "asr.live duration_ms=%d segments=%d pcm_samples=%d model=%s",
+        "asr.live duration_ms=%d segments=%d pcm_samples=%d model=%s detected=%s",
         elapsed_ms,
         len(out),
         int(len(pcm)),
         model_id,
+        detected_lang,
     )
-    return out
+    return out, detected_lang
 
 
 def _clean_caption(text: str) -> str:
@@ -918,10 +1010,10 @@ def _transcribe_final_hf(
     audio_source,
     language: str | None,
     model_id: str | None = None,
-) -> list[Segment]:
+) -> tuple[list[Segment], str | None]:
     """Final pass with a Hugging Face fine-tuned Whisper checkpoint.
 
-    For Hiligaynon/PH meetings, if the primary decode (usually auto) is thin,
+    For auto/PH meetings, if the primary decode (usually auto) is thin,
     retry with forced ``tl`` and keep the higher-scoring transcript. This
     mirrors the coverage-aware strategy used by the faster-whisper final path.
     """
@@ -930,7 +1022,7 @@ def _transcribe_final_hf(
     pipe = cache.get_hf_pipeline(model_id)
     samples = _audio_to_float32(audio_source)
     if samples.size == 0:
-        return []
+        return [], None
 
     duration = float(samples.size) / float(settings.audio_sample_rate or 16000)
     primary = _final_decode_language(language)
@@ -941,6 +1033,7 @@ def _transcribe_final_hf(
     prompt_ids = _hf_prompt_ids(pipe, initial_prompt(language))
     best: list[Segment] = []
     best_score = -1.0
+    best_lang: str | None = None
     t0 = time.perf_counter()
 
     for lang in lang_attempts:
@@ -987,6 +1080,7 @@ def _transcribe_final_hf(
         if score > best_score:
             best = segs
             best_score = score
+            best_lang = _normalize_detected_language(lang) or best_lang
         # Good enough coverage — skip forced-tl retry.
         if (
             lang is None
@@ -1003,7 +1097,7 @@ def _transcribe_final_hf(
         model_id,
         best_score if best_score >= 0 else 0.0,
     )
-    return best
+    return best, best_lang
 
 
 def _run_faster_whisper_final(
@@ -1036,7 +1130,9 @@ def _run_faster_whisper_final(
     return _segments_to_list(segments), info
 
 
-def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list[Segment]:
+def _transcribe_final_faster_whisper(
+    audio_source, language: str | None
+) -> tuple[list[Segment], str | None]:
     """Final pass via faster-whisper with coverage-aware retries.
 
     Root cause of missing spoken words on board meetings:
@@ -1044,6 +1140,8 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
     speech (verified on production WAVs with continuous energy but empty
     transcript gaps of 20–30s). We now default to auto language and no VAD,
     and retry if timeline coverage is still poor.
+
+    Returns ``(segments, detected_language)``.
     """
     model_id = final_faster_model_id(language)
     cache = get_model_cache()
@@ -1098,6 +1196,7 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
         unique_attempts.append((label, lang, vad))
 
     best: list[Segment] = []
+    best_detected: str | None = None
     best_score = (-1.0, -1, -1.0, 0.0)  # weighted words, words, cov, -gap
     t0 = time.perf_counter()
     for label, lang, vad in unique_attempts:
@@ -1113,7 +1212,7 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
         except Exception as exc:
             logger.warning("Final ASR attempt %s failed: %s", label, exc)
             continue
-        detected = getattr(info, "language", None)
+        detected = _normalize_detected_language(getattr(info, "language", None)) or lang
         cov = _segment_time_coverage(segs, duration)
         words = len(" ".join(s.text for s in segs).split())
         gap = _largest_segment_gap(segs, duration)
@@ -1143,6 +1242,7 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
         if score > best_score:
             best_score = score
             best = segs
+            best_detected = _normalize_detected_language(detected)
         # Early exit only when dense + well covered.
         if (
             cov >= max(min_cov, 0.75)
@@ -1153,13 +1253,14 @@ def _transcribe_final_faster_whisper(audio_source, language: str | None) -> list
             break
 
     logger.info(
-        "asr.final_fw duration_ms=%d model=%s best_score_words_x_cov=%.1f best_words=%d",
+        "asr.final_fw duration_ms=%d model=%s best_score_words_x_cov=%.1f best_words=%d detected=%s",
         int((time.perf_counter() - t0) * 1000),
         model_id,
         best_score[0] if best_score[0] >= 0 else 0.0,
         best_score[1] if best_score[1] >= 0 else 0,
+        best_detected,
     )
-    return best
+    return best, best_detected
 
 
 def _looks_like_hf_repo(model_id: str) -> bool:
@@ -1167,11 +1268,13 @@ def _looks_like_hf_repo(model_id: str) -> bool:
     return "/" in mid or mid.startswith(".") or mid.startswith("/")
 
 
-def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
+def _transcribe_final_once(
+    audio_source, language: str | None
+) -> tuple[list[Segment], str | None]:
     """Single-shot final ASR.
 
-    ``WHISPER_FINAL_BACKEND=auto`` (default) tries Tagalog/Hiligaynon HF
-    candidates for PH meetings, then faster-whisper.
+    ``WHISPER_FINAL_BACKEND=auto`` (default) tries Tagalog/Hiligaynon/PH HF
+    candidates for auto/PH meetings, then faster-whisper.
     """
     backend = resolve_final_backend(language)
     configured = (settings.whisper_final_backend or "auto").strip().lower()
@@ -1185,16 +1288,19 @@ def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
         ]
         for model_id in candidates:
             try:
-                segs = _transcribe_final_hf(audio_source, language, model_id=model_id)
+                segs, detected = _transcribe_final_hf(
+                    audio_source, language, model_id=model_id
+                )
                 joined = " ".join(s.text for s in segs)
                 if segs and not _is_junk_transcript(joined):
                     logger.info(
                         "Final ASR using PH HF model '%s' "
-                        "(meeting_language=%s)",
+                        "(meeting_language=%s detected=%s)",
                         model_id,
                         language,
+                        detected,
                     )
-                    return segs
+                    return segs, detected
                 logger.warning(
                     "HF final ASR '%s' looked like hallucination; trying next candidate.",
                     model_id,
@@ -1211,7 +1317,7 @@ def _transcribe_final_once(audio_source, language: str | None) -> list[Segment]:
                 break
             except Exception as exc:
                 logger.exception(
-                    "Hiligaynon Whisper '%s' failed (%s); trying next / FW fallback.",
+                    "PH Whisper '%s' failed (%s); trying next / FW fallback.",
                     model_id,
                     exc,
                 )
@@ -1255,20 +1361,23 @@ def _merge_chunk_segments(
     return all_segments + shifted[keep_from:]
 
 
-def transcribe_final(audio_source, language: str | None) -> list[Segment]:
+def transcribe_final(
+    audio_source, language: str | None
+) -> tuple[list[Segment], str | None]:
     """Full-accuracy transcription for Stop Recording / re-transcribe / upload.
 
-    Prefer the configured fine-tuned Hiligaynon (or PH-dialect) Hugging Face
-    Whisper model when enabled. Fall back to faster-whisper with auto language
-    detection and coverage-aware retries (forced ``tl`` + aggressive VAD was
-    dropping spoken English spans).
+    Prefer Philippine HF Whisper candidates (Tagalog + PH medium) when backend
+    is auto. Fall back to faster-whisper with **auto language detection** and
+    coverage-aware ``tl`` retries.
 
     Long board-meeting audio (hours) is processed in overlapping chunks so the
     final pass stays within model/memory limits.
+
+    Returns ``(segments, detected_language)``.
     """
     samples = _audio_to_float32(audio_source)
     if samples.size == 0:
-        return []
+        return [], None
 
     sr = int(settings.audio_sample_rate)
     duration = float(samples.size) / float(sr)
@@ -1290,6 +1399,7 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
     )
 
     all_segments: list[Segment] = []
+    detected_lang: str | None = None
     offset = 0
     chunk_idx = 0
     while offset < samples.size:
@@ -1306,10 +1416,12 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
             end / float(sr) / 60.0,
         )
         try:
-            segs = _transcribe_final_once(piece, language)
+            segs, chunk_lang = _transcribe_final_once(piece, language)
         except Exception:
             logger.exception("Final ASR chunk %d failed; continuing", chunk_idx)
-            segs = []
+            segs, chunk_lang = [], None
+        if chunk_lang and not detected_lang:
+            detected_lang = chunk_lang
         all_segments = _merge_chunk_segments(
             all_segments, segs, time_offset=time_offset
         )
@@ -1317,4 +1429,4 @@ def transcribe_final(audio_source, language: str | None) -> list[Segment]:
             break
         offset += hop_samples
 
-    return all_segments
+    return all_segments, detected_lang

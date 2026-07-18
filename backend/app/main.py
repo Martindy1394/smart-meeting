@@ -107,8 +107,10 @@ def health():
         "whisper_live_tagalog_model": settings.whisper_live_tagalog_model or None,
         "whisper_final_model": settings.whisper_final_model,
         "whisper_final_backend": settings.whisper_final_backend,
+        "whisper_final_backend_resolved_auto": transcription_svc.resolve_final_backend("auto"),
         "whisper_final_backend_resolved_hil": transcription_svc.resolve_final_backend("hil"),
         "whisper_final_backend_resolved_tl": transcription_svc.resolve_final_backend("tl"),
+        "whisper_default_language": settings.whisper_default_language,
         "whisper_decode_language": settings.whisper_decode_language,
         "whisper_hiligaynon_fine_tuned_model": (
             settings.whisper_hiligaynon_fine_tuned_model or None
@@ -121,6 +123,7 @@ def health():
         ),
         "whisper_tagalog_model": settings.whisper_tagalog_model or None,
         "whisper_tagalog_hf_candidates": transcription_svc.tagalog_hf_candidates(),
+        "whisper_auto_hf_candidates": transcription_svc.auto_hf_candidates(),
         "whisper_tagalog_final_language_mode": settings.whisper_tagalog_final_language_mode,
         "whisper_live_window_seconds": settings.whisper_live_window_seconds,
         "whisper_live_hop_seconds": settings.whisper_live_hop_seconds,
@@ -164,12 +167,13 @@ def health_transcription():
     pcm = (np.random.randn(settings.audio_sample_rate).astype(np.float32) * 0.002)
     t0 = time.time()
     try:
-        segs = transcription_svc.transcribe_live(pcm, settings.whisper_default_language)
+        segs, detected = transcription_svc.transcribe_live(pcm, "auto")
         return {
             "ok": True,
             "latency_ms": int((time.time() - t0) * 1000),
             "live_model": settings.whisper_live_model,
-            "decode_language": settings.whisper_decode_language,
+            "decode_language": "auto",
+            "detected_language": detected,
             "task": "transcribe",
             "segments": len(segs),
             "backend": settings.whisper_final_backend,

@@ -135,7 +135,8 @@ async def transcribe_ws(websocket: WebSocket):
             and meeting is not None
             and meeting.owner_id == user.id
         )
-        language = meeting.language if meeting else settings.whisper_default_language
+        # Live ASR always auto-detects; meeting.language is display metadata.
+        language = "auto"
         meeting_status = meeting.status if meeting else None
     finally:
         db.close()

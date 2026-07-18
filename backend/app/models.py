@@ -72,7 +72,7 @@ class Meeting(Base):
 
     # Transcript status: recording | processing | finalized | failed
     status: Mapped[str] = mapped_column(String(32), default="recording")
-    language: Mapped[str] = mapped_column(String(16), default="hil")
+    language: Mapped[str] = mapped_column(String(16), default="auto")
 
     # Full-accuracy finalized transcript (post two-pass finalization).
     final_transcript: Mapped[str] = mapped_column(Text, default="")

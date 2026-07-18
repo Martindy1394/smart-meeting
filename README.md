@@ -46,11 +46,11 @@ behind a secure JWT authentication system with per-user meeting history.
   [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
   `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
   (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
-- **Tagalog / Filipino** — set meeting language to `tl` (Spoken language in
-  meeting details). Whisper uses native `tl`, a Tagalog HF model
-  (`WHISPER_TAGALOG_MODEL`, default `LWobole/whisper-small-tagalog`), then the
-  Philippine medium fallback, with `prefer_forced` decode (force `tl`, auto
-  retry for English code-switching).
+- **Automatic language detection** — no Spoken language picker. Live + final
+  Whisper decode with `auto`; detected code is stored on the meeting after ASR.
+  Final pass tries Tagalog + Philippine HF models
+  (`WHISPER_TAGALOG_MODEL` → `WHISPER_HILIGAYNON_MODEL`), then faster-whisper,
+  with `tl` coverage retries for thin auto-detect results.
 - **BART summarization** — topic-aware divide-and-conquer: long transcripts are
   split into topic chunks (under the BART token limit), summarized per topic,
   then formatted as bullet points or numbered lists.
@@ -161,7 +161,7 @@ See `backend/.env.example`. Key variables:
 | `WHISPER_TAGALOG_FINAL_LANGUAGE_MODE` | `prefer_forced` | Force `tl` then auto retry for code-switch. |
 | `WHISPER_LIVE_WINDOW_SECONDS` | `10.0` | Live ASR window length. |
 | `WHISPER_LIVE_HOP_SECONDS` | `5.0` | Live ASR hop (10s window overlapping by 5s). |
-| `WHISPER_DEFAULT_LANGUAGE` | `hil` | Default meeting label; set `tl` for Tagalog. |
+| `WHISPER_DEFAULT_LANGUAGE` | `auto` | Whisper detects language (no UI picker). |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis memory store for recorded PCM/WAV. |
 | `REDIS_AUDIO_TTL_SECONDS` | `172800` | TTL for Redis audio keys (48h; 0 = no expiry). |
 | `MAX_MEETING_HOURS` | `16` | Soft cap for one live recording (board meetings). |

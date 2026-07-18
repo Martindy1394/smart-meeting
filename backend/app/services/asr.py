@@ -60,12 +60,13 @@ def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool =
         return ASRResult(text="", segments=[], engine="whisper", language=language)
 
     if live:
-        segments = transcription.transcribe_live(pcm, language)
+        segments, detected = transcription.transcribe_live(pcm, language)
     else:
-        segments = transcription.transcribe_final(pcm, language)
+        segments, detected = transcription.transcribe_final(pcm, language)
 
     text = " ".join(s.text for s in segments).strip()
-    return ASRResult(text=text, segments=segments, engine="whisper", language=language)
+    resolved = detected or language
+    return ASRResult(text=text, segments=segments, engine="whisper", language=resolved)
 
 
 def transcribe_file(path: str, language: str | None = None) -> ASRResult:
@@ -123,4 +124,8 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     meeting.summary_format = ""
     meeting.translation = ""
     meeting.translation_language = ""
+    # Persist Whisper-detected language (replaces former Spoken language picker).
+    detected = (result.language or "").strip().lower()
+    if detected and detected not in {"auto", "detect", "none"}:
+        meeting.language = detected
     meeting.status = "finalized"

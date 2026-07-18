@@ -118,7 +118,8 @@ class UserResponse(BaseModel):
 # --------------------------- Meetings --------------------------------------
 class MeetingCreate(BaseModel):
     title: str = Field(default="", max_length=255)
-    language: str = Field(default="hil", max_length=16)
+    # ``auto`` = Whisper detects language; stored code updated after ASR.
+    language: str = Field(default="auto", max_length=16)
     venue: str = Field(default="", max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)
@@ -129,7 +130,7 @@ class MeetingUpdate(BaseModel):
     venue: str | None = Field(default=None, max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] | None = None
-    # ASR language label: hil | tl | fil | en
+    # Optional override (normally left as auto / Whisper-detected).
     language: str | None = Field(default=None, max_length=16)
 
 

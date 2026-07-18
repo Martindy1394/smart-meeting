@@ -76,7 +76,7 @@ def sweep_abandoned_sessions() -> dict:
             result = finalize.finalize_meeting_recording(
                 meeting_id,
                 meta.get("live_caption") or meeting.final_transcript or "",
-                language=meeting.language,
+                language="auto",
             )
             if result.get("ok"):
                 finalized += 1

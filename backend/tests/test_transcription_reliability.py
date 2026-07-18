@@ -15,10 +15,12 @@ from app.services.transcription import (  # noqa: E402
     _final_decode_language,
     _final_language_mode,
     _forced_language,
+    auto_hf_candidates,
     final_faster_model_id,
     hiligaynon_hf_candidates,
     hiligaynon_model_id,
     initial_prompt,
+    is_auto_language,
     is_philippine_language,
     is_tagalog_language,
     live_model_id,
@@ -86,6 +88,18 @@ def test_hiligaynon_maps_to_whisper_tl():
     assert _forced_language("hil") == "tl"
     assert _forced_language("fil") == "tl"
     assert _forced_language("en") == "en"
+
+
+def test_auto_language_detects_and_uses_ph_models():
+    assert is_auto_language("auto")
+    assert is_auto_language("detect")
+    assert is_auto_language(None)  # default is auto
+    assert is_philippine_language("auto")
+    assert _final_language_mode("auto") == "auto"
+    assert _final_decode_language("auto") is None
+    prompt = initial_prompt("auto")
+    assert prompt
+    assert "Hiligaynon" in prompt or "Filipino" in prompt or "Tagalog" in prompt
 
 
 def test_tagalog_uses_native_tl_and_prefer_forced():
@@ -177,13 +191,46 @@ def test_auto_final_backend_prefers_hf_for_tagalog():
         settings.whisper_live_tagalog_model = prev_live
 
 
+def test_auto_meeting_uses_combined_ph_hf_candidates():
+    from app.config import settings
+
+    prev = settings.whisper_final_backend
+    prev_hil_ft = settings.whisper_hiligaynon_fine_tuned_model
+    prev_tl_ft = settings.whisper_tagalog_fine_tuned_model
+    prev_tl = settings.whisper_tagalog_model
+    prev_ph = settings.whisper_hiligaynon_model
+    prev_live_hil = settings.whisper_live_hiligaynon_model
+    try:
+        settings.whisper_final_backend = "auto"
+        settings.whisper_hiligaynon_fine_tuned_model = ""
+        settings.whisper_tagalog_fine_tuned_model = ""
+        settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
+        settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
+        assert resolve_final_backend("auto") == "huggingface"
+        assert auto_hf_candidates() == [
+            "LWobole/whisper-small-tagalog",
+            "rbcurzon/whisper-medium-ph",
+        ]
+        settings.whisper_live_hiligaynon_model = "/models/hil-ct2"
+        assert live_model_id("auto") == "/models/hil-ct2"
+    finally:
+        settings.whisper_final_backend = prev
+        settings.whisper_hiligaynon_fine_tuned_model = prev_hil_ft
+        settings.whisper_tagalog_fine_tuned_model = prev_tl_ft
+        settings.whisper_tagalog_model = prev_tl
+        settings.whisper_hiligaynon_model = prev_ph
+        settings.whisper_live_hiligaynon_model = prev_live_hil
+
+
 if __name__ == "__main__":
     test_merge_live_caption_appends_novel_overlap()
     test_merge_live_caption_never_shrinks()
     test_model_cache_lru_eviction()
     test_per_model_locks_are_distinct()
     test_hiligaynon_maps_to_whisper_tl()
+    test_auto_language_detects_and_uses_ph_models()
     test_tagalog_uses_native_tl_and_prefer_forced()
     test_auto_final_backend_prefers_hf_for_hiligaynon()
     test_auto_final_backend_prefers_hf_for_tagalog()
+    test_auto_meeting_uses_combined_ph_hf_candidates()
     print("all_unit_tests_passed")

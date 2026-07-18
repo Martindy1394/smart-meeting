@@ -577,7 +577,12 @@ export default function MeetingRoom({
                   )}
                 </div>
               )}
-              <span className="card-tag">Whisper ASR · {meeting.language}</span>
+              <span className="card-tag">
+                Whisper ASR ·{" "}
+                {!meeting.language || meeting.language === "auto"
+                  ? "auto-detect"
+                  : meeting.language}
+              </span>
             </div>
           </div>
           <div className="card-body">
