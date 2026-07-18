@@ -563,8 +563,8 @@ export default function MeetingRoom({
               </div>
             ) : (
               <div className="placeholder">
-                Press <strong>Start live transcription</strong> for live Whisper
-                captions. Ending a meeting runs the full-accuracy Whisper pass
+                Press <strong>Start a meeting</strong> for live Whisper captions.
+                Ending a meeting runs the full-accuracy Whisper pass
                 automatically. Save becomes available after the recording ends.
               </div>
             )}
@@ -593,8 +593,8 @@ export default function MeetingRoom({
               {isStarting
                 ? "Starting…"
                 : recorder.recording
-                  ? "■ End meeting"
-                  : "● Start live transcription"}
+                  ? "■ End"
+                  : "● Start a meeting"}
             </button>
             <div className="transport-row" role="group" aria-label="Pause and play">
               <button

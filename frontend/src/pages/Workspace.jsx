@@ -205,7 +205,7 @@ export default function Workspace() {
             <div style={{ fontSize: 48 }}>🗒️</div>
             <h2>Welcome to Smart Meeting</h2>
             <p>
-              Create a new meeting to start live transcription, then summarize
+              Create a new meeting to start a meeting, then summarize
               and translate the results. Open History anytime to revisit saved
               meetings and recordings.
             </p>
