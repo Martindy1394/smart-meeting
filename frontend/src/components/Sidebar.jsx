@@ -60,22 +60,6 @@ export default function Sidebar({
           </button>
         </nav>
 
-        <div className="sidebar-settings-note">
-          {menuSection === "history" ? (
-            <p>
-              <strong>History</strong> holds every saved meeting and recording.
-              Copy, download, play, open, or remove records from one list.
-            </p>
-          ) : menuSection === "settings" ? (
-            <p>
-              View and edit your profile details in the main panel — name,
-              position, workplace, working email, username, and password.
-            </p>
-          ) : (
-            <p>Use the menu to switch between history and account settings.</p>
-          )}
-        </div>
-
         <div className="sidebar-footer">
           <div className="user-chip-block">
             <span className="user-chip">{display}</span>
