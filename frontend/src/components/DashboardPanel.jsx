@@ -150,7 +150,6 @@ export default function DashboardPanel({
   loading,
   onSelect,
   onCreate,
-  onGoHistory,
 }) {
   const stats = buildStats(meetings);
   const sorted = [...meetings].sort((a, b) => {
@@ -174,9 +173,6 @@ export default function DashboardPanel({
           </p>
         </div>
         <div className="dash-intro-actions">
-          <button type="button" className="btn secondary" onClick={onGoHistory}>
-            View history
-          </button>
           <button type="button" className="btn" onClick={onCreate}>
             + New meeting
           </button>
