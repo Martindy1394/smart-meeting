@@ -163,7 +163,6 @@ export default function Workspace() {
       <Sidebar
         section={section}
         onSectionChange={handleSectionChange}
-        onCreate={createMeeting}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />

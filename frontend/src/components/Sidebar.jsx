@@ -3,7 +3,6 @@ import { useAuth } from "../context/AuthContext.jsx";
 export default function Sidebar({
   section,
   onSectionChange,
-  onCreate,
   open,
   onClose,
 }) {
