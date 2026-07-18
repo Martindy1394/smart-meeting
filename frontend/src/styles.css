@@ -123,6 +123,21 @@ button {
   justify-content: center;
   padding: 24px;
 }
+.auth-stack {
+  width: min(100%, 440px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: stretch;
+}
+.auth-stack:has(.auth-card-wide) {
+  width: min(100%, 640px);
+}
+.auth-stack .auth-card,
+.auth-stack .auth-card-wide {
+  width: 100%;
+  max-width: none;
+}
 .auth-card {
   width: 100%;
   max-width: 420px;
@@ -1612,4 +1627,41 @@ select.inline {
 .confirm-actions .btn.danger:hover {
   background: #b91c1c;
   color: #fff;
+}
+
+/* ---------------- App footer ---------------- */
+.app-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: 12px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.app-footer-copy,
+.app-footer-property {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.app-footer-property {
+  font-weight: 600;
+  color: var(--primary);
+}
+.app-footer-auth {
+  border-top: none;
+  background: transparent;
+  padding: 4px 8px 0;
+}
+.app-footer-auth .app-footer-property {
+  color: var(--primary);
+}
+@media (max-width: 860px) {
+  .app-footer {
+    padding: 10px 14px 14px;
+  }
 }

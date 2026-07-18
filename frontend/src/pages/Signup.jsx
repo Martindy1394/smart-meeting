@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import AppFooter from "../components/AppFooter.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 
 const PASSWORD_RE = /^(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
@@ -65,6 +66,7 @@ export default function Signup() {
 
   return (
     <div className="auth-wrap">
+      <div className="auth-stack">
       <form className="auth-card auth-card-wide" onSubmit={onSubmit}>
         <div className="brand">
           <span className="dot" /> Smart Meeting
@@ -164,6 +166,8 @@ export default function Signup() {
           Already have an account? <Link to="/login">Sign in</Link>
         </div>
       </form>
+      <AppFooter className="app-footer-auth" />
+      </div>
     </div>
   );
 }

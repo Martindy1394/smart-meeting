@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import AppFooter from "../components/AppFooter.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import DashboardPanel from "../components/DashboardPanel.jsx";
 import HistoryPanel from "../components/HistoryPanel.jsx";
@@ -249,6 +250,8 @@ export default function Workspace() {
             onCreate={createMeeting}
           />
         )}
+
+        <AppFooter />
       </div>
 
       <ConfirmDialog
