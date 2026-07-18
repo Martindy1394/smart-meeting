@@ -158,8 +158,11 @@ class MeetingSummary(BaseModel):
     duration_seconds: float
     created_at: datetime
     updated_at: datetime
-    # Full BART summary text when available (used by the Dashboard).
+    # Full BART summary text when available.
     summary: str = ""
+    # Full mBART translation text (used by the Dashboard feed).
+    translation: str = ""
+    translation_language: str = ""
     has_summary: bool = False
     has_translation: bool = False
     has_audio: bool = False

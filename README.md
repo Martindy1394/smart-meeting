@@ -60,7 +60,7 @@ behind a secure JWT authentication system with per-user meeting history.
 - **Meeting details** — capture each meeting's title, venue, date & time, and
   attendee list; shown and editable in the meeting room and surfaced in history.
 - **Dashboard** — overview of meeting counts (total, this week, transcript /
-  summary / audio) and a feed of the latest BART meeting summaries.
+  translation / audio) and a feed of the latest mBART translations.
 - **Meeting history** — sidebar with search, load, rename, and delete.
 - **Production concerns** — CORS, rate limiting, input validation/sanitization,
   graceful error handling, reconnection with exponential backoff, loading
