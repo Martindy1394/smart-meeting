@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { useRecorder } from "../hooks/useRecorder.js";
+import ConfirmDialog from "./ConfirmDialog.jsx";
 import MeetingDetails from "./MeetingDetails.jsx";
 
 function fmtTime(sec) {
@@ -70,6 +71,7 @@ export default function MeetingRoom({
   const [asrError, setAsrError] = useState("");
   const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
   const [copyState, setCopyState] = useState("");
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const audioUrlRef = useRef(null);
 
   const revokeAudioUrl = useCallback(() => {
@@ -320,7 +322,7 @@ export default function MeetingRoom({
   async function toggleRecord() {
     if (recorder.recording || recorder.status === "starting") {
       if (recorder.recording && recorder.status !== "starting") {
-        recorder.stop();
+        setEndConfirmOpen(true);
       }
       return;
     }
@@ -333,6 +335,11 @@ export default function MeetingRoom({
     } catch {
       /* handled inside hook via message */
     }
+  }
+
+  function confirmEndMeeting() {
+    setEndConfirmOpen(false);
+    recorder.stop();
   }
 
   const canStart =
@@ -812,6 +819,17 @@ export default function MeetingRoom({
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={endConfirmOpen}
+        tone="danger"
+        title="End meeting?"
+        message="Stop recording and run the full-accuracy Whisper transcript? You won’t be able to continue this live session afterward."
+        confirmLabel="End meeting"
+        cancelLabel="Keep recording"
+        onCancel={() => setEndConfirmOpen(false)}
+        onConfirm={confirmEndMeeting}
+      />
     </div>
   );
 }

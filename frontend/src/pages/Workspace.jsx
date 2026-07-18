@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import HistoryPanel from "../components/HistoryPanel.jsx";
 import MeetingRoom from "../components/MeetingRoom.jsx";
 import SettingsPanel from "../components/SettingsPanel.jsx";
@@ -18,6 +19,10 @@ export default function Workspace() {
   // True when opening an existing meeting from History (review mode).
   const [historyView, setHistoryView] = useState(false);
   const searchTimer = useRef(null);
+
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
 
   const loadMeetings = useCallback(async (q) => {
     setLoadingList(true);
@@ -91,25 +96,44 @@ export default function Workspace() {
     }
   }, [loadMeetings, search]);
 
-  const deleteMeeting = useCallback(
-    async (id) => {
-      if (!window.confirm("Remove this meeting permanently?")) return;
-      try {
-        await api.deleteMeeting(id);
-        if (id === activeId) {
-          setActiveId(null);
-          setActiveMeeting(null);
-          setSaveControls(null);
-          setHistoryView(false);
-          setSection("history");
-        }
-        loadMeetings(search);
-      } catch {
-        /* ignore */
-      }
+  const requestDeleteMeeting = useCallback(
+    (id) => {
+      const found = meetings.find((m) => m.id === id);
+      setDeleteTarget({
+        id,
+        title: (found?.title || "").trim() || "Untitled meeting",
+      });
     },
-    [activeId, loadMeetings, search]
+    [meetings]
   );
+
+  const confirmDeleteMeeting = useCallback(async () => {
+    if (!deleteTarget?.id) return;
+    setDeleteBusy(true);
+    try {
+      const id = deleteTarget.id;
+      await api.deleteMeeting(id);
+      setDeleteTarget(null);
+      if (id === activeId) {
+        setActiveId(null);
+        setActiveMeeting(null);
+        setSaveControls(null);
+        setHistoryView(false);
+        setSection("history");
+      }
+      loadMeetings(search);
+    } catch {
+      /* ignore */
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [activeId, deleteTarget, loadMeetings, search]);
+
+  const confirmSaveMeeting = useCallback(async () => {
+    if (!saveControls?.save) return;
+    setSaveConfirmOpen(false);
+    await saveControls.save();
+  }, [saveControls]);
 
   const refreshActive = useCallback(
     async (updated) => {
@@ -165,7 +189,7 @@ export default function Workspace() {
             <div className="topbar-right">
               <button
                 className="btn"
-                onClick={() => saveControls.save()}
+                onClick={() => setSaveConfirmOpen(true)}
                 disabled={saveControls.disabled || saveControls.saving}
               >
                 {saveControls.saving ? <span className="spinner" /> : "Save"}
@@ -184,7 +208,7 @@ export default function Workspace() {
             onSearch={setSearch}
             activeId={activeId}
             onSelect={selectMeeting}
-            onDelete={deleteMeeting}
+            onDelete={requestDeleteMeeting}
             onCreate={createMeeting}
           />
         ) : loadingMeeting ? (
@@ -215,6 +239,35 @@ export default function Workspace() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        tone="danger"
+        title="Delete meeting?"
+        message={
+          deleteTarget
+            ? `Remove “${deleteTarget.title}” permanently? The transcript, summary, translation, and audio cannot be recovered.`
+            : ""
+        }
+        confirmLabel="Delete"
+        cancelLabel="Keep meeting"
+        busy={deleteBusy}
+        onCancel={() => {
+          if (!deleteBusy) setDeleteTarget(null);
+        }}
+        onConfirm={confirmDeleteMeeting}
+      />
+
+      <ConfirmDialog
+        open={saveConfirmOpen}
+        title="Save meeting details?"
+        message="Save the current title, venue, date & time, and attendees for this meeting?"
+        confirmLabel="Save"
+        cancelLabel="Cancel"
+        busy={Boolean(saveControls?.saving)}
+        onCancel={() => setSaveConfirmOpen(false)}
+        onConfirm={confirmSaveMeeting}
+      />
     </div>
   );
 }
