@@ -241,7 +241,6 @@ export default function Workspace() {
             loading={loadingList}
             onSelect={selectMeeting}
             onCreate={createMeeting}
-            onGoHistory={() => setSection("history")}
           />
         )}
       </div>
