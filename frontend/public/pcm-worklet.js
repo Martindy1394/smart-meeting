@@ -22,7 +22,15 @@ class PCMWorkletProcessor extends AudioWorkletProcessor {
     if (!samples.length) return;
     const pcm = new Int16Array(samples.length);
     for (let i = 0; i < samples.length; i++) {
-      let s = Math.max(-1, Math.min(1, samples[i]));
+      // Soft knee before hard clip — hard clipping (peak=1.0) confused VAD
+      // and caused Whisper to skip real speech at the start of windows.
+      let s = samples[i];
+      const a = Math.abs(s);
+      if (a > 0.9) {
+        const sign = s < 0 ? -1 : 1;
+        s = sign * (0.9 + 0.1 * Math.tanh((a - 0.9) / 0.1));
+      }
+      s = Math.max(-1, Math.min(1, s));
       pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
     this.port.postMessage(pcm.buffer, [pcm.buffer]);

@@ -41,7 +41,25 @@ def test_disk_pcm_append_and_slice():
     settings.audio_storage_dir = prev
 
 
+def test_align_pcm16_drops_odd_trailing_byte():
+    assert audio.align_pcm16(b"\x01\x00\x02") == b"\x01\x00"
+    assert len(audio.align_pcm16(b"\x01\x00\x02\x00")) == 4
+
+
+def test_window_hop_overlap_math():
+    """10s window / 5s hop must retain 5s overlap (never discard the shared half)."""
+    sr = settings.audio_sample_rate
+    window = int(10.0 * sr * 2)
+    hop = int(5.0 * sr * 2)
+    assert window == 320_000
+    assert hop == 160_000
+    # offsets: 0, hop, 2*hop… each window overlaps previous by window-hop
+    assert window - hop == hop
+
+
 if __name__ == "__main__":
     test_rolling_buffer_is_small_vs_hour_of_audio()
     test_disk_pcm_append_and_slice()
+    test_align_pcm16_drops_odd_trailing_byte()
+    test_window_hop_overlap_math()
     print("all_session_audio_tests_passed")

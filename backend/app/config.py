@@ -67,7 +67,11 @@ class Settings(BaseSettings):
     # How often the background janitor scans for abandoned sessions.
     session_janitor_interval_seconds: float = 60.0
     # Drop old live windows when ASR backlog exceeds this many hops.
-    live_asr_max_backlog_windows: int = 6
+    # Higher default reduces live word-loss when Whisper is slower than realtime.
+    live_asr_max_backlog_windows: int = 12
+    # When over backlog, skip at most this many hops per wake (partial catch-up
+    # instead of jumping to the live edge and losing mid-meeting captions).
+    live_asr_backpressure_skip_hops: int = 2
 
     # --- Audio / transcription ------------------------------------------
     audio_sample_rate: int = 16000

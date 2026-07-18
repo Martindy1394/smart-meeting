@@ -55,20 +55,45 @@ def raw_pcm_path(meeting_id: str) -> str:
     return os.path.join(audio_dir(), f"{meeting_id}.pcm")
 
 
+def align_pcm16(chunk: bytes) -> bytes:
+    """Drop a trailing odd byte so buffers stay valid int16 LE frames."""
+    if not chunk:
+        return b""
+    if len(chunk) % 2:
+        return chunk[:-1]
+    return chunk
+
+
+def pcm_rms_int16(chunk: bytes) -> float:
+    """RMS of int16 LE PCM (0..32768 scale) for silence diagnostics."""
+    data = align_pcm16(chunk)
+    if len(data) < 2:
+        return 0.0
+    samples = np.frombuffer(data, dtype="<i2").astype(np.float32)
+    if samples.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(samples))))
+
+
 def append_raw_pcm(meeting_id: str, chunk: bytes) -> int:
     """Append int16 LE PCM to the meeting's on-disk buffer. Returns total bytes."""
+    chunk = align_pcm16(chunk)
     if not chunk:
         return get_raw_pcm_length(meeting_id)
     path = raw_pcm_path(meeting_id)
     with open(path, "ab") as fh:
         fh.write(chunk)
+        # Ensure the ASR worker never reads a partially-flushed write.
+        fh.flush()
     return get_raw_pcm_length(meeting_id)
 
 
 def get_raw_pcm_length(meeting_id: str) -> int:
     path = raw_pcm_path(meeting_id)
     try:
-        return int(os.path.getsize(path)) if os.path.exists(path) else 0
+        n = int(os.path.getsize(path)) if os.path.exists(path) else 0
+        # Report even length only — odd trailing byte is not a full sample.
+        return n if n % 2 == 0 else n - 1
     except OSError:
         return 0
 
@@ -77,14 +102,23 @@ def get_raw_pcm_slice(meeting_id: str, start: int, end_inclusive: int) -> bytes:
     """Read inclusive byte range ``[start, end_inclusive]`` from the disk PCM."""
     if end_inclusive < start:
         return b""
+    start = max(0, int(start))
+    end_inclusive = int(end_inclusive)
+    # int16 frames are 2 bytes — snap to complete samples.
+    if start % 2:
+        start -= 1
+    if end_inclusive % 2 == 0:
+        end_inclusive += 1
     path = raw_pcm_path(meeting_id)
     if not os.path.exists(path):
         return b""
     length = end_inclusive - start + 1
+    if length <= 0:
+        return b""
     try:
         with open(path, "rb") as fh:
-            fh.seek(max(0, start))
-            return fh.read(length)
+            fh.seek(start)
+            return align_pcm16(fh.read(length))
     except OSError:
         return b""
 

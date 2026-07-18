@@ -38,18 +38,47 @@ async def _emit_live_window(
     seq: int,
     live_caption: str,
     previous_window: str = "",
+    byte_offset: int | None = None,
 ) -> tuple[str, str]:
     """Transcribe one live window and merge into the cumulative caption.
 
     Returns ``(live_caption, window_text_used_as_previous)``.
     """
+    chunk = audio.align_pcm16(chunk)
     samples = audio.pcm16_to_float32(chunk)
+    rms_i16 = audio.pcm_rms_int16(chunk)
+    dur_s = len(chunk) / float(settings.audio_sample_rate * 2) if chunk else 0.0
     # Skip near-silent frames — they only produce Whisper hallucinations.
-    if samples.size == 0 or float(np.max(np.abs(samples))) < 0.01:
+    # Threshold is on float peak; also log int16 RMS for diagnostics.
+    peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+    if samples.size == 0 or peak < 0.008:
+        logger.info(
+            "live.window skip_silence meeting=%s seq=%d bytes=%d dur=%.2fs "
+            "rms_i16=%.1f peak=%.4f offset=%s",
+            meeting_id,
+            seq,
+            len(chunk),
+            dur_s,
+            rms_i16,
+            peak,
+            byte_offset,
+        )
         return live_caption, previous_window
 
     result = await asyncio.to_thread(asr.transcribe_pcm, samples, language, live=True)
     window_text = result.text
+    logger.info(
+        "live.window meeting=%s seq=%d bytes=%d dur=%.2fs rms_i16=%.1f "
+        "offset=%s words=%d text=%r",
+        meeting_id,
+        seq,
+        len(chunk),
+        dur_s,
+        rms_i16,
+        byte_offset,
+        len((window_text or "").split()),
+        (window_text or "")[:160],
+    )
     if not window_text:
         return live_caption, previous_window
 
@@ -279,27 +308,37 @@ async def transcribe_ws(websocket: WebSocket):
         live_metrics.set_backlog_windows(backlog // max(1, bytes_per_hop))
         if backlog <= max_backlog:
             return
-        # Skip ahead — keep roughly one window of work so captions stay near-live.
-        target = max(0, total - bytes_per_window)
-        # Align to hop grid so overlap stays consistent.
+        # Partial skip only — jumping all the way to the live edge was dropping
+        # whole spoken phrases from live captions (disk/final still had them).
+        skip_hops = max(1, int(settings.live_asr_backpressure_skip_hops))
+        skip_bytes = skip_hops * bytes_per_hop
+        target = live_offset + skip_bytes
+        # Never skip past the last full window start.
+        max_target = max(0, total - bytes_per_window)
         if bytes_per_hop > 0:
-            target = (target // bytes_per_hop) * bytes_per_hop
-        dropped = max(0, (target - live_offset) // max(1, bytes_per_hop))
+            max_target = (max_target // bytes_per_hop) * bytes_per_hop
+        target = min(target, max_target)
         if target > live_offset:
+            dropped = (target - live_offset) // max(1, bytes_per_hop)
             logger.warning(
-                "Live ASR backpressure meeting=%s dropping ~%d windows "
-                "(backlog_bytes=%d max=%d)",
+                "Live ASR backpressure meeting=%s skip_hops=%d "
+                "(backlog_bytes=%d max=%d new_offset=%d)",
                 meeting_id,
                 dropped,
                 backlog,
                 max_backlog,
+                target,
             )
             live_metrics.record_windows_dropped(dropped)
             live_offset = target
             _persist_meta()
 
     async def _process_one_live_window() -> bool:
-        """Transcribe at most one live window from disk PCM."""
+        """Transcribe at most one live window from disk PCM.
+
+        Windows are ``[live_offset, live_offset+window)`` and the offset advances
+        by ``hop`` only — the 5s overlap is retained in the buffer (never trimmed).
+        """
         nonlocal live_caption, previous_window, seq, live_offset, warmup_done
         if not live_available:
             return False
@@ -325,6 +364,7 @@ async def transcribe_ws(websocket: WebSocket):
                         seq=seq,
                         live_caption=live_caption,
                         previous_window=previous_window,
+                        byte_offset=0,
                     )
                 except Exception as exc:
                     logger.exception("Live warmup transcription error: %s", exc)
@@ -337,8 +377,17 @@ async def transcribe_ws(websocket: WebSocket):
             return False
 
         chunk = _read_slice(live_offset, live_offset + bytes_per_window - 1)
+        # Wait until the full window is on disk — never transcribe a partial hop.
         if len(chunk) < bytes_per_window:
+            logger.debug(
+                "live.window incomplete meeting=%s offset=%d need=%d got=%d",
+                meeting_id,
+                live_offset,
+                bytes_per_window,
+                len(chunk),
+            )
             return False
+        window_offset = live_offset
         seq += 1
         try:
             live_caption, previous_window = await _emit_live_window(
@@ -349,11 +398,12 @@ async def transcribe_ws(websocket: WebSocket):
                 seq=seq,
                 live_caption=live_caption,
                 previous_window=previous_window,
+                byte_offset=window_offset,
             )
         except Exception as exc:
             logger.exception("Live transcription error: %s", exc)
         warmup_done = True
-        # Advance by hop; retain overlap by only moving the offset.
+        # Advance by hop only — overlap stays available for the next window.
         live_offset += bytes_per_hop
         _persist_meta()
         return True
@@ -507,6 +557,8 @@ async def transcribe_ws(websocket: WebSocket):
                     and live_available
                     and len(window) >= bytes_per_window
                 ):
+                    # Local sliding buffer still keeps hop overlap (trim from front).
+                    approx_offset = max(0, total - len(window))
                     chunk = bytes(window[:bytes_per_window])
                     if bytes_overlap > 0:
                         window[:] = window[bytes_per_hop:]
@@ -522,6 +574,7 @@ async def transcribe_ws(websocket: WebSocket):
                             seq=seq,
                             live_caption=live_caption,
                             previous_window=previous_window,
+                            byte_offset=approx_offset,
                         )
                     except Exception as exc:
                         logger.exception("Live transcription error: %s", exc)
@@ -572,11 +625,34 @@ async def transcribe_ws(websocket: WebSocket):
         )
         return
 
-    # Flush leftover live audio from disk offset.
+    # Flush leftover live audio in overlapping windows (never one giant chunk —
+    # Whisper live models truncate / drop speech on multi-minute buffers).
     if live_available:
         total = _recording_length()
-        leftover = total - live_offset
         min_flush = int(0.4 * settings.audio_sample_rate * 2)
+        flush_guard = 0
+        while total - live_offset >= bytes_per_window and flush_guard < 500:
+            chunk = _read_slice(live_offset, live_offset + bytes_per_window - 1)
+            if len(chunk) < bytes_per_window:
+                break
+            seq += 1
+            try:
+                live_caption, previous_window = await _emit_live_window(
+                    websocket,
+                    meeting_id=meeting_id,
+                    chunk=chunk,
+                    language=language,
+                    seq=seq,
+                    live_caption=live_caption,
+                    previous_window=previous_window,
+                    byte_offset=live_offset,
+                )
+            except Exception as exc:
+                logger.exception("Live flush transcription error: %s", exc)
+            live_offset += bytes_per_hop
+            flush_guard += 1
+            _persist_meta()
+        leftover = total - live_offset
         if leftover >= min_flush:
             chunk = _read_slice(live_offset, total - 1)
             seq += 1
@@ -589,6 +665,7 @@ async def transcribe_ws(websocket: WebSocket):
                     seq=seq,
                     live_caption=live_caption,
                     previous_window=previous_window,
+                    byte_offset=live_offset,
                 )
                 live_offset = total
                 _persist_meta()

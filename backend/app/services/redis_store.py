@@ -105,15 +105,25 @@ def append_pcm(meeting_id: str, chunk: bytes) -> int:
     """
     if not chunk:
         return get_pcm_length(meeting_id)
+    # Keep int16 frame alignment in the rolling buffer too.
+    if len(chunk) % 2:
+        chunk = chunk[:-1]
+    if not chunk:
+        return get_pcm_length(meeting_id)
     client = get_client()
     if client is None:
         return -1
     max_bytes = rolling_buffer_max_bytes()
+    # Max bytes must stay even.
+    if max_bytes % 2:
+        max_bytes -= 1
     key = _pcm_key(meeting_id)
     try:
         # Truncate oversized incoming chunks so one write cannot blow the cap.
         if len(chunk) > max_bytes:
             chunk = chunk[-max_bytes:]
+            if len(chunk) % 2:
+                chunk = chunk[1:]
         total = int(client.append(key, chunk))
         if total > max_bytes:
             # Keep only the newest window — cheap for ~MB-scale buffers.
