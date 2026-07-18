@@ -1287,22 +1287,34 @@ select.inline {
 }
 .record-control {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  min-width: 220px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.record-control > .btn.record {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .transport-row {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  width: 100%;
+  width: auto;
+  flex: 0 0 auto;
 }
 .transport-btn {
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
-  padding-left: 10px;
-  padding-right: 10px;
+  padding-left: 12px;
+  padding-right: 12px;
   font-size: 13px;
+  white-space: nowrap;
+}
+.record-control > .record-duration {
+  flex: 0 0 auto;
+  margin-left: 2px;
 }
 .transport-btn.transport-active {
   border-color: rgba(239, 68, 68, 0.45);
