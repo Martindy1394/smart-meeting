@@ -48,20 +48,20 @@ function meetingWhen(meeting) {
   return meeting.meeting_date || meeting.created_at || meeting.updated_at;
 }
 
-function hasSummary(meeting) {
-  return Boolean(meeting.has_summary || (meeting.summary || "").trim());
+function hasTranslation(meeting) {
+  return Boolean(meeting.has_translation || (meeting.translation || "").trim());
 }
 
 function buildStats(meetings) {
   const weekStart = startOfWeek();
-  let withSummary = 0;
+  let withTranslation = 0;
   let withTranscript = 0;
   let withAudio = 0;
   let thisWeek = 0;
   let totalDuration = 0;
 
   for (const m of meetings) {
-    if (hasSummary(m)) withSummary += 1;
+    if (hasTranslation(m)) withTranslation += 1;
     if (m.has_transcript || m.status === "finalized") withTranscript += 1;
     if (m.has_audio) withAudio += 1;
     totalDuration += Number(m.duration_seconds) || 0;
@@ -74,7 +74,7 @@ function buildStats(meetings) {
 
   return {
     total: meetings.length,
-    withSummary,
+    withTranslation,
     withTranscript,
     withAudio,
     thisWeek,
@@ -92,10 +92,10 @@ function StatCard({ label, value, hint }) {
   );
 }
 
-function SummaryCard({ meeting, onSelect }) {
-  const summary = (meeting.summary || "").trim();
+function TranslationCard({ meeting, onSelect }) {
+  const translation = (meeting.translation || "").trim();
   const when = meetingWhen(meeting);
-  const format = (meeting.summary_format || "").trim();
+  const targetLang = (meeting.translation_language || "").trim();
 
   return (
     <article className="dash-summary-card">
@@ -110,7 +110,7 @@ function SummaryCard({ meeting, onSelect }) {
             {meeting.duration_seconds > 0 ? (
               <span>{fmtDuration(meeting.duration_seconds)}</span>
             ) : null}
-            {format ? <span>{format}</span> : null}
+            {targetLang ? <span>{targetLang}</span> : null}
           </div>
         </div>
         <div className="dash-summary-actions">
@@ -135,12 +135,12 @@ function SummaryCard({ meeting, onSelect }) {
         </div>
       </header>
       <div className="dash-summary-body">
-        {summary ? (
-          <p className="dash-summary-text">{summary}</p>
+        {translation ? (
+          <p className="dash-summary-text">{translation}</p>
         ) : (
           <p className="dash-summary-empty">
-            No summary yet. Open the meeting and finalize a transcript to
-            generate one.
+            No English translation yet. Open the meeting and finalize a
+            transcript to generate one.
           </p>
         )}
       </div>
@@ -160,10 +160,10 @@ export default function DashboardPanel({
     const tb = new Date(meetingWhen(b) || 0).getTime();
     return tb - ta;
   });
-  const withSummaries = sorted.filter(hasSummary);
+  const withTranslations = sorted.filter(hasTranslation);
   const recent = sorted.slice(0, 8);
   const featured =
-    withSummaries.length > 0 ? withSummaries.slice(0, 8) : recent;
+    withTranslations.length > 0 ? withTranslations.slice(0, 8) : recent;
 
   return (
     <div className="content dashboard-panel">
@@ -171,7 +171,8 @@ export default function DashboardPanel({
         <div>
           <h2 className="dash-heading">Meeting overview</h2>
           <p className="dash-sub">
-            Counts across your saved meetings, plus the latest summaries.
+            Counts across your saved meetings, plus the latest English
+            translations.
           </p>
         </div>
         <div className="dash-intro-actions">
@@ -195,7 +196,7 @@ export default function DashboardPanel({
               hint="By meeting date"
             />
             <StatCard label="With transcript" value={stats.withTranscript} />
-            <StatCard label="With summary" value={stats.withSummary} />
+            <StatCard label="With translation" value={stats.withTranslation} />
             <StatCard label="With audio" value={stats.withAudio} />
             <StatCard
               label="Recorded time"
@@ -207,13 +208,13 @@ export default function DashboardPanel({
           <div className="card dash-card">
             <div className="card-head">
               <h3>
-                {withSummaries.length > 0
-                  ? "Meeting summaries"
+                {withTranslations.length > 0
+                  ? "Meeting translations"
                   : "Recent meetings"}
               </h3>
               <span className="card-tag">
-                {withSummaries.length > 0
-                  ? `${withSummaries.length} summarized`
+                {withTranslations.length > 0
+                  ? `${withTranslations.length} translated`
                   : `${meetings.length} total`}
               </span>
             </div>
@@ -222,8 +223,8 @@ export default function DashboardPanel({
                 <div className="dash-empty">
                   <h4>No meetings yet</h4>
                   <p>
-                    Start a meeting to capture live captions, then generate a
-                    summary. It will show up here.
+                    Start a meeting to capture live captions, then generate an
+                    English translation. It will show up here.
                   </p>
                   <button type="button" className="btn" onClick={onCreate}>
                     + New meeting
@@ -232,7 +233,7 @@ export default function DashboardPanel({
               ) : (
                 <div className="dash-summary-list">
                   {featured.map((m) => (
-                    <SummaryCard
+                    <TranslationCard
                       key={m.id}
                       meeting={m}
                       onSelect={onSelect}
