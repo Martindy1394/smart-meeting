@@ -130,6 +130,13 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
             )
         )
     meeting.final_transcript = result.text
+    # Final safety net: collapse any residual Whisper repetition loops.
+    try:
+        from .transcription import _collapse_hallucinations
+
+        meeting.final_transcript = _collapse_hallucinations(result.text)
+    except Exception:
+        pass
     meeting.summary = ""
     meeting.summary_format = ""
     meeting.translation = ""

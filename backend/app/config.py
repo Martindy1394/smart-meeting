@@ -157,6 +157,8 @@ class Settings(BaseSettings):
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"
     mbart_model: str = "facebook/mbart-large-50-many-to-many-mmt"
+    # NLLB has a real Tagalog code (tgl_Latn); used for PH → English.
+    nllb_model: str = "facebook/nllb-200-distilled-600M"
     # When true, allow lightweight non-ML fallbacks (extractive summary) so the
     # feature works even without the heavy model weights downloaded.
     allow_llm_fallback: bool = True

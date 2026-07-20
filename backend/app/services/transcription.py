@@ -355,17 +355,15 @@ def tagalog_hf_candidates() -> list[str]:
 def auto_hf_candidates() -> list[str]:
     """HF candidates when language is unknown / auto-detected.
 
-    Prefer broader Philippine coverage first (medium-ph), then Tagalog-small.
-    Callers must **score** candidates — do not accept the first non-junk hit.
+    Prefer Philippine medium. Tagalog-small is omitted here — it often wins
+    first-wins/scoring with high-coverage **repetition loops** on mixed speech.
+    Explicit Tagalog meetings still use ``tagalog_hf_candidates()``.
     """
     return _dedupe_model_ids(
         [
             settings.whisper_hiligaynon_fine_tuned_model,
             settings.whisper_tagalog_fine_tuned_model,
-            # Broad PH medium before Tagalog-small — small often "succeeds"
-            # with high coverage but wrong Filipino lexicon on code-switch.
             settings.whisper_hiligaynon_model,
-            settings.whisper_tagalog_model,
         ]
     )
 
@@ -516,18 +514,54 @@ _STUTTER_RE = re.compile(r"([A-Za-zÀ-ÿ])(?:-\1){3,}", re.IGNORECASE)
 _HYPHEN_LOOP_RE = re.compile(r"\b(\w+)(?:-\1){2,}\b", re.IGNORECASE)
 # "papapapapa" / "nanananana" inside a single token.
 _SYLLABLE_LOOP_RE = re.compile(r"\b([A-Za-zÀ-ÿ]{1,4}?)\1{3,}\b", re.IGNORECASE)
+# Multi-word loops: "ang kanil ang kanil ang kanil…" / "I don't know why…"
+_PHRASE_LOOP_RE = re.compile(
+    r"\b((?:\w+'?\w*\s+){0,5}\w+'?\w*)(?:\s+\1){2,}\b",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _collapse_repeated_sentences(text: str) -> str:
+    """Keep the first copy of consecutive identical sentences."""
+    parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(text) if p.strip()]
+    if len(parts) < 2:
+        return text.strip()
+    out: list[str] = []
+    prev_norm = ""
+    streak = 0
+    for part in parts:
+        norm = re.sub(r"\s+", " ", part.lower())
+        if norm == prev_norm:
+            streak += 1
+            if streak >= 1:
+                continue
+        else:
+            streak = 0
+            prev_norm = norm
+            out.append(part)
+    if not out:
+        return text.strip()
+    # Preserve terminal punctuation when present on the last kept sentence.
+    joined = ". ".join(out)
+    if text.rstrip().endswith((".", "!", "?")) and not joined.endswith((".", "!", "?")):
+        joined += "."
+    return joined
 
 
 def _collapse_hallucinations(text: str) -> str:
-    """Collapse obvious Whisper repetition loops (e.g. 'mic mic mic…')."""
+    """Collapse obvious Whisper repetition loops (words, phrases, sentences)."""
     prev = None
+    text = (text or "").strip()
     while prev != text:
         prev = text
         text = _REPEAT_WORD_RE.sub(r"\1", text)
         text = _STUTTER_RE.sub(r"\1", text)
         text = _HYPHEN_LOOP_RE.sub(r"\1", text)
         text = _SYLLABLE_LOOP_RE.sub(r"\1", text)
-    return re.sub(r"\s+", " ", text).strip()
+        text = _PHRASE_LOOP_RE.sub(r"\1", text)
+        text = re.sub(r"\s+", " ", text).strip()
+    return _collapse_repeated_sentences(text)
 
 
 def _forced_language(requested: str | None = None) -> str:
@@ -1067,20 +1101,45 @@ def _score_segments(segments: list[Segment], duration: float) -> float:
 def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
     """Rank ASR candidates by coverage, word mass, and lexical diversity.
 
-    Prevents a weak model with dense but wrong text from beating a stronger
-    model solely by timeline coverage.
+    Collapses Whisper repetition loops first so a hallucinating model cannot
+    beat a cleaner transcript purely by word count.
     """
     if not segments:
         return -1.0
-    text = " ".join((s.text or "").strip() for s in segments if (s.text or "").strip())
-    tokens = _norm_tokens(text)
+    raw = " ".join((s.text or "").strip() for s in segments if (s.text or "").strip())
+    if not raw:
+        return -1.0
+    collapsed = _collapse_hallucinations(raw)
+    if not collapsed or _is_junk_transcript(collapsed):
+        return -1.0
+    raw_tokens = _norm_tokens(raw)
+    tokens = _norm_tokens(collapsed)
     words = len(tokens)
     if words == 0:
         return -1.0
     cov = _segment_time_coverage(segments, duration)
     uniq_ratio = len(set(tokens)) / float(words)
-    # Mild penalty for highly repetitive / collapsed transcripts.
-    return float(words) * max(0.15, cov) * (0.55 + 0.45 * uniq_ratio)
+    # How much of the raw text survived collapse — low = heavy hallucination.
+    keep_ratio = len(tokens) / float(max(1, len(raw_tokens)))
+    if keep_ratio < 0.45:
+        return -1.0
+    return (
+        float(words)
+        * max(0.15, cov)
+        * (0.45 + 0.55 * uniq_ratio)
+        * (0.35 + 0.65 * keep_ratio)
+    )
+
+
+def _sanitize_segments(segments: list[Segment]) -> list[Segment]:
+    """Collapse hallucination loops inside segment text before persistence."""
+    out: list[Segment] = []
+    for s in segments:
+        text = _collapse_hallucinations((s.text or "").strip())
+        if not text or _is_junk_transcript(text):
+            continue
+        out.append(Segment(text=text, start=s.start, end=s.end))
+    return out
 
 
 def _transcribe_final_hf(
@@ -1398,6 +1457,7 @@ def _transcribe_final_once(
                 segs, detection = _transcribe_final_hf(
                     audio_source, language, model_id=model_id
                 )
+                segs = _sanitize_segments(segs)
                 joined = " ".join(s.text for s in segs)
                 if not segs or _is_junk_transcript(joined):
                     logger.warning(
@@ -1442,6 +1502,7 @@ def _transcribe_final_once(
             fw_segs, fw_detection = _transcribe_final_faster_whisper(
                 audio_source, language
             )
+            fw_segs = _sanitize_segments(fw_segs)
             fw_joined = " ".join(s.text for s in fw_segs)
             if fw_segs and not _is_junk_transcript(fw_joined):
                 fw_score = _candidate_quality_score(fw_segs, duration)

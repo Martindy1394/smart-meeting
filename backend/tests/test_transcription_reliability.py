@@ -210,10 +210,9 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
         assert resolve_final_backend("auto") == "huggingface"
-        # Medium-PH before Tagalog-small for auto / code-switch meetings.
+        # Auto path prefers medium-PH only (Tagalog-small omitted — hallucination loops).
         assert auto_hf_candidates() == [
             "rbcurzon/whisper-medium-ph",
-            "LWobole/whisper-small-tagalog",
         ]
         settings.whisper_live_hiligaynon_model = "/models/hil-ct2"
         assert live_model_id("auto") == "/models/hil-ct2"
@@ -241,6 +240,23 @@ def test_candidate_quality_score_prefers_diverse_coverage():
     ]
     # Same rough duration; diverse text should score higher than repetition.
     assert _candidate_quality_score(strong, 10.0) > _candidate_quality_score(weak, 10.0)
+
+
+def test_collapse_phrase_and_sentence_loops():
+    from app.services.transcription import _collapse_hallucinations, _is_junk_transcript
+
+    looped = (
+        "Sa kanil ang kanil ang kanil ang kanil ang kanil ang kanil "
+        "ang kanil ang kanil ang kanil ang kanil"
+    )
+    collapsed = _collapse_hallucinations(looped)
+    assert collapsed.lower().count("kanil") <= 2
+
+    sentences = "I don't know why I'm so confused. " * 8
+    collapsed2 = _collapse_hallucinations(sentences.strip())
+    assert collapsed2.lower().count("confused") <= 2
+
+    assert _is_junk_transcript(looped) or len(collapsed.split()) < 8
 
 
 def test_language_detection_from_whisper_auto():
@@ -292,6 +308,7 @@ if __name__ == "__main__":
     test_auto_final_backend_prefers_hf_for_tagalog()
     test_auto_meeting_uses_combined_ph_hf_candidates()
     test_candidate_quality_score_prefers_diverse_coverage()
+    test_collapse_phrase_and_sentence_loops()
     test_language_detection_from_whisper_auto()
     test_language_detection_forced_fallback()
     test_language_detection_clamps_confidence()

@@ -1,22 +1,18 @@
 """Supported translation languages and helpers.
 
-The application supports (at least) the 14 languages required by the spec.
-``mbart_code`` maps our short codes to the token identifiers expected by
-``facebook/mbart-large-50-many-to-many-mmt``.
+``mbart_code`` maps short codes to ``facebook/mbart-large-50-many-to-many-mmt``
+tokens for non-PH targets.
 
-Hiligaynon / Tagalog do not have a reliable mBART source token on this
-checkpoint (``tl_XX`` often yields Pashto instead of English), so they map to
-Indonesian ``id_ID`` — the closest working Austronesian language in the model.
+Philippine → English uses **NLLB** (``tgl_Latn`` Tagalog / ``ceb_Latn`` for
+Hiligaynon-closest Visayan) because mBART has no reliable Tagalog source —
+``tl_XX`` often yields Pashto, and ``id_ID`` invents unrelated English.
 """
 from __future__ import annotations
 
 # code -> (display name, mBART-50 language token, fallback flag)
 #
-# NOTE: ``tl_XX`` exists in the tokenizer vocabulary but this mBART-50 checkpoint
-# frequently ignores ``forced_bos_token_id=en_XX`` when the source is ``tl_XX``
-# (or identity ``en_XX→en_XX``) and emits Pashto/Telugu/Hindi instead. For
-# Philippine speech we therefore use Indonesian ``id_ID`` — a related
-# Austronesian language that reliably decodes to English.
+# NOTE: Philippine→English is handled by NLLB in ``llm.py``. mBART ``id_ID``
+# remains only as a last-resort fallback for PH text.
 LANGUAGES: dict[str, dict] = {
     "es": {"name": "Spanish", "mbart": "es_XX"},
     "fr": {"name": "French", "mbart": "fr_XX"},
@@ -31,7 +27,7 @@ LANGUAGES: dict[str, dict] = {
     "nl": {"name": "Dutch", "mbart": "nl_XX"},
     "ko": {"name": "Korean", "mbart": "ko_KR"},
     "id": {"name": "Indonesian", "mbart": "id_ID"},
-    # Hiligaynon / Tagalog: no reliable mBART source token — use Indonesian.
+    # Hiligaynon / Tagalog: NLLB primary; mBART id_ID is fallback only.
     "hil": {"name": "Hiligaynon", "mbart": "id_ID", "fallback": True},
     "tl": {"name": "Tagalog", "mbart": "id_ID", "fallback": True},
     # English is always available as a convenience target.

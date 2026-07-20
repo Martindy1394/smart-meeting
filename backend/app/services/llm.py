@@ -1,18 +1,13 @@
-"""The ``InvokeLLM`` integration: BART summarization + mBART translation.
+"""The ``InvokeLLM`` integration: BART summarization + translation.
 
 Both features are exposed through a single ``invoke_llm(task, ...)`` entry point
 so every AI integration in the codebase flows through one consistent surface.
 
 * Meeting summarization (``summarize_to_english``) is a two-step pipeline:
-  (1) mBART translates the **full** transcript into English (PH/mixed speech
-  included), (2) BART summarizes that English with topic-aware chunking and
-  coverage restore so context and decisions are retained.
-* ``task="summarize"`` on already-English text uses divide-and-conquer BART:
-  topic segments → ``facebook/bart-large-cnn`` per topic → bullets/numbered.
-* ``task="translate"`` uses ``facebook/mbart-large-50-many-to-many-mmt``.
-
-``transformers``/``torch`` are imported lazily. Summarization degrades to the
-idea-preserving extractive path when BART is unavailable.
+  (1) translate the **full** transcript into English (NLLB for Tagalog/PH,
+  mBART fallback), (2) BART summarizes that English with topic-aware chunking.
+* ``task="summarize"`` on already-English text uses divide-and-conquer BART.
+* ``task="translate"`` uses NLLB for Philippine→English and mBART for other pairs.
 """
 from __future__ import annotations
 
@@ -59,8 +54,8 @@ _FILIPINO_STARTER_RE = re.compile(
     r"(?<=[A-Za-z0-9,\"'”’])\s+(?=("
     r"Bakit|Kasi|Kaya|Pero|Hindi|Huag|Huwag|Ngayon|Tapos|Ganon|Ganun|"
     r"Wala|Meron|Mayroon|Dapat|Sana|Ako|Ikaw|Kami|Tayo|Sila|Mga|"
-    r"Ang\s+mga|Sa\s+mga|Sa\s+to|Para\s+sa|Dahil|Kapag|Kung|"
-    r"Lagi|Talaga|Sige|Oo|Hindi\s+ba"
+    r"Ang|Sa|Para|Dahil|Kapag|Kung|Lagi|Talaga|Sige|Oo|"
+    r"Pangarap|Mahal|Gusto|Kailangan"
     r")\b)",
     re.IGNORECASE,
 )
@@ -73,6 +68,11 @@ _FILIPINO_MARKERS = frozenset(
         "nila", "natin", "yung", "iyan", "iyon", "dito", "doon", "roon",
         "pilipino", "pilipinos", "politiko", "maging", "naging", "naginging",
         "lagi", "talaga", "ganun", "ganon", "para", "dahil", "kapag",
+        # Common Tagalog content words that should force translation.
+        "pangarap", "ibigin", "habang", "panahon", "makasama", "buhay",
+        "kulang", "siyang", "ito", "ngayon", "tapos", "salamat", "mahal",
+        "gusto", "kailangan", "pwede", "puwede", "sige", "oo", "huwag",
+        "kanila", "kanilang", "atin", "inyo", "ninyo", "kayo",
     }
 )
 _ENGLISH_MARKERS = frozenset(
@@ -81,6 +81,9 @@ _ENGLISH_MARKERS = frozenset(
         "were", "was", "are", "is", "my", "your", "our", "when", "young",
         "everybody", "watching", "reminds", "movie", "song", "sound", "check",
         "things", "talk", "move", "hoping", "loves", "guy",
+        "mind", "change", "don't", "dont", "tonight", "again", "hold",
+        "breath", "know", "confused", "fall", "over", "because", "will",
+        "make", "me", "my", "core", "down",
     }
 )
 
@@ -92,9 +95,14 @@ class LLMUnavailable(RuntimeError):
 class _Pipelines:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # Fast tokenizers are not thread-safe ("Already borrowed" under concurrency).
+        self._mbart_infer_lock = threading.Lock()
+        self._nllb_infer_lock = threading.Lock()
         self._summarizer = None
         self._mbart_model = None
         self._mbart_tokenizer = None
+        self._nllb_model = None
+        self._nllb_tokenizer = None
 
     def summarizer(self):
         with self._lock:
@@ -136,6 +144,33 @@ class _Pipelines:
                 )
             return self._mbart_model, self._mbart_tokenizer
 
+    def nllb(self):
+        with self._lock:
+            if self._nllb_model is None:
+                try:
+                    from transformers import (  # type: ignore
+                        AutoModelForSeq2SeqLM,
+                        AutoTokenizer,
+                    )
+                except Exception as exc:  # pragma: no cover
+                    raise LLMUnavailable(
+                        "transformers/torch not installed. Install ML deps: "
+                        "pip install -r requirements-ml.txt"
+                    ) from exc
+                model_id = (settings.nllb_model or "").strip() or (
+                    "facebook/nllb-200-distilled-600M"
+                )
+                logger.info("Loading NLLB translator '%s'", model_id)
+                self._nllb_tokenizer = AutoTokenizer.from_pretrained(model_id)
+                self._nllb_model = AutoModelForSeq2SeqLM.from_pretrained(model_id)
+            return self._nllb_model, self._nllb_tokenizer
+
+    def mbart_infer_lock(self) -> threading.Lock:
+        return self._mbart_infer_lock
+
+    def nllb_infer_lock(self) -> threading.Lock:
+        return self._nllb_infer_lock
+
 
 _pipelines = _Pipelines()
 
@@ -159,14 +194,28 @@ def _language_scores(text: str) -> tuple[float, float]:
     return en / n, fi / n
 
 
+# English clause after Filipino (Whisper often glues: "...ibigin ka I know you").
+_ENGLISH_AFTER_PH_RE = re.compile(
+    r"(?<=[A-Za-zÀ-ÿ,\"'”’])\s+(?=("
+    r"I|I'm|I've|I'd|I'll|You|We|They|He|She|The|This|That|These|Those|"
+    r"What|When|Where|Why|How|Who|Don't|Doesn't|Didn't|Can't|Won't|"
+    r"Tonight|Today|Tomorrow|Because|Over|Hold|Please|Thank|Hello|Good|"
+    r"My|Your|Our|His|Her|Their"
+    r")\b)",
+    re.IGNORECASE,
+)
+
+
 def _insert_context_breaks(text: str) -> str:
     """Insert sentence breaks where Whisper glued different spoken contexts.
 
     Walk left-to-right so an English→Filipino split becomes a new clause
     boundary before later Filipino function words (ang/mga/lagi) are considered.
+    Also split Filipino→English glued turns.
     """
     fil_func = _FILIPINO_MARKERS | {
         "ba", "lang", "na", "ang", "mga", "ng", "sa", "ay", "po", "naman", "pa",
+        "haa", "ha",
     }
     pieces: list[str] = []
     cursor = 0
@@ -182,13 +231,35 @@ def _insert_context_breaks(text: str) -> str:
             pieces.append(text[ws_start:ws_end])
         else:
             en, fi = _language_scores(clause)
-            if prev_tokens and en >= fi and en > 0:
+            # Split when the previous token is English (code-switch boundary),
+            # even if the longer clause still scores as Filipino overall.
+            if last_tok in _ENGLISH_MARKERS or (
+                prev_tokens and en >= fi and en > 0
+            ):
                 pieces.append(". ")
             else:
                 pieces.append(text[ws_start:ws_end])
         cursor = ws_end
     pieces.append(text[cursor:])
     text = "".join(pieces)
+
+    # Second pass: Filipino → English glued clauses.
+    pieces = []
+    cursor = 0
+    for match in _ENGLISH_AFTER_PH_RE.finditer(text):
+        ws_start, ws_end = match.start(), match.end()
+        pieces.append(text[cursor:ws_start])
+        built = "".join(pieces)
+        clause = re.split(r"[.!?]\s*", built)[-1]
+        en, fi = _language_scores(clause)
+        if fi > en and fi >= 0.08:
+            pieces.append(". ")
+        else:
+            pieces.append(text[ws_start:ws_end])
+        cursor = ws_end
+    pieces.append(text[cursor:])
+    text = "".join(pieces)
+
     text = re.sub(
         r"\s+(?:meanwhile|on another note|separately|next topic|"
         r"moving on|another thing|also note that)\s+",
@@ -944,6 +1015,68 @@ def summarize_to_english(
     return summary, summary_engine, english, translate_engine
 
 
+def _nllb_src_code(source_language: str, text: str = "") -> str:
+    """Map app/meeting language to an NLLB source code for PH → English."""
+    primary = (source_language or "auto").strip().lower()
+    if primary in {"hil", "hiligaynon", "ilonggo"}:
+        return "ceb_Latn"  # closest Visayan code in NLLB-200
+    if primary in {"tl", "fil", "filipino", "tagalog"}:
+        return "tgl_Latn"
+    if primary in {"id", "indonesian"}:
+        return "ind_Latn"
+    # auto / mixed: prefer Tagalog when Filipino markers dominate.
+    _, fi = _language_scores(text or "")
+    if fi >= 0.08:
+        return "tgl_Latn"
+    return "tgl_Latn"
+
+
+def _nllb_translate_to_english(text: str, source_language: str = "auto") -> str:
+    """Translate Philippine / mixed text to English with NLLB (real Tagalog)."""
+    model, tokenizer = _pipelines.nllb()
+    src = _nllb_src_code(source_language, text)
+    # Transformers NLLB tokenizers expose lang code → id via convert_tokens / lang_code_to_id.
+    bos_id = None
+    if hasattr(tokenizer, "lang_code_to_id"):
+        bos_id = tokenizer.lang_code_to_id.get("eng_Latn")
+    if bos_id is None:
+        try:
+            bos_id = tokenizer.convert_tokens_to_ids("eng_Latn")
+        except Exception:
+            bos_id = None
+    if bos_id is None:
+        raise LLMUnavailable("NLLB tokenizer missing eng_Latn")
+
+    outputs: list[str] = []
+    with _pipelines.nllb_infer_lock():
+        if hasattr(tokenizer, "src_lang"):
+            tokenizer.src_lang = src
+        for chunk in _chunk_text(
+            text, overlap_chars=200 if len(text) > _MAX_CHUNK_CHARS else 0
+        ):
+            encoded = tokenizer(
+                chunk, return_tensors="pt", truncation=True, max_length=512
+            )
+            generated = model.generate(
+                **encoded,
+                forced_bos_token_id=bos_id,
+                max_new_tokens=min(512, max(64, int(len(chunk.split()) * 2.5))),
+                num_beams=5,
+                early_stopping=True,
+                no_repeat_ngram_size=4,
+            )
+            cleaned = tokenizer.batch_decode(
+                generated, skip_special_tokens=True
+            )[0].strip()
+            cleaned = _collapse_translation_loops(cleaned)
+            if not _looks_like_latin_script(cleaned):
+                raise _NonEnglishTranslation(cleaned)
+            if _is_garbage_english_translation(chunk, cleaned):
+                raise _NonEnglishTranslation(cleaned)
+            outputs.append(cleaned)
+    return " ".join(outputs).strip()
+
+
 def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
     model, tokenizer = _pipelines.mbart()
     src = mbart_code(src_code) or "en_XX"
@@ -960,34 +1093,48 @@ def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
         bos_id = tokenizer.convert_tokens_to_ids(tgt)
 
     outputs: list[str] = []
-    # Overlap long inputs so discourse across chunk edges is not lost.
-    for chunk in _chunk_text(text, overlap_chars=280 if len(text) > _MAX_CHUNK_CHARS else 0):
-        tokenizer.src_lang = src
-        encoded = tokenizer(chunk, return_tensors="pt", truncation=True, max_length=1024)
-        generated = model.generate(
-            **encoded,
-            forced_bos_token_id=bos_id,
-            max_new_tokens=min(512, max(64, int(len(chunk.split()) * 2.8))),
-            num_beams=6,
-            early_stopping=True,
-            no_repeat_ngram_size=4,
-            length_penalty=1.05,
-        )
-        raw = tokenizer.batch_decode(generated, skip_special_tokens=False)[0]
-        # Drop any leaked language-code tokens the decoder may prepend after BOS.
-        cleaned = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
-        cleaned = _strip_leaked_lang_codes(cleaned)
-        cleaned = _collapse_translation_loops(cleaned)
-        if tgt == "en_XX" and not _looks_like_latin_script(cleaned):
-            logger.warning(
-                "mBART %s→%s produced non-Latin output (%s…); will retry upstream.",
-                src,
-                tgt,
-                cleaned[:40],
+    # Serialize tokenize+generate — Fast tokenizers raise "Already borrowed"
+    # when used concurrently from summarize/translate auto-paths.
+    with _pipelines.mbart_infer_lock():
+        # Overlap long inputs so discourse across chunk edges is not lost.
+        for chunk in _chunk_text(
+            text, overlap_chars=280 if len(text) > _MAX_CHUNK_CHARS else 0
+        ):
+            tokenizer.src_lang = src
+            encoded = tokenizer(
+                chunk, return_tensors="pt", truncation=True, max_length=1024
             )
-            logger.debug("Raw decode: %s", raw[:120])
-            raise _NonEnglishTranslation(cleaned)
-        outputs.append(cleaned)
+            generated = model.generate(
+                **encoded,
+                forced_bos_token_id=bos_id,
+                max_new_tokens=min(512, max(64, int(len(chunk.split()) * 2.8))),
+                num_beams=6,
+                early_stopping=True,
+                no_repeat_ngram_size=4,
+                length_penalty=1.05,
+            )
+            raw = tokenizer.batch_decode(generated, skip_special_tokens=False)[0]
+            # Drop any leaked language-code tokens the decoder may prepend after BOS.
+            cleaned = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
+            cleaned = _strip_leaked_lang_codes(cleaned)
+            cleaned = _collapse_translation_loops(cleaned)
+            if tgt == "en_XX" and not _looks_like_latin_script(cleaned):
+                logger.warning(
+                    "mBART %s→%s produced non-Latin output (%s…); will retry upstream.",
+                    src,
+                    tgt,
+                    cleaned[:40],
+                )
+                logger.debug("Raw decode: %s", raw[:120])
+                raise _NonEnglishTranslation(cleaned)
+            if tgt == "en_XX" and _is_garbage_english_translation(chunk, cleaned):
+                logger.warning(
+                    "mBART %s→en produced word-salad (%s…); will retry upstream.",
+                    src,
+                    cleaned[:48],
+                )
+                raise _NonEnglishTranslation(cleaned)
+            outputs.append(cleaned)
     return " ".join(outputs).strip()
 
 
@@ -1000,7 +1147,11 @@ _LANG_CODE_LEAK_RE = re.compile(
     r"nl_XX|ko_KR|id_ID|tl_XX|ps_AF|te_IN|ur_PK|fa_IR)+\s*",
     re.IGNORECASE,
 )
-_REPEAT_PHRASE_RE = re.compile(r"\b(.{2,24}?)(?:\s+\1){3,}\b", re.IGNORECASE)
+_REPEAT_PHRASE_RE = re.compile(r"\b(.{2,40}?)(?:\s+\1){2,}\b", re.IGNORECASE)
+_REPEAT_SENTENCE_RE = re.compile(
+    r"([^.!?]{8,120}[.!?])(?:\s+\1){2,}",
+    re.IGNORECASE,
+)
 
 
 def _strip_leaked_lang_codes(text: str) -> str:
@@ -1009,10 +1160,51 @@ def _strip_leaked_lang_codes(text: str) -> str:
 
 def _collapse_translation_loops(text: str) -> str:
     prev = None
+    text = (text or "").strip()
     while prev != text:
         prev = text
         text = _REPEAT_PHRASE_RE.sub(r"\1", text)
-    return _WS_RE.sub(" ", text).strip()
+        text = _REPEAT_SENTENCE_RE.sub(r"\1", text)
+        text = _WS_RE.sub(" ", text).strip()
+    return text
+
+
+def _is_garbage_english_translation(source: str, translated: str) -> bool:
+    """Detect mBART word-salad (e.g. bow/arrow/rope loops) on PH→EN."""
+    dst = _collapse_translation_loops(translated or "")
+    if not dst:
+        return True
+    src_tokens = re.findall(r"[A-Za-zÀ-ÿ']+", (source or "").lower())
+    dst_tokens = re.findall(r"[A-Za-zÀ-ÿ']+", dst.lower())
+    if len(dst_tokens) < 2:
+        return True
+    # Heavy repetition remaining after collapse.
+    if len(dst_tokens) >= 8:
+        uniq = len(set(dst_tokens)) / float(len(dst_tokens))
+        if uniq < 0.35:
+            return True
+    # Collapse removed most of a long translation → was a loop.
+    raw_n = len(re.findall(r"[A-Za-zÀ-ÿ']+", (translated or "").lower()))
+    if raw_n >= 20 and len(dst_tokens) < max(6, int(raw_n * 0.4)):
+        return True
+    # Nonsense short-noun salad unrelated to source (classic id_ID failure mode).
+    salad = {
+        "bow", "arrow", "rope", "rail", "wing", "stone", "tail", "stub",
+        "row", "rows", "wing", "wings",
+    }
+    if len(dst_tokens) >= 8:
+        salad_hits = sum(1 for t in dst_tokens if t in salad)
+        if salad_hits / len(dst_tokens) >= 0.35:
+            return True
+    # Source was clearly Filipino but output still has many Filipino markers.
+    if src_tokens:
+        fi = sum(1 for t in src_tokens if t in _FILIPINO_MARKERS) / max(1, len(src_tokens))
+        fi_out = sum(1 for t in dst_tokens if t in _FILIPINO_MARKERS) / max(
+            1, len(dst_tokens)
+        )
+        if fi >= 0.12 and fi_out >= 0.12 and fi_out >= fi * 0.6:
+            return True
+    return False
 
 
 def _looks_like_latin_script(text: str) -> bool:
@@ -1062,13 +1254,17 @@ def _translate_unit_with_context(
     src: str,
     *,
     context_n: int = 2,
+    engine: str = "mbart",
 ) -> str:
     """Translate one unit with preceding units as discourse context."""
     ctx = [u.strip() for u in prev_units[-context_n:] if (u or "").strip()]
+    window = " ".join(ctx + [unit]) if ctx else unit
+    if engine == "nllb":
+        full = _nllb_translate_to_english(window, source_language=src)
+    else:
+        full = _mbart_translate(window, src, "en")
     if not ctx:
-        return _mbart_translate(unit, src, "en")
-    window = " ".join(ctx + [unit])
-    full = _mbart_translate(window, src, "en")
+        return full
     return _extract_target_span(full, unit, window) or full
 
 
@@ -1076,14 +1272,22 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
     """Translate the full meeting transcript into English with context.
 
     Strategy:
-    1. Split into idea units so PH/English code-switch keeps discourse turns.
+    1. Collapse Whisper repetition loops, then split into idea units.
     2. Keep clearly-English units as-is (avoids broken en→en).
-    3. Translate other units with a sliding previous-unit context window so
-       pronouns / topics resolve across clauses.
-    4. Prefer ``id_ID`` source for Philippine speech (``tl_XX`` is unreliable).
-    5. Per-unit retries; never drop a clause — fall back to source text.
+    3. Translate PH / mixed units with **NLLB** (real Tagalog ``tgl_Latn``).
+       mBART ``id_ID`` is only a fallback — it does not understand Tagalog.
+    4. If Filipino still dominates the output, retry the full transcript once.
     """
     normalized = _normalize_spoken_transcript(text or "")
+    if not normalized:
+        return "", "none"
+    # Strip ASR hallucination loops before translation (Tagalog song loops, etc.).
+    try:
+        from .transcription import _collapse_hallucinations
+
+        normalized = _collapse_hallucinations(normalized)
+    except Exception:
+        normalized = _collapse_translation_loops(normalized)
     if not normalized:
         return "", "none"
 
@@ -1093,43 +1297,63 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
     if not units:
         return "", "none"
 
-    # Prefer Indonesian source for Philippine languages — tl_XX emits Pashto.
     primary = (source_language or "auto").strip().lower()
-    if primary in {
+    # NLLB first for Philippine speech; mBART id only as backup.
+    use_nllb = primary in {
         "hil",
         "tl",
         "fil",
         "filipino",
         "tagalog",
+        "hiligaynon",
+        "ilonggo",
         "auto",
         "detect",
         "none",
         "id",
         "",
-    }:
-        src_candidates = ["id", "en"]
-    elif primary in {"en", "english"}:
-        src_candidates = ["id", "en"]
-    else:
-        src_candidates = [primary, "id", "en"]
+    } or _language_scores(normalized)[1] >= 0.08
 
     out_units: list[str] = []
     translated_any = False
+    kept_source = 0
+    engine_name = "passthrough-english"
     for i, unit in enumerate(units):
+        # Drop residual ASR hallucination fragments before translating.
+        try:
+            from .transcription import _collapse_hallucinations, _is_junk_transcript
+
+            unit_clean = _collapse_hallucinations(unit)
+            if not unit_clean or _is_junk_transcript(unit_clean):
+                continue
+            unit = unit_clean
+        except Exception:
+            pass
         if _is_mostly_english_sentence(unit):
             out_units.append(unit)
             continue
 
         piece = ""
         last_err = None
-        for src in src_candidates:
+        attempts: list[tuple[str, str]] = []
+        if use_nllb:
+            attempts.append(("nllb", primary or "auto"))
+        attempts.extend([("mbart", "id"), ("mbart", "en")])
+
+        for engine, src in attempts:
             try:
                 piece = _translate_unit_with_context(
-                    unit, out_units if out_units else units[:i], src
+                    unit,
+                    out_units if out_units else units[:i],
+                    src,
+                    engine=engine,
                 )
                 if not _looks_like_latin_script(piece):
                     raise _NonEnglishTranslation(piece)
+                if _is_garbage_english_translation(unit, piece):
+                    raise _NonEnglishTranslation(piece)
                 translated_any = True
+                engine_name = "nllb-200" if engine == "nllb" else "mbart-large-50"
                 break
             except _NonEnglishTranslation as exc:
                 last_err = exc
@@ -1139,20 +1363,59 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
                 last_err = exc
                 piece = ""
                 logger.debug(
-                    "Unit translate src=%s failed: %s", src, exc
+                    "Unit translate engine=%s src=%s failed: %s", engine, src, exc
                 )
                 continue
         if not piece:
             logger.warning(
-                "Keeping source clause after mBART failures (last=%s): %s…",
+                "Keeping source clause after translation failures (last=%s): %s…",
                 last_err,
                 unit[:48],
             )
             piece = unit
+            kept_source += 1
         out_units.append(piece)
 
-    engine = "mbart-large-50" if translated_any else "passthrough-english"
-    return " ".join(s for s in out_units if s).strip(), engine
+    joined = " ".join(s for s in out_units if s).strip()
+    joined = _collapse_translation_loops(joined)
+    _, fi_out = _language_scores(joined)
+    # Full-pass fallback when many PH clauses were kept or output still Filipino.
+    if kept_source >= 1 or fi_out >= 0.08:
+        for engine, src in (
+            (("nllb", primary or "auto"), ("mbart", "id"))
+            if use_nllb
+            else (("mbart", "id"),)
+        ):
+            try:
+                if engine == "nllb":
+                    whole = _nllb_translate_to_english(normalized, source_language=src)
+                    whole_engine = "nllb-200-full"
+                else:
+                    whole = _mbart_translate(normalized, src, "en")
+                    whole_engine = "mbart-large-50-full"
+                whole = _collapse_translation_loops(whole)
+                if (
+                    whole
+                    and _looks_like_latin_script(whole)
+                    and not _is_garbage_english_translation(normalized, whole)
+                ):
+                    _, fi_whole = _language_scores(whole)
+                    if fi_whole < max(0.08, fi_out):
+                        logger.info(
+                            "Using full-transcript %s fallback "
+                            "(kept_source=%d fi_out=%.2f fi_whole=%.2f)",
+                            whole_engine,
+                            kept_source,
+                            fi_out,
+                            fi_whole,
+                        )
+                        return whole, whole_engine
+            except Exception as exc:
+                logger.warning("Full-transcript fallback (%s) failed: %s", engine, exc)
+
+    if not translated_any:
+        engine_name = "passthrough-english"
+    return joined, engine_name
 
 
 def translate(text: str, target_language: str, source_language: str = "auto") -> tuple[str, str]:
