@@ -693,6 +693,8 @@ async def transcribe_ws(websocket: WebSocket):
                     "type": "final_transcript",
                     "text": result.get("text") or "",
                     "segments": result.get("segments") or [],
+                    "language": result.get("language"),
+                    "language_detection": result.get("language_detection"),
                 },
             )
         else:

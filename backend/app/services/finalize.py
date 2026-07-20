@@ -152,6 +152,18 @@ def finalize_meeting_recording(
         audio.delete_raw_pcm(meeting_id)
         live_metrics.record_finalize(True)
 
+        language_detection = None
+        if result.language_detected_by or result.language_confidence is not None:
+            language_detection = {
+                "language": (result.language or meeting.language or None),
+                "confidence": result.language_confidence,
+                "detected_by": result.language_detected_by or "whisper",
+            }
+            if isinstance(language_detection["language"], str):
+                lang = language_detection["language"].strip().lower()
+                if lang in {"", "auto", "detect", "none"}:
+                    language_detection["language"] = None
+
         return {
             "ok": True,
             "text": result.text,
@@ -161,6 +173,8 @@ def finalize_meeting_recording(
             ],
             "engine": result.engine,
             "status": meeting.status,
+            "language": meeting.language,
+            "language_detection": language_detection,
         }
     except Exception as exc:
         logger.exception("Finalize failed for meeting %s", meeting_id)
