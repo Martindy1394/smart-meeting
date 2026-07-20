@@ -62,6 +62,8 @@ def _apply_lightweight_migrations() -> None:
         "venue": "VARCHAR(255) DEFAULT ''",
         "meeting_date": "TIMESTAMP NULL",
         "attendees": "TEXT DEFAULT '[]'",
+        "language_confidence": "FLOAT NULL",
+        "language_detected_by": "VARCHAR(32) DEFAULT ''",
     }
     user_columns = {
         "username": "VARCHAR(64) DEFAULT ''",

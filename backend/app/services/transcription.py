@@ -86,6 +86,26 @@ class Segment:
     end: float
 
 
+@dataclass
+class LanguageDetection:
+    """Whisper language-detect metadata for analysis / debugging.
+
+    ``detected_by`` is ``whisper`` when auto-detect chose the code, or
+    ``forced_fallback`` when a forced decode code (usually ``tl``) was used.
+    """
+
+    language: str | None = None
+    confidence: float | None = None
+    detected_by: str = "whisper"
+
+    def as_dict(self) -> dict:
+        return {
+            "language": self.language,
+            "confidence": self.confidence,
+            "detected_by": self.detected_by,
+        }
+
+
 class _ModelCache:
     """Lazily loads Whisper backends with per-model infer locks + LRU eviction.
 
@@ -449,6 +469,61 @@ def _normalize_detected_language(code: str | None) -> str | None:
     return lang
 
 
+def _clamp_confidence(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        return None
+    if conf != conf:  # NaN
+        return None
+    return max(0.0, min(1.0, conf))
+
+
+def _language_detection_from_info(
+    info: object | None,
+    *,
+    decode_language: str | None,
+    fallback_language: str | None = None,
+) -> LanguageDetection:
+    """Build detection metadata from a faster-whisper ``TranscriptionInfo``.
+
+    ``decode_language=None`` means Whisper auto-detect was used → ``whisper``.
+    A non-null decode code means we forced the token → ``forced_fallback``.
+    """
+    detected = _normalize_detected_language(
+        getattr(info, "language", None) if info is not None else None
+    )
+    confidence = _clamp_confidence(
+        getattr(info, "language_probability", None) if info is not None else None
+    )
+    forced = _normalize_detected_language(decode_language)
+    if forced is None:
+        return LanguageDetection(
+            language=detected or _normalize_detected_language(fallback_language),
+            confidence=confidence,
+            detected_by="whisper",
+        )
+    return LanguageDetection(
+        language=detected or forced or _normalize_detected_language(fallback_language),
+        confidence=confidence,
+        detected_by="forced_fallback",
+    )
+
+
+def _language_detection_forced(
+    language: str | None,
+    *,
+    confidence: float | None = None,
+) -> LanguageDetection:
+    return LanguageDetection(
+        language=_normalize_detected_language(language),
+        confidence=_clamp_confidence(confidence),
+        detected_by="forced_fallback",
+    )
+
+
 _REPEAT_WORD_RE = re.compile(r"\b(\w+)(?:\s+\1){3,}\b", re.IGNORECASE)
 _STUTTER_RE = re.compile(r"([A-Za-zÀ-ÿ])(?:-\1){3,}", re.IGNORECASE)
 _HYPHEN_LOOP_RE = re.compile(r"\b(\w+)(?:-\1){2,}\b", re.IGNORECASE)
@@ -634,7 +709,7 @@ def _energy_ok(pcm: np.ndarray, *, min_rms: float = 0.008) -> bool:
 
 def transcribe_live(
     pcm: np.ndarray, language: str | None
-) -> tuple[list[Segment], str | None]:
+) -> tuple[list[Segment], LanguageDetection | None]:
     """Low-latency transcription of a live audio window.
 
     Uses overlapping windows upstream. Default product path is Whisper
@@ -642,7 +717,7 @@ def transcribe_live(
     Tagalog/English labels still force a decode code; empty/junk output retries
     with auto or ``tl`` as appropriate.
 
-    Returns ``(segments, detected_language)``.
+    Returns ``(segments, language_detection)``.
     """
     if pcm is None or len(pcm) == 0:
         return [], None
@@ -674,7 +749,8 @@ def transcribe_live(
     else:
         live_prompt = None
     t0 = time.perf_counter()
-    detected_lang: str | None = None
+    winning_decode: str | None = primary_lang
+    winning_info: object | None = None
 
     def _run(decode_language: str | None):
         with cache.fw_infer_lock(model_id):
@@ -703,7 +779,7 @@ def transcribe_live(
             )
 
     segments, info = _run(primary_lang)
-    detected_lang = _normalize_detected_language(getattr(info, "language", None))
+    winning_info = info
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
@@ -719,12 +795,8 @@ def transcribe_live(
         if retry_lang != primary_lang:
             try:
                 segments, info = _run(retry_lang)
-                detected_lang = (
-                    _normalize_detected_language(getattr(info, "language", None))
-                    or detected_lang
-                )
-                if detected_lang:
-                    logger.info("Live decode retry language=%s", detected_lang)
+                winning_decode = retry_lang
+                winning_info = info
                 for s in segments:
                     text = _collapse_hallucinations((s.text or "").strip())
                     if (
@@ -736,16 +808,22 @@ def transcribe_live(
             except Exception as exc:
                 logger.debug("Live decode retry failed: %s", exc)
 
+    detection = _language_detection_from_info(
+        winning_info, decode_language=winning_decode
+    )
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     logger.info(
-        "asr.live duration_ms=%d segments=%d pcm_samples=%d model=%s detected=%s",
+        "asr.live duration_ms=%d segments=%d pcm_samples=%d model=%s "
+        "detected=%s confidence=%s by=%s",
         elapsed_ms,
         len(out),
         int(len(pcm)),
         model_id,
-        detected_lang,
+        detection.language,
+        detection.confidence,
+        detection.detected_by,
     )
-    return out, detected_lang
+    return out, detection
 
 
 def _clean_caption(text: str) -> str:
@@ -1010,7 +1088,7 @@ def _transcribe_final_hf(
     audio_source,
     language: str | None,
     model_id: str | None = None,
-) -> tuple[list[Segment], str | None]:
+) -> tuple[list[Segment], LanguageDetection | None]:
     """Final pass with a Hugging Face fine-tuned Whisper checkpoint.
 
     For auto/PH meetings, if the primary decode (usually auto) is thin,
@@ -1033,7 +1111,7 @@ def _transcribe_final_hf(
     prompt_ids = _hf_prompt_ids(pipe, initial_prompt(language))
     best: list[Segment] = []
     best_score = -1.0
-    best_lang: str | None = None
+    best_detection: LanguageDetection | None = None
     t0 = time.perf_counter()
 
     for lang in lang_attempts:
@@ -1080,7 +1158,14 @@ def _transcribe_final_hf(
         if score > best_score:
             best = segs
             best_score = score
-            best_lang = _normalize_detected_language(lang) or best_lang
+            if lang is None:
+                best_detection = LanguageDetection(
+                    language=None,
+                    confidence=None,
+                    detected_by="whisper",
+                )
+            else:
+                best_detection = _language_detection_forced(lang)
         # Good enough coverage — skip forced-tl retry.
         if (
             lang is None
@@ -1091,13 +1176,16 @@ def _transcribe_final_hf(
             break
 
     logger.info(
-        "asr.final_hf duration_ms=%d samples=%d model=%s best_score=%.1f",
+        "asr.final_hf duration_ms=%d samples=%d model=%s best_score=%.1f "
+        "detected=%s by=%s",
         int((time.perf_counter() - t0) * 1000),
         int(samples.size),
         model_id,
         best_score if best_score >= 0 else 0.0,
+        best_detection.language if best_detection else None,
+        best_detection.detected_by if best_detection else None,
     )
-    return best, best_lang
+    return best, best_detection
 
 
 def _run_faster_whisper_final(
@@ -1132,7 +1220,7 @@ def _run_faster_whisper_final(
 
 def _transcribe_final_faster_whisper(
     audio_source, language: str | None
-) -> tuple[list[Segment], str | None]:
+) -> tuple[list[Segment], LanguageDetection | None]:
     """Final pass via faster-whisper with coverage-aware retries.
 
     Root cause of missing spoken words on board meetings:
@@ -1141,7 +1229,7 @@ def _transcribe_final_faster_whisper(
     transcript gaps of 20–30s). We now default to auto language and no VAD,
     and retry if timeline coverage is still poor.
 
-    Returns ``(segments, detected_language)``.
+    Returns ``(segments, language_detection)``.
     """
     model_id = final_faster_model_id(language)
     cache = get_model_cache()
@@ -1196,7 +1284,7 @@ def _transcribe_final_faster_whisper(
         unique_attempts.append((label, lang, vad))
 
     best: list[Segment] = []
-    best_detected: str | None = None
+    best_detection: LanguageDetection | None = None
     best_score = (-1.0, -1, -1.0, 0.0)  # weighted words, words, cov, -gap
     t0 = time.perf_counter()
     for label, lang, vad in unique_attempts:
@@ -1212,7 +1300,9 @@ def _transcribe_final_faster_whisper(
         except Exception as exc:
             logger.warning("Final ASR attempt %s failed: %s", label, exc)
             continue
-        detected = _normalize_detected_language(getattr(info, "language", None)) or lang
+        detection = _language_detection_from_info(info, decode_language=lang)
+        if detection.language is None and lang is not None:
+            detection.language = _normalize_detected_language(lang)
         cov = _segment_time_coverage(segs, duration)
         words = len(" ".join(s.text for s in segs).split())
         gap = _largest_segment_gap(segs, duration)
@@ -1226,11 +1316,14 @@ def _transcribe_final_faster_whisper(
         density = words / max(duration, 1.0)
         logger.info(
             "asr.final_fw attempt=%s lang=%s vad=%s detected=%s "
-            "coverage=%.2f gap=%.1fs words=%d density=%.2f sparse_pen=%.1f",
+            "confidence=%s by=%s coverage=%.2f gap=%.1fs words=%d "
+            "density=%.2f sparse_pen=%.1f",
             label,
             lang,
             vad,
-            detected,
+            detection.language,
+            detection.confidence,
+            detection.detected_by,
             cov,
             gap,
             words,
@@ -1242,7 +1335,7 @@ def _transcribe_final_faster_whisper(
         if score > best_score:
             best_score = score
             best = segs
-            best_detected = _normalize_detected_language(detected)
+            best_detection = detection
         # Early exit only when dense + well covered.
         if (
             cov >= max(min_cov, 0.75)
@@ -1253,14 +1346,17 @@ def _transcribe_final_faster_whisper(
             break
 
     logger.info(
-        "asr.final_fw duration_ms=%d model=%s best_score_words_x_cov=%.1f best_words=%d detected=%s",
+        "asr.final_fw duration_ms=%d model=%s best_score_words_x_cov=%.1f "
+        "best_words=%d detected=%s confidence=%s by=%s",
         int((time.perf_counter() - t0) * 1000),
         model_id,
         best_score[0] if best_score[0] >= 0 else 0.0,
         best_score[1] if best_score[1] >= 0 else 0,
-        best_detected,
+        best_detection.language if best_detection else None,
+        best_detection.confidence if best_detection else None,
+        best_detection.detected_by if best_detection else None,
     )
-    return best, best_detected
+    return best, best_detection
 
 
 def _looks_like_hf_repo(model_id: str) -> bool:
@@ -1270,7 +1366,7 @@ def _looks_like_hf_repo(model_id: str) -> bool:
 
 def _transcribe_final_once(
     audio_source, language: str | None
-) -> tuple[list[Segment], str | None]:
+) -> tuple[list[Segment], LanguageDetection | None]:
     """Single-shot final ASR.
 
     ``WHISPER_FINAL_BACKEND=auto`` (default) tries Tagalog/Hiligaynon/PH HF
@@ -1288,19 +1384,20 @@ def _transcribe_final_once(
         ]
         for model_id in candidates:
             try:
-                segs, detected = _transcribe_final_hf(
+                segs, detection = _transcribe_final_hf(
                     audio_source, language, model_id=model_id
                 )
                 joined = " ".join(s.text for s in segs)
                 if segs and not _is_junk_transcript(joined):
                     logger.info(
                         "Final ASR using PH HF model '%s' "
-                        "(meeting_language=%s detected=%s)",
+                        "(meeting_language=%s detected=%s by=%s)",
                         model_id,
                         language,
-                        detected,
+                        detection.language if detection else None,
+                        detection.detected_by if detection else None,
                     )
-                    return segs, detected
+                    return segs, detection
                 logger.warning(
                     "HF final ASR '%s' looked like hallucination; trying next candidate.",
                     model_id,
@@ -1363,7 +1460,7 @@ def _merge_chunk_segments(
 
 def transcribe_final(
     audio_source, language: str | None
-) -> tuple[list[Segment], str | None]:
+) -> tuple[list[Segment], LanguageDetection | None]:
     """Full-accuracy transcription for Stop Recording / re-transcribe / upload.
 
     Prefer Philippine HF Whisper candidates (Tagalog + PH medium) when backend
@@ -1373,7 +1470,7 @@ def transcribe_final(
     Long board-meeting audio (hours) is processed in overlapping chunks so the
     final pass stays within model/memory limits.
 
-    Returns ``(segments, detected_language)``.
+    Returns ``(segments, language_detection)``.
     """
     samples = _audio_to_float32(audio_source)
     if samples.size == 0:
@@ -1399,7 +1496,7 @@ def transcribe_final(
     )
 
     all_segments: list[Segment] = []
-    detected_lang: str | None = None
+    detection: LanguageDetection | None = None
     offset = 0
     chunk_idx = 0
     while offset < samples.size:
@@ -1416,12 +1513,19 @@ def transcribe_final(
             end / float(sr) / 60.0,
         )
         try:
-            segs, chunk_lang = _transcribe_final_once(piece, language)
+            segs, chunk_detection = _transcribe_final_once(piece, language)
         except Exception:
             logger.exception("Final ASR chunk %d failed; continuing", chunk_idx)
-            segs, chunk_lang = [], None
-        if chunk_lang and not detected_lang:
-            detected_lang = chunk_lang
+            segs, chunk_detection = [], None
+        if chunk_detection and detection is None:
+            detection = chunk_detection
+        elif (
+            chunk_detection
+            and detection
+            and detection.confidence is None
+            and chunk_detection.confidence is not None
+        ):
+            detection = chunk_detection
         all_segments = _merge_chunk_segments(
             all_segments, segs, time_offset=time_offset
         )
@@ -1429,4 +1533,4 @@ def transcribe_final(
             break
         offset += hop_samples
 
-    return all_segments, detected_lang
+    return all_segments, detection

@@ -59,6 +59,22 @@ def _clean_attendees(names: list[str]) -> str:
     return json.dumps(unique)
 
 
+def _language_detection_info(m: Meeting):
+    """Build the nested language_detection payload from ORM columns."""
+    from ..schemas import LanguageDetectionInfo
+
+    by = (getattr(m, "language_detected_by", None) or "").strip()
+    conf = getattr(m, "language_confidence", None)
+    lang = (m.language or "").strip().lower()
+    if not by and conf is None:
+        return None
+    return LanguageDetectionInfo(
+        language=lang if lang and lang not in {"auto", "detect", "none"} else None,
+        confidence=conf,
+        detected_by=by or "whisper",
+    )
+
+
 def _to_summary(m: Meeting) -> MeetingSummary:
     summary_text = (m.summary or "").strip()
     translation_text = (m.translation or "").strip()
@@ -67,6 +83,7 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         title=m.title,
         status=m.status,
         language=m.language,
+        language_detection=_language_detection_info(m),
         venue=m.venue or "",
         meeting_date=m.meeting_date,
         duration_seconds=m.duration_seconds,
@@ -86,6 +103,7 @@ def _to_summary(m: Meeting) -> MeetingSummary:
 def _to_detail(m: Meeting) -> MeetingDetail:
     detail = MeetingDetail.model_validate(m)
     detail.has_audio = _has_audio(m)
+    detail.language_detection = _language_detection_info(m)
     return detail
 
 

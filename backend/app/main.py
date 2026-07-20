@@ -167,13 +167,14 @@ def health_transcription():
     pcm = (np.random.randn(settings.audio_sample_rate).astype(np.float32) * 0.002)
     t0 = time.time()
     try:
-        segs, detected = transcription_svc.transcribe_live(pcm, "auto")
+        segs, detection = transcription_svc.transcribe_live(pcm, "auto")
         return {
             "ok": True,
             "latency_ms": int((time.time() - t0) * 1000),
             "live_model": settings.whisper_live_model,
             "decode_language": "auto",
-            "detected_language": detected,
+            "detected_language": detection.language if detection else None,
+            "language_detection": detection.as_dict() if detection else None,
             "task": "transcribe",
             "segments": len(segs),
             "backend": settings.whisper_final_backend,

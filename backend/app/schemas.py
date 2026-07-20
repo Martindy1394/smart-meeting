@@ -146,6 +146,14 @@ class TranscriptSegmentResponse(BaseModel):
         from_attributes = True
 
 
+class LanguageDetectionInfo(BaseModel):
+    """Whisper language-detect metadata for analysis when auto-detect fails."""
+
+    language: str | None = None
+    confidence: float | None = None
+    detected_by: str = ""  # whisper | forced_fallback | live_fallback
+
+
 class MeetingSummary(BaseModel):
     """Lightweight meeting representation for list / dashboard views."""
 
@@ -153,6 +161,7 @@ class MeetingSummary(BaseModel):
     title: str
     status: str
     language: str
+    language_detection: LanguageDetectionInfo | None = None
     venue: str = ""
     meeting_date: datetime | None = None
     duration_seconds: float
@@ -177,6 +186,7 @@ class MeetingDetail(BaseModel):
     title: str
     status: str
     language: str
+    language_detection: LanguageDetectionInfo | None = None
     venue: str = ""
     meeting_date: datetime | None = None
     attendees: list[str] = []

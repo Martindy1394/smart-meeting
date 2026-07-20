@@ -11,10 +11,12 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.transcription import (  # noqa: E402
+    LanguageDetection,
     _ModelCache,
     _final_decode_language,
     _final_language_mode,
     _forced_language,
+    _language_detection_from_info,
     auto_hf_candidates,
     final_faster_model_id,
     hiligaynon_hf_candidates,
@@ -222,6 +224,43 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_live_hiligaynon_model = prev_live_hil
 
 
+def test_language_detection_from_whisper_auto():
+    class _Info:
+        language = "tl"
+        language_probability = 0.92
+
+    det = _language_detection_from_info(_Info(), decode_language=None)
+    assert det.language == "tl"
+    assert det.confidence == 0.92
+    assert det.detected_by == "whisper"
+    assert det.as_dict() == {
+        "language": "tl",
+        "confidence": 0.92,
+        "detected_by": "whisper",
+    }
+
+
+def test_language_detection_forced_fallback():
+    class _Info:
+        language = "tl"
+        language_probability = 0.41
+
+    det = _language_detection_from_info(_Info(), decode_language="tl")
+    assert det.language == "tl"
+    assert det.confidence == 0.41
+    assert det.detected_by == "forced_fallback"
+
+
+def test_language_detection_clamps_confidence():
+    class _Info:
+        language = "en"
+        language_probability = 1.7
+
+    det = _language_detection_from_info(_Info(), decode_language=None)
+    assert det.confidence == 1.0
+    assert isinstance(LanguageDetection(language="en").as_dict()["detected_by"], str)
+
+
 if __name__ == "__main__":
     test_merge_live_caption_appends_novel_overlap()
     test_merge_live_caption_never_shrinks()
@@ -233,4 +272,7 @@ if __name__ == "__main__":
     test_auto_final_backend_prefers_hf_for_hiligaynon()
     test_auto_final_backend_prefers_hf_for_tagalog()
     test_auto_meeting_uses_combined_ph_hf_candidates()
+    test_language_detection_from_whisper_auto()
+    test_language_detection_forced_fallback()
+    test_language_detection_clamps_confidence()
     print("all_unit_tests_passed")

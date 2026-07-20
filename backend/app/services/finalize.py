@@ -93,7 +93,9 @@ def finalize_meeting_recording(
                         )
                     ],
                     engine="whisper-live-fallback",
-                    language=lang,
+                    language=lang if lang not in {"auto", "detect", "none", None} else None,
+                    language_confidence=None,
+                    language_detected_by="live_fallback",
                 )
             else:
                 meeting.status = "failed"
@@ -135,7 +137,12 @@ def finalize_meeting_recording(
                     )
                 ],
                 engine=f"{result.engine}+live-caption",
-                language=lang,
+                language=result.language
+                if (result.language or "").strip().lower()
+                not in {"", "auto", "detect", "none"}
+                else None,
+                language_confidence=result.language_confidence,
+                language_detected_by="live_fallback",
             )
 
         asr.persist_transcript(db, meeting, result)

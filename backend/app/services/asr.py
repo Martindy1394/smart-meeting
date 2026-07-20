@@ -24,6 +24,7 @@ logger = logging.getLogger("smart_meeting.asr")
 # Public alias so callers can treat ASR errors uniformly.
 ASRUnavailable = transcription.TranscriptionUnavailable
 Segment = transcription.Segment
+LanguageDetection = transcription.LanguageDetection
 
 
 @dataclass
@@ -34,6 +35,8 @@ class ASRResult:
     segments: list[Segment]
     engine: str = "whisper"
     language: str | None = None
+    language_confidence: float | None = None
+    language_detected_by: str = ""
 
 
 def is_available() -> bool:
@@ -60,13 +63,20 @@ def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool =
         return ASRResult(text="", segments=[], engine="whisper", language=language)
 
     if live:
-        segments, detected = transcription.transcribe_live(pcm, language)
+        segments, detection = transcription.transcribe_live(pcm, language)
     else:
-        segments, detected = transcription.transcribe_final(pcm, language)
+        segments, detection = transcription.transcribe_final(pcm, language)
 
     text = " ".join(s.text for s in segments).strip()
-    resolved = detected or language
-    return ASRResult(text=text, segments=segments, engine="whisper", language=resolved)
+    resolved = (detection.language if detection else None) or language
+    return ASRResult(
+        text=text,
+        segments=segments,
+        engine="whisper",
+        language=resolved,
+        language_confidence=detection.confidence if detection else None,
+        language_detected_by=(detection.detected_by if detection else "") or "",
+    )
 
 
 def transcribe_file(path: str, language: str | None = None) -> ASRResult:
@@ -124,8 +134,10 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     meeting.summary_format = ""
     meeting.translation = ""
     meeting.translation_language = ""
-    # Persist Whisper-detected language (replaces former Spoken language picker).
+    # Persist Whisper-detected language + confidence metadata.
     detected = (result.language or "").strip().lower()
     if detected and detected not in {"auto", "detect", "none"}:
         meeting.language = detected
+    meeting.language_confidence = result.language_confidence
+    meeting.language_detected_by = (result.language_detected_by or "").strip()
     meeting.status = "finalized"
