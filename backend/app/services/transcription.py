@@ -355,15 +355,17 @@ def tagalog_hf_candidates() -> list[str]:
 def auto_hf_candidates() -> list[str]:
     """HF candidates when language is unknown / auto-detected.
 
-    Prefer the broadest PH coverage: custom fine-tunes, Tagalog small, then
-    Philippine medium (handles Tagalog + related PH speech well).
+    Prefer broader Philippine coverage first (medium-ph), then Tagalog-small.
+    Callers must **score** candidates — do not accept the first non-junk hit.
     """
     return _dedupe_model_ids(
         [
             settings.whisper_hiligaynon_fine_tuned_model,
             settings.whisper_tagalog_fine_tuned_model,
-            settings.whisper_tagalog_model,
+            # Broad PH medium before Tagalog-small — small often "succeeds"
+            # with high coverage but wrong Filipino lexicon on code-switch.
             settings.whisper_hiligaynon_model,
+            settings.whisper_tagalog_model,
         ]
     )
 
@@ -422,26 +424,11 @@ def live_model_id(language: str | None) -> str:
 
 
 def final_faster_model_id(language: str | None) -> str:
-    """faster-whisper model for final fallback / FW-only backend."""
-    if is_tagalog_language(language):
-        custom = (settings.whisper_live_tagalog_model or "").strip()
-        if custom:
-            return custom
-    if is_hiligaynon_language(language):
-        custom = (settings.whisper_live_hiligaynon_model or "").strip()
-        if custom:
-            return custom
-    if is_auto_language(language):
-        for custom in (
-            (settings.whisper_live_hiligaynon_model or "").strip(),
-            (settings.whisper_live_tagalog_model or "").strip(),
-        ):
-            if custom:
-                return custom
-    if is_philippine_language(language):
-        custom = (settings.whisper_live_hiligaynon_model or "").strip()
-        if custom:
-            return custom
+    """faster-whisper model for final fallback / FW-only backend.
+
+    Always use the configured final size (default ``medium``). Live CT2
+    fine-tunes are for captions only — using them here downgraded accuracy.
+    """
     return (settings.whisper_final_model or "medium").strip()
 
 
@@ -758,21 +745,14 @@ def transcribe_live(
                 pcm,
                 language=decode_language,
                 task=_WHISPER_TASK,
-                beam_size=3,
-                best_of=3,
+                beam_size=5,
+                best_of=5,
                 temperature=0.0,
-                # Softer live VAD — prior onset/offset dropped real speech.
-                vad_filter=True,
-                vad_parameters={
-                    "onset": 0.30,
-                    "offset": 0.20,
-                    "min_speech_duration_ms": 80,
-                    "min_silence_duration_ms": 350,
-                    "speech_pad_ms": 300,
-                },
+                # VAD off for live — board mics / soft speech were dropped.
+                vad_filter=False,
                 condition_on_previous_text=False,
                 without_timestamps=False,
-                no_speech_threshold=0.65,
+                no_speech_threshold=0.7,
                 compression_ratio_threshold=2.4,
                 log_prob_threshold=-1.0,
                 initial_prompt=live_prompt,
@@ -1084,6 +1064,25 @@ def _score_segments(segments: list[Segment], duration: float) -> float:
     return float(words) * max(0.15, cov)
 
 
+def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
+    """Rank ASR candidates by coverage, word mass, and lexical diversity.
+
+    Prevents a weak model with dense but wrong text from beating a stronger
+    model solely by timeline coverage.
+    """
+    if not segments:
+        return -1.0
+    text = " ".join((s.text or "").strip() for s in segments if (s.text or "").strip())
+    tokens = _norm_tokens(text)
+    words = len(tokens)
+    if words == 0:
+        return -1.0
+    cov = _segment_time_coverage(segments, duration)
+    uniq_ratio = len(set(tokens)) / float(words)
+    # Mild penalty for highly repetitive / collapsed transcripts.
+    return float(words) * max(0.15, cov) * (0.55 + 0.45 * uniq_ratio)
+
+
 def _transcribe_final_hf(
     audio_source,
     language: str | None,
@@ -1369,12 +1368,24 @@ def _transcribe_final_once(
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Single-shot final ASR.
 
-    ``WHISPER_FINAL_BACKEND=auto`` (default) tries Tagalog/Hiligaynon/PH HF
-    candidates for auto/PH meetings, then faster-whisper.
+    ``WHISPER_FINAL_BACKEND=auto`` (default) tries Philippine HF candidates,
+    scores each non-junk result, compares against faster-whisper, and keeps
+    the best transcript — never first-wins on a weak model.
     """
     backend = resolve_final_backend(language)
     configured = (settings.whisper_final_backend or "auto").strip().lower()
     strict_hf = configured in {"huggingface", "hf", "transformers"}
+    samples = _audio_to_float32(audio_source)
+    duration = (
+        float(samples.size) / float(settings.audio_sample_rate or 16000)
+        if samples.size
+        else 0.0
+    )
+
+    best_segs: list[Segment] = []
+    best_detection: LanguageDetection | None = None
+    best_score = -1.0
+    best_mid = ""
 
     if backend == "huggingface":
         candidates = [
@@ -1388,23 +1399,28 @@ def _transcribe_final_once(
                     audio_source, language, model_id=model_id
                 )
                 joined = " ".join(s.text for s in segs)
-                if segs and not _is_junk_transcript(joined):
-                    logger.info(
-                        "Final ASR using PH HF model '%s' "
-                        "(meeting_language=%s detected=%s by=%s)",
+                if not segs or _is_junk_transcript(joined):
+                    logger.warning(
+                        "HF final ASR '%s' looked like hallucination; "
+                        "trying next candidate.",
                         model_id,
-                        language,
-                        detection.language if detection else None,
-                        detection.detected_by if detection else None,
                     )
-                    return segs, detection
-                logger.warning(
-                    "HF final ASR '%s' looked like hallucination; trying next candidate.",
+                    continue
+                score = _candidate_quality_score(segs, duration)
+                logger.info(
+                    "HF candidate '%s' score=%.1f words=%d detected=%s by=%s",
                     model_id,
+                    score,
+                    len(joined.split()),
+                    detection.language if detection else None,
+                    detection.detected_by if detection else None,
                 )
+                if score > best_score:
+                    best_segs = segs
+                    best_detection = detection
+                    best_score = score
+                    best_mid = model_id
             except TranscriptionUnavailable as exc:
-                # Missing transformers/torch — keep trying other candidates is
-                # pointless; fall back to FW unless the user forced HF-only.
                 if strict_hf:
                     raise
                 logger.warning(
@@ -1418,6 +1434,43 @@ def _transcribe_final_once(
                     model_id,
                     exc,
                 )
+
+    # Compare faster-whisper unless HF-only mode already has a winner.
+    run_fw = (not strict_hf) or best_score < 0
+    if run_fw:
+        try:
+            fw_segs, fw_detection = _transcribe_final_faster_whisper(
+                audio_source, language
+            )
+            fw_joined = " ".join(s.text for s in fw_segs)
+            if fw_segs and not _is_junk_transcript(fw_joined):
+                fw_score = _candidate_quality_score(fw_segs, duration)
+                logger.info(
+                    "FW candidate score=%.1f words=%d detected=%s by=%s",
+                    fw_score,
+                    len(fw_joined.split()),
+                    fw_detection.language if fw_detection else None,
+                    fw_detection.detected_by if fw_detection else None,
+                )
+                if fw_score > best_score:
+                    best_segs = fw_segs
+                    best_detection = fw_detection
+                    best_score = fw_score
+                    best_mid = f"faster-whisper:{final_faster_model_id(language)}"
+        except Exception as exc:
+            logger.exception("faster-whisper final fallback failed: %s", exc)
+
+    if best_score >= 0 and best_segs:
+        logger.info(
+            "Final ASR selected '%s' (score=%.1f, meeting_language=%s)",
+            best_mid,
+            best_score,
+            language,
+        )
+        return best_segs, best_detection
+
+    if strict_hf and best_score < 0:
+        return [], None
     return _transcribe_final_faster_whisper(audio_source, language)
 
 

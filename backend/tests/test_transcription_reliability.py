@@ -101,7 +101,7 @@ def test_auto_language_detects_and_uses_ph_models():
     assert _final_decode_language("auto") is None
     prompt = initial_prompt("auto")
     assert prompt
-    assert "Hiligaynon" in prompt or "Filipino" in prompt or "Tagalog" in prompt
+    assert "Filipino" in prompt or "English" in prompt or "Tagalog" in prompt
 
 
 def test_tagalog_uses_native_tl_and_prefer_forced():
@@ -146,7 +146,8 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         settings.whisper_live_hiligaynon_model = "/models/hil-ct2"
         assert live_model_id("hil") == "/models/hil-ct2"
         assert live_model_id("en") == settings.whisper_live_model
-        assert final_faster_model_id("hil") == "/models/hil-ct2"
+        # Final FW always uses configured final model, not live CT2.
+        assert final_faster_model_id("hil") == settings.whisper_final_model
     finally:
         settings.whisper_final_backend = prev
         settings.whisper_live_hiligaynon_model = prev_live
@@ -184,7 +185,7 @@ def test_auto_final_backend_prefers_hf_for_tagalog():
         settings.whisper_live_tagalog_model = "/models/tl-ct2"
         assert live_model_id("tl") == "/models/tl-ct2"
         assert live_model_id("hil") != "/models/tl-ct2"
-        assert final_faster_model_id("tl") == "/models/tl-ct2"
+        assert final_faster_model_id("tl") == settings.whisper_final_model
     finally:
         settings.whisper_final_backend = prev
         settings.whisper_tagalog_fine_tuned_model = prev_ft
@@ -209,9 +210,10 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
         assert resolve_final_backend("auto") == "huggingface"
+        # Medium-PH before Tagalog-small for auto / code-switch meetings.
         assert auto_hf_candidates() == [
-            "LWobole/whisper-small-tagalog",
             "rbcurzon/whisper-medium-ph",
+            "LWobole/whisper-small-tagalog",
         ]
         settings.whisper_live_hiligaynon_model = "/models/hil-ct2"
         assert live_model_id("auto") == "/models/hil-ct2"
@@ -222,6 +224,23 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_tagalog_model = prev_tl
         settings.whisper_hiligaynon_model = prev_ph
         settings.whisper_live_hiligaynon_model = prev_live_hil
+
+
+def test_candidate_quality_score_prefers_diverse_coverage():
+    from app.services.transcription import Segment, _candidate_quality_score
+
+    weak = [
+        Segment(text="ang ang ang ang ang ang ang ang", start=0.0, end=10.0),
+    ]
+    strong = [
+        Segment(
+            text="Good morning. Today we discuss the budget and hiring plan.",
+            start=0.0,
+            end=10.0,
+        ),
+    ]
+    # Same rough duration; diverse text should score higher than repetition.
+    assert _candidate_quality_score(strong, 10.0) > _candidate_quality_score(weak, 10.0)
 
 
 def test_language_detection_from_whisper_auto():
@@ -272,6 +291,7 @@ if __name__ == "__main__":
     test_auto_final_backend_prefers_hf_for_hiligaynon()
     test_auto_final_backend_prefers_hf_for_tagalog()
     test_auto_meeting_uses_combined_ph_hf_candidates()
+    test_candidate_quality_score_prefers_diverse_coverage()
     test_language_detection_from_whisper_auto()
     test_language_detection_forced_fallback()
     test_language_detection_clamps_confidence()

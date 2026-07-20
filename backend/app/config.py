@@ -111,12 +111,10 @@ class Settings(BaseSettings):
     # Optional prompts — keep short to avoid Whisper echoing them.
     # Used for auto-detect and Hiligaynon-biased meetings.
     whisper_initial_prompt: str = (
-        "Board meeting discussion in Hiligaynon (Ilonggo), Filipino Tagalog, "
-        "and English."
+        "Board meeting in Filipino and English."
     )
     whisper_tagalog_initial_prompt: str = (
-        "Talakayan sa board meeting sa Tagalog at English. "
-        "Filipino at English speech."
+        "Board meeting in Tagalog and English."
     )
     # Final-pass language: "auto" (detect), "forced" (whisper_decode_language),
     # or "prefer_forced" (forced first, auto retry if coverage is poor).
@@ -145,7 +143,7 @@ class Settings(BaseSettings):
     # WebSocket keepalive interval so proxies don't drop 8h+ sessions.
     ws_keepalive_seconds: float = 25.0
     # Max Whisper backends retained in memory (LRU). Live + final usually need 2.
-    whisper_model_cache_size: int = 2
+    whisper_model_cache_size: int = 3
     # Prefer accumulated live captions over the final ASR pass when the final
     # word count falls below ``live_words * ratio`` (and live has enough words).
     # Example: 0.6 means "final has < 60% of live words" → keep live text.

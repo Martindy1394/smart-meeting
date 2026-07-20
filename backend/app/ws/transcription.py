@@ -39,19 +39,22 @@ async def _emit_live_window(
     live_caption: str,
     previous_window: str = "",
     byte_offset: int | None = None,
+    replace_caption: bool = False,
 ) -> tuple[str, str]:
     """Transcribe one live window and merge into the cumulative caption.
 
     Returns ``(live_caption, window_text_used_as_previous)``.
+
+    ``replace_caption=True`` supersedes a short warmup caption with the first
+    full window (avoids duplicated openings like ``Mic test! Mic test!``).
     """
     chunk = audio.align_pcm16(chunk)
     samples = audio.pcm16_to_float32(chunk)
     rms_i16 = audio.pcm_rms_int16(chunk)
     dur_s = len(chunk) / float(settings.audio_sample_rate * 2) if chunk else 0.0
-    # Skip near-silent frames — they only produce Whisper hallucinations.
-    # Threshold is on float peak; also log int16 RMS for diagnostics.
+    # Skip near-silent frames — softened so quiet board-mic speech is kept.
     peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-    if samples.size == 0 or peak < 0.008:
+    if samples.size == 0 or peak < 0.004:
         logger.info(
             "live.window skip_silence meeting=%s seq=%d bytes=%d dur=%.2fs "
             "rms_i16=%.1f peak=%.4f offset=%s",
@@ -63,13 +66,14 @@ async def _emit_live_window(
             peak,
             byte_offset,
         )
-        return live_caption, previous_window
+        # Clear stale previous_window after silence so the next hop merges cleanly.
+        return live_caption, ""
 
     result = await asyncio.to_thread(asr.transcribe_pcm, samples, language, live=True)
     window_text = result.text
     logger.info(
         "live.window meeting=%s seq=%d bytes=%d dur=%.2fs rms_i16=%.1f "
-        "offset=%s words=%d text=%r",
+        "offset=%s words=%d replace=%s text=%r",
         meeting_id,
         seq,
         len(chunk),
@@ -77,19 +81,23 @@ async def _emit_live_window(
         rms_i16,
         byte_offset,
         len((window_text or "").split()),
+        replace_caption,
         (window_text or "")[:160],
     )
     if not window_text:
         return live_caption, previous_window
 
-    merged = asr.merge_live_caption(
-        live_caption,
-        window_text,
-        previous_window=previous_window,
-    )
-    # Monotonic guard at the socket layer too.
-    if len(merged.split()) < len((live_caption or "").split()):
-        merged = live_caption
+    if replace_caption:
+        merged = window_text.strip()
+    else:
+        merged = asr.merge_live_caption(
+            live_caption,
+            window_text,
+            previous_window=previous_window,
+        )
+        # Monotonic guard at the socket layer too.
+        if len(merged.split()) < len((live_caption or "").split()):
+            merged = live_caption
     if merged != live_caption:
         await _send(
             websocket,
@@ -389,6 +397,11 @@ async def transcribe_ws(websocket: WebSocket):
             )
             return False
         window_offset = live_offset
+        # First full window after warmup re-covers t=0 — replace the short
+        # warmup caption instead of appending a near-duplicate opening.
+        supersede_warmup = bool(
+            warmup_done and window_offset == 0 and (live_caption or "").strip()
+        )
         seq += 1
         try:
             live_caption, previous_window = await _emit_live_window(
@@ -400,6 +413,7 @@ async def transcribe_ws(websocket: WebSocket):
                 live_caption=live_caption,
                 previous_window=previous_window,
                 byte_offset=window_offset,
+                replace_caption=supersede_warmup,
             )
         except Exception as exc:
             logger.exception("Live transcription error: %s", exc)
