@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..deps import get_current_user
 from ..models import Meeting, User
 from ..schemas import (
@@ -190,6 +190,26 @@ async def _run_whisper_on_meeting_async(
     return _persist_whisper_result(meeting, db, result)
 
 
+async def _background_retranscribe(meeting_id: str, path: str, language: str) -> None:
+    """Run Whisper off the request so long CPU jobs do not drop the HTTP client."""
+    db = SessionLocal()
+    try:
+        meeting = db.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+        try:
+            result = await asyncio.to_thread(asr.transcribe_file, path, language)
+            _persist_whisper_result(meeting, db, result)
+            logger.info("Background retranscribe finished meeting=%s", meeting_id)
+        except Exception:
+            logger.exception("Background retranscribe failed meeting=%s", meeting_id)
+            meeting = db.get(Meeting, meeting_id)
+            if meeting is not None:
+                _fail_whisper(meeting, db)
+    finally:
+        db.close()
+
+
 @router.get("", response_model=list[MeetingSummary])
 def list_meetings(
     search: str | None = Query(default=None),
@@ -346,9 +366,20 @@ async def retranscribe_meeting(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Re-run Whisper ASR on the saved WAV recording."""
+    """Start Whisper ASR on the saved WAV and return immediately.
+
+    Full-accuracy ASR can take minutes on CPU. The meeting stays
+    ``processing`` until the background job finishes; clients should poll
+    ``GET /meetings/{id}`` rather than waiting on this request.
+    """
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    return await _run_whisper_on_meeting_async(meeting, db)
+    if meeting.status == "processing":
+        # Idempotent — a job is already running.
+        return _to_detail(meeting)
+    path, language = _prepare_whisper_job(meeting, db)
+    asyncio.create_task(_background_retranscribe(meeting.id, path, language))
+    db.refresh(meeting)
+    return _to_detail(meeting)
 
 
 @router.post("/{meeting_id}/stop")

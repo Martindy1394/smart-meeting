@@ -33,7 +33,7 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
     });
   } catch (e) {
     throw new ApiError(
-      "Network error — cannot reach the API. Use http://127.0.0.1:8000/ and make sure port 8000 is Forwarded in Cursor → Ports.",
+      "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
       0
     );
   }
@@ -98,7 +98,7 @@ export const api = {
       });
     } catch {
       throw new ApiError(
-        "Network error — cannot reach the API. Use http://127.0.0.1:8000/ and make sure port 8000 is Forwarded in Cursor → Ports.",
+        "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
         0
       );
     }

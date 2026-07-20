@@ -214,15 +214,31 @@ export default function MeetingRoom({
   const runWhisperAsr = useCallback(async () => {
     setAsrBusy(true);
     setAsrError("");
+    setStatus("processing");
     try {
-      const detail = await api.retranscribeMeeting(meeting.id);
+      let detail = await api.retranscribeMeeting(meeting.id);
+      // Whisper can take several minutes on CPU — poll instead of one long POST.
+      const deadline = Date.now() + 30 * 60 * 1000;
+      while (detail?.status === "processing" && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        detail = await api.getMeeting(meeting.id);
+      }
+      if (!detail || detail.status === "processing") {
+        throw new Error(
+          "Transcription is still running. Wait a bit, then refresh the meeting."
+        );
+      }
+      if (detail.status === "failed") {
+        throw new Error("Whisper ASR failed. Try re-transcribe again.");
+      }
       await applyTranscriptResult(detail);
     } catch (err) {
       setAsrError(err.message || "Whisper ASR failed.");
+      setStatus(meeting.status || "finalized");
     } finally {
       setAsrBusy(false);
     }
-  }, [applyTranscriptResult, meeting.id]);
+  }, [applyTranscriptResult, meeting.id, meeting.status]);
 
   const recorder = useRecorder({ onFinalTranscript });
 
