@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 
 from ..config import settings
 from ..database import SessionLocal
@@ -13,12 +14,13 @@ logger = logging.getLogger("smart_meeting.janitor")
 
 
 def sweep_abandoned_sessions() -> dict:
-    """Finalize or clear sessions idle longer than ``abandoned_session_seconds``."""
+    """Finalize abandoned recordings and reclaim stuck ``processing`` meetings."""
     timeout = max(60, int(settings.abandoned_session_seconds))
     now = time.time()
     scanned = 0
     finalized = 0
     cleared = 0
+    reclaimed = 0
 
     meeting_ids = set(redis_store.list_session_meeting_ids())
     # Also catch disk PCM left behind without Redis meta.
@@ -34,6 +36,24 @@ def sweep_abandoned_sessions() -> dict:
 
     db = SessionLocal()
     try:
+        # Reclaim Whisper jobs that never finished (process kill / OOM / crash).
+        for meeting in (
+            db.query(Meeting).filter(Meeting.status == "processing").all()
+        ):
+            if not finalize.is_processing_stale(meeting):
+                continue
+            has_text = bool((meeting.final_transcript or "").strip())
+            meeting.status = "finalized" if has_text else "failed"
+            meeting.updated_at = datetime.now(timezone.utc)
+            logger.warning(
+                "Janitor reclaiming stale processing meeting %s → %s",
+                meeting.id,
+                meeting.status,
+            )
+            reclaimed += 1
+        if reclaimed:
+            db.commit()
+
         for meeting_id in meeting_ids:
             scanned += 1
             meeting = db.get(Meeting, meeting_id)
@@ -42,7 +62,10 @@ def sweep_abandoned_sessions() -> dict:
                 audio.delete_raw_pcm(meeting_id)
                 cleared += 1
                 continue
-            if meeting.status in ("finalized", "processing", "failed"):
+            if meeting.status == "processing":
+                # Keep live buffers while ASR may still need PCM→WAV materialization.
+                continue
+            if meeting.status in ("finalized", "failed"):
                 # Stale live buffers after a completed meeting.
                 if audio.get_raw_pcm_length(meeting_id) or redis_store.get_pcm_length(
                     meeting_id
@@ -89,7 +112,12 @@ def sweep_abandoned_sessions() -> dict:
     finally:
         db.close()
 
-    return {"scanned": scanned, "finalized": finalized, "cleared": cleared}
+    return {
+        "scanned": scanned,
+        "finalized": finalized,
+        "cleared": cleared,
+        "reclaimed": reclaimed,
+    }
 
 
 async def janitor_loop(stop_event) -> None:
@@ -99,7 +127,11 @@ async def janitor_loop(stop_event) -> None:
     while not stop_event.is_set():
         try:
             stats = await asyncio.to_thread(sweep_abandoned_sessions)
-            if stats.get("finalized") or stats.get("cleared"):
+            if (
+                stats.get("finalized")
+                or stats.get("cleared")
+                or stats.get("reclaimed")
+            ):
                 logger.info("Janitor sweep %s", stats)
         except Exception:
             logger.exception("Janitor sweep failed")

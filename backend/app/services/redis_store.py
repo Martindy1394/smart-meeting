@@ -19,6 +19,9 @@ logger = logging.getLogger("smart_meeting.redis")
 
 _client = None
 _client_failed = False
+_client_failed_at = 0.0
+# After a connect failure, wait before retrying so we do not spam Redis.
+_CLIENT_RETRY_SECONDS = 5.0
 
 
 def _pcm_key(meeting_id: str) -> str:
@@ -33,18 +36,27 @@ def _meta_key(meeting_id: str) -> str:
     return f"smartmeeting:audio:{meeting_id}:meta"
 
 
+def _lock_key(meeting_id: str) -> str:
+    return f"smartmeeting:audio:{meeting_id}:live_lock"
+
+
 def get_client():
-    """Return a shared Redis client, or ``None`` if Redis is unavailable."""
-    global _client, _client_failed
+    """Return a shared Redis client, or ``None`` if Redis is unavailable.
+
+    Transient failures are retried after a short cooldown so Redis recovery
+    does not require a process restart.
+    """
+    global _client, _client_failed, _client_failed_at
     if _client is not None:
         return _client
-    if _client_failed:
+    if _client_failed and (time.time() - _client_failed_at) < _CLIENT_RETRY_SECONDS:
         return None
     try:
         import redis  # type: ignore
     except Exception as exc:  # pragma: no cover
         logger.warning("redis package not installed: %s", exc)
         _client_failed = True
+        _client_failed_at = time.time()
         return None
 
     try:
@@ -57,11 +69,14 @@ def get_client():
         )
         client.ping()
         _client = client
+        _client_failed = False
+        _client_failed_at = 0.0
         logger.info("Connected to Redis at %s", settings.redis_url)
         return _client
     except Exception as exc:
         logger.warning("Redis unavailable (%s); falling back to in-process buffers.", exc)
         _client_failed = True
+        _client_failed_at = time.time()
         return None
 
 
@@ -73,14 +88,79 @@ def is_available() -> bool:
         client.ping()
         return True
     except Exception:
+        # Drop the dead client so the next call can reconnect.
+        reset_client_for_tests()
         return False
 
 
 def reset_client_for_tests() -> None:
     """Clear cached client state (tests / reconnect after Redis comes up)."""
-    global _client, _client_failed
+    global _client, _client_failed, _client_failed_at
     _client = None
     _client_failed = False
+    _client_failed_at = 0.0
+
+
+def acquire_live_lock(meeting_id: str, owner_token: str) -> bool:
+    """Acquire a single-writer lock for a live recording WebSocket.
+
+    Returns True when this owner holds the lock (new or refreshed).
+    """
+    client = get_client()
+    if client is None:
+        # Without Redis, fall back to allowing the socket (disk still works).
+        return True
+    ttl = max(30, int(settings.live_session_lock_ttl_seconds))
+    key = _lock_key(meeting_id)
+    token = (owner_token or "").encode("utf-8")
+    try:
+        # SET NX — first writer wins.
+        if client.set(key, token, nx=True, ex=ttl):
+            return True
+        current = client.get(key)
+        if current == token:
+            client.expire(key, ttl)
+            return True
+        return False
+    except Exception as exc:
+        logger.warning("Redis live lock acquire failed for %s: %s", meeting_id, exc)
+        return True
+
+
+def refresh_live_lock(meeting_id: str, owner_token: str) -> bool:
+    """Extend the live lock TTL if ``owner_token`` still owns it."""
+    client = get_client()
+    if client is None:
+        return True
+    ttl = max(30, int(settings.live_session_lock_ttl_seconds))
+    key = _lock_key(meeting_id)
+    token = (owner_token or "").encode("utf-8")
+    try:
+        current = client.get(key)
+        if current == token:
+            client.expire(key, ttl)
+            return True
+        if current is None:
+            return bool(client.set(key, token, nx=True, ex=ttl))
+        return False
+    except Exception as exc:
+        logger.warning("Redis live lock refresh failed for %s: %s", meeting_id, exc)
+        return True
+
+
+def release_live_lock(meeting_id: str, owner_token: str) -> None:
+    """Release the live lock only if we still own it."""
+    client = get_client()
+    if client is None:
+        return
+    key = _lock_key(meeting_id)
+    token = (owner_token or "").encode("utf-8")
+    try:
+        current = client.get(key)
+        if current == token:
+            client.delete(key)
+    except Exception as exc:
+        logger.warning("Redis live lock release failed for %s: %s", meeting_id, exc)
 
 
 def rolling_buffer_max_bytes() -> int:
@@ -312,11 +392,11 @@ def list_session_meeting_ids() -> list[str]:
 
 
 def clear_meeting_audio(meeting_id: str, *, keep_wav: bool = False) -> None:
-    """Remove live PCM/meta (and optionally WAV) from Redis."""
+    """Remove live PCM/meta/lock (and optionally WAV) from Redis."""
     client = get_client()
     if client is None:
         return
-    keys = [_pcm_key(meeting_id), _meta_key(meeting_id)]
+    keys = [_pcm_key(meeting_id), _meta_key(meeting_id), _lock_key(meeting_id)]
     if not keep_wav:
         keys.append(_wav_key(meeting_id))
     try:

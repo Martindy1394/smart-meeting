@@ -6,6 +6,9 @@ full-accuracy Whisper pass, persists transcript + WAV, and clears live buffers.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+
+from sqlalchemy import and_, update
 
 from ..config import settings
 from ..database import SessionLocal
@@ -23,6 +26,26 @@ def load_recording_pcm(meeting_id: str) -> bytes:
     return redis_store.get_pcm(meeting_id)
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def is_processing_stale(meeting: Meeting, *, now: datetime | None = None) -> bool:
+    """True when a ``processing`` meeting has been stuck longer than the lease."""
+    if meeting.status != "processing":
+        return False
+    stamp = _aware(meeting.updated_at) or _aware(meeting.created_at)
+    if stamp is None:
+        return True
+    now = now or datetime.now(timezone.utc)
+    age = (now - stamp).total_seconds()
+    return age >= max(60, int(settings.processing_stale_seconds))
+
+
 def finalize_meeting_recording(
     meeting_id: str,
     live_caption: str = "",
@@ -37,7 +60,7 @@ def finalize_meeting_recording(
             live_metrics.record_finalize(False)
             return {"ok": False, "message": "Meeting not found."}
 
-        if meeting.status in ("finalized", "processing"):
+        if meeting.status == "finalized":
             live_metrics.record_finalize(True)
             return {
                 "ok": True,
@@ -46,6 +69,20 @@ def finalize_meeting_recording(
                 "segments": [],
                 "engine": "already-finalized",
                 "status": meeting.status,
+            }
+
+        if meeting.status == "processing" and not is_processing_stale(meeting):
+            # Another worker owns the ASR lease — do not pretend success.
+            live_metrics.record_finalize(True)
+            return {
+                "ok": True,
+                "already_done": True,
+                "in_progress": True,
+                "text": meeting.final_transcript or "",
+                "segments": [],
+                "engine": "processing",
+                "status": meeting.status,
+                "message": "Transcription is already in progress.",
             }
 
         if not live_caption:
@@ -59,6 +96,7 @@ def finalize_meeting_recording(
         if len(pcm_bytes) < 2:
             fallback = (live_caption or "").strip()
             meeting.status = "finalized"
+            meeting.updated_at = datetime.now(timezone.utc)
             if fallback and not (meeting.final_transcript or "").strip():
                 meeting.final_transcript = fallback
             db.commit()
@@ -75,13 +113,56 @@ def finalize_meeting_recording(
             }
 
         audio_path = audio.save_wav(meeting_id, pcm_bytes)
-        meeting.audio_path = audio_path
-        meeting.duration_seconds = audio.wav_duration_seconds(pcm_bytes)
-        meeting.status = "processing"
+        duration = audio.wav_duration_seconds(pcm_bytes)
+        # Free the large PCM buffer before Whisper loads float32 from the WAV.
+        del pcm_bytes
+
+        # Atomic lease: one finalize/reclaim may enter (or refresh) processing.
+        now = datetime.now(timezone.utc)
+        prior_status = meeting.status
+        prior_updated = meeting.updated_at
+        if prior_status == "processing":
+            claim_filter = and_(
+                Meeting.id == meeting_id,
+                Meeting.status == "processing",
+                Meeting.updated_at == prior_updated,
+            )
+        else:
+            claim_filter = and_(
+                Meeting.id == meeting_id,
+                Meeting.status.in_(("recording", "failed")),
+            )
+        claim = db.execute(
+            update(Meeting)
+            .where(claim_filter)
+            .values(
+                audio_path=audio_path,
+                duration_seconds=duration,
+                status="processing",
+                updated_at=now,
+            )
+        )
         db.commit()
+        if claim.rowcount == 0:
+            meeting = db.get(Meeting, meeting_id)
+            status = meeting.status if meeting else "unknown"
+            live_metrics.record_finalize(True)
+            return {
+                "ok": True,
+                "already_done": True,
+                "in_progress": status == "processing",
+                "text": (meeting.final_transcript if meeting else "") or "",
+                "segments": [],
+                "engine": "lease-lost",
+                "status": status,
+            }
+
+        meeting = db.get(Meeting, meeting_id)
+        assert meeting is not None
 
         try:
-            result = asr.transcribe_pcm_bytes(pcm_bytes, lang, live=False)
+            # Prefer file path so we do not keep a second full PCM copy in RAM.
+            result = asr.transcribe_file(audio_path, lang)
         except asr.ASRUnavailable as exc:
             live = (live_caption or "").strip()
             if live:
@@ -99,6 +180,7 @@ def finalize_meeting_recording(
                 )
             else:
                 meeting.status = "failed"
+                meeting.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 live_metrics.record_finalize(False)
                 return {"ok": False, "message": str(exc)}
@@ -146,6 +228,7 @@ def finalize_meeting_recording(
             )
 
         asr.persist_transcript(db, meeting, result)
+        meeting.updated_at = datetime.now(timezone.utc)
         db.commit()
 
         redis_store.clear_meeting_audio(meeting_id, keep_wav=True)
@@ -160,8 +243,8 @@ def finalize_meeting_recording(
                 "detected_by": result.language_detected_by or "whisper",
             }
             if isinstance(language_detection["language"], str):
-                lang = language_detection["language"].strip().lower()
-                if lang in {"", "auto", "detect", "none"}:
+                detected = language_detection["language"].strip().lower()
+                if detected in {"", "auto", "detect", "none"}:
                     language_detection["language"] = None
 
         return {
@@ -183,6 +266,7 @@ def finalize_meeting_recording(
             meeting = db.get(Meeting, meeting_id)
             if meeting and meeting.status == "processing":
                 meeting.status = "failed"
+                meeting.updated_at = datetime.now(timezone.utc)
                 db.commit()
         except Exception:
             db.rollback()

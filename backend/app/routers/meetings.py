@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import SessionLocal, get_db
 from ..deps import get_current_user
 from ..models import Meeting, User
@@ -21,7 +22,7 @@ from ..schemas import (
     MeetingSummary,
     MeetingUpdate,
 )
-from ..services import asr, audio, redis_store
+from ..services import asr, audio, finalize, redis_store
 
 logger = logging.getLogger("smart_meeting.meetings")
 
@@ -29,6 +30,7 @@ router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
 # Cap uploads so a single request cannot fill the disk (≈ 30 min of 16 kHz mono WAV).
 _MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+_UPLOAD_READ_CHUNK = 1024 * 1024
 
 
 def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
@@ -49,6 +51,87 @@ def _has_audio(m: Meeting) -> bool:
         or redis_store.get_wav_bytes(m.id)
         or redis_store.get_pcm_length(m.id) > 0
     )
+
+
+def _ensure_meeting_wav(meeting: Meeting, db: Session) -> str:
+    """Return an on-disk WAV path, materializing from PCM/Redis when needed."""
+    if meeting.audio_path:
+        path = os.path.abspath(meeting.audio_path)
+        if os.path.exists(path):
+            return path
+
+    pcm = audio.read_raw_pcm(meeting.id)
+    if not pcm:
+        pcm = redis_store.get_pcm(meeting.id)
+    if pcm and len(pcm) >= 2:
+        path = audio.save_wav(meeting.id, pcm)
+        meeting.audio_path = path
+        meeting.duration_seconds = audio.wav_duration_seconds(pcm)
+        db.commit()
+        return path
+
+    wav_bytes = redis_store.get_wav_bytes(meeting.id)
+    if wav_bytes:
+        path = os.path.join(audio.audio_dir(), f"{meeting.id}.wav")
+        with open(path, "wb") as fh:
+            fh.write(wav_bytes)
+        path = os.path.abspath(path)
+        meeting.audio_path = path
+        db.commit()
+        return path
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="No audio recording is available to transcribe.",
+    )
+
+
+def _prepare_whisper_job(meeting: Meeting, db: Session) -> tuple[str, str]:
+    """Validate meeting audio and mark processing. Returns ``(path, language)``."""
+    if not asr.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Whisper ASR is not available on this server.",
+        )
+    # Resolve path *before* flipping status so a crash cannot leave a stuck
+    # processing row with no audio_path.
+    path = _ensure_meeting_wav(meeting, db)
+    meeting.status = "processing"
+    meeting.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return path, "auto"
+
+
+async def _read_upload_capped(file: UploadFile) -> bytes:
+    """Read an upload while enforcing the size cap before the full body lands."""
+    content_length = getattr(file, "size", None)
+    if content_length is None:
+        header = file.headers.get("content-length") if file.headers else None
+        if header:
+            try:
+                content_length = int(header)
+            except ValueError:
+                content_length = None
+    if content_length is not None and content_length > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Audio file is too large (max 60 MB).",
+        )
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        piece = await file.read(_UPLOAD_READ_CHUNK)
+        if not piece:
+            break
+        total += len(piece)
+        if total > _MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Audio file is too large (max 60 MB).",
+            )
+        chunks.append(piece)
+    return b"".join(chunks)
 
 
 def _clean_attendees(names: list[str]) -> str:
@@ -107,27 +190,11 @@ def _to_detail(m: Meeting) -> MeetingDetail:
     return detail
 
 
-def _prepare_whisper_job(meeting: Meeting, db: Session) -> tuple[str, str]:
-    """Validate meeting audio and mark processing. Returns ``(path, language)``."""
-    if not _has_audio(meeting):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No audio recording is available to transcribe.",
-        )
-    if not asr.is_available():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Whisper ASR is not available on this server.",
-        )
-    meeting.status = "processing"
-    db.commit()
-    return os.path.abspath(meeting.audio_path), "auto"
-
-
 def _persist_whisper_result(
     meeting: Meeting, db: Session, result: asr.ASRResult
 ) -> MeetingDetail:
     asr.persist_transcript(db, meeting, result)
+    meeting.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(meeting)
     return _to_detail(meeting)
@@ -135,6 +202,7 @@ def _persist_whisper_result(
 
 def _fail_whisper(meeting: Meeting, db: Session) -> None:
     meeting.status = "failed"
+    meeting.updated_at = datetime.now(timezone.utc)
     db.commit()
 
 
@@ -270,11 +338,9 @@ def get_meeting_audio(
 ):
     """Stream the saved WAV recording for playback or download.
 
-    Prefers disk archive; falls back to Redis-cached WAV, then Redis PCM
-    encoded on the fly.
+    Prefers disk archive; falls back to materializing WAV from PCM/Redis, then
+    streams from disk so multi-hour recordings are not loaded into RAM.
     """
-    from fastapi.responses import Response
-
     meeting = _get_owned_meeting(meeting_id, current_user, db)
     safe_title = (meeting.title or "meeting").strip() or "meeting"
     safe_title = "".join(
@@ -283,28 +349,20 @@ def get_meeting_audio(
     filename = f"{safe_title}.wav"
     disposition = "attachment" if download else "inline"
 
-    if meeting.audio_path and os.path.exists(os.path.abspath(meeting.audio_path)):
-        return FileResponse(
-            path=os.path.abspath(meeting.audio_path),
-            media_type="audio/wav",
-            filename=filename,
-            content_disposition_type=disposition,
-        )
-
-    wav_bytes = redis_store.get_wav_bytes(meeting_id)
-    if not wav_bytes:
-        pcm = audio.read_raw_pcm(meeting_id) or redis_store.get_pcm(meeting_id)
-        if pcm:
-            wav_bytes = audio.build_wav_bytes(pcm)
-    if not wav_bytes:
+    try:
+        path = _ensure_meeting_wav(meeting, db)
+    except HTTPException:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No audio recording is available for this meeting yet.",
-        )
-    headers = {
-        "Content-Disposition": f'{disposition}; filename="{filename}"'
-    }
-    return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
+        ) from None
+
+    return FileResponse(
+        path=path,
+        media_type="audio/wav",
+        filename=filename,
+        content_disposition_type=disposition,
+    )
 
 
 @router.post("/{meeting_id}/audio", response_model=MeetingDetail)
@@ -318,18 +376,13 @@ async def upload_meeting_audio(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Upload a WAV/PCM recording and optionally run Whisper ASR on it."""
+    """Upload a WAV/PCM recording and optionally start Whisper ASR on it."""
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    data = await file.read()
+    data = await _read_upload_capped(file)
     if not data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded audio file is empty.",
-        )
-    if len(data) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Audio file is too large (max 60 MB).",
         )
 
     try:
@@ -349,15 +402,19 @@ async def upload_meeting_audio(
     meeting.duration_seconds = duration
     # Clear previous transcript until Whisper re-processes (if requested).
     if transcribe:
-        meeting.status = "processing"
         meeting.final_transcript = ""
+        meeting.status = "processing"
+        meeting.updated_at = datetime.now(timezone.utc)
     db.commit()
 
     if not transcribe:
         db.refresh(meeting)
         return _to_detail(meeting)
 
-    return await _run_whisper_on_meeting_async(meeting, db)
+    # Same pattern as retranscribe — return immediately and poll for status.
+    asyncio.create_task(_background_retranscribe(meeting.id, path, "auto"))
+    db.refresh(meeting)
+    return _to_detail(meeting)
 
 
 @router.post("/{meeting_id}/retranscribe", response_model=MeetingDetail)
@@ -373,7 +430,7 @@ async def retranscribe_meeting(
     ``GET /meetings/{id}`` rather than waiting on this request.
     """
     meeting = _get_owned_meeting(meeting_id, current_user, db)
-    if meeting.status == "processing":
+    if meeting.status == "processing" and not finalize.is_processing_stale(meeting):
         # Idempotent — a job is already running.
         return _to_detail(meeting)
     path, language = _prepare_whisper_job(meeting, db)
@@ -403,6 +460,15 @@ async def stop_meeting_recording(
             "text": meeting.final_transcript or "",
             "status": meeting.status,
         }
+    if meeting.status == "processing" and not finalize.is_processing_stale(meeting):
+        return {
+            "ok": True,
+            "already_done": True,
+            "in_progress": True,
+            "text": meeting.final_transcript or "",
+            "status": meeting.status,
+            "message": "Transcription is already in progress.",
+        }
 
     meta = redis_store.get_session_meta(meeting_id)
     live_caption = meta.get("live_caption") or ""
@@ -421,6 +487,7 @@ async def stop_meeting_recording(
     return {
         "ok": True,
         "already_done": bool(result.get("already_done")),
+        "in_progress": bool(result.get("in_progress")),
         "text": result.get("text") or meeting.final_transcript or "",
         "segments": result.get("segments") or [],
         "engine": result.get("engine"),

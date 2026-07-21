@@ -158,20 +158,23 @@ def build_wav_bytes(pcm_bytes: bytes) -> bytes:
 def save_wav(meeting_id: str, pcm_bytes: bytes) -> str:
     """Persist raw PCM bytes as a 16 kHz mono WAV file. Returns an absolute path.
 
-    Also caches the WAV bytes in Redis memory storage when Redis is available.
+    Small WAVs are also cached in Redis for quick replay; large files stay on disk
+    only so Redis cannot OOM on multi-hour meetings.
     """
     wav_bytes = build_wav_bytes(pcm_bytes)
     path = os.path.join(audio_dir(), f"{meeting_id}.wav")
     with open(path, "wb") as fh:
         fh.write(wav_bytes)
 
-    # Mirror into Redis so recorded audio lives in memory storage too.
-    try:
-        from . import redis_store
+    # Cap Redis WAV cache (~8 MiB ≈ ~4 min of 16 kHz mono WAV).
+    max_redis_wav = 8 * 1024 * 1024
+    if len(wav_bytes) <= max_redis_wav:
+        try:
+            from . import redis_store
 
-        redis_store.save_wav_bytes(meeting_id, wav_bytes)
-    except Exception:
-        pass
+            redis_store.save_wav_bytes(meeting_id, wav_bytes)
+        except Exception:
+            pass
 
     return os.path.abspath(path)
 

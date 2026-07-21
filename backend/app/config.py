@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     abandoned_session_seconds: int = 60 * 5
     # How often the background janitor scans for abandoned sessions.
     session_janitor_interval_seconds: float = 60.0
+    # Mark meetings stuck in ``processing`` as failed after this many seconds
+    # (Whisper on CPU can take a long time; keep this above worst-case ASR).
+    processing_stale_seconds: int = 60 * 45
+    # TTL for the single-writer live WebSocket lock in Redis.
+    live_session_lock_ttl_seconds: int = 90
     # Drop old live windows when ASR backlog exceeds this many hops.
     # Higher default reduces live word-loss when Whisper is slower than realtime.
     live_asr_max_backlog_windows: int = 12

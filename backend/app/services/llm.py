@@ -98,6 +98,7 @@ class _Pipelines:
         # Fast tokenizers are not thread-safe ("Already borrowed" under concurrency).
         self._mbart_infer_lock = threading.Lock()
         self._nllb_infer_lock = threading.Lock()
+        self._summarizer_infer_lock = threading.Lock()
         self._summarizer = None
         self._mbart_model = None
         self._mbart_tokenizer = None
@@ -170,6 +171,9 @@ class _Pipelines:
 
     def nllb_infer_lock(self) -> threading.Lock:
         return self._nllb_infer_lock
+
+    def summarizer_infer_lock(self) -> threading.Lock:
+        return self._summarizer_infer_lock
 
 
 _pipelines = _Pipelines()
@@ -773,15 +777,16 @@ def _bart_summarize_chunk(summarizer, chunk: str) -> str:
     else:
         max_len = 300
         min_len = 100
-    out = summarizer(
-        framed,
-        max_length=max_len,
-        min_length=min_len,
-        do_sample=False,
-        num_beams=6,
-        truncation=True,
-        no_repeat_ngram_size=3,
-    )
+    with _pipelines.summarizer_infer_lock():
+        out = summarizer(
+            framed,
+            max_length=max_len,
+            min_length=min_len,
+            do_sample=False,
+            num_beams=6,
+            truncation=True,
+            no_repeat_ngram_size=3,
+        )
     return out[0]["summary_text"].strip()
 
 

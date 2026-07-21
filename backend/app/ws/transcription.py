@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -153,6 +154,24 @@ async def transcribe_ws(websocket: WebSocket):
         await websocket.close(code=4401)
         return
 
+    # Single-writer lock so two tabs cannot interleave PCM for the same meeting.
+    lock_token = str(uuid.uuid4())
+    if not redis_store.acquire_live_lock(meeting_id, lock_token):
+        await websocket.accept()
+        await _send(
+            websocket,
+            {
+                "type": "error",
+                "message": (
+                    "This meeting is already being recorded in another tab "
+                    "or session. Stop that recording first, or wait for the "
+                    "lock to expire."
+                ),
+            },
+        )
+        await websocket.close(code=4409)
+        return
+
     await websocket.accept()
 
     # Do not reopen a finished meeting — that used to look like "recording stopped"
@@ -168,6 +187,7 @@ async def transcribe_ws(websocket: WebSocket):
                 ),
             },
         )
+        redis_store.release_live_lock(meeting_id, lock_token)
         await websocket.close()
         return
 
@@ -193,7 +213,6 @@ async def transcribe_ws(websocket: WebSocket):
 
     # Local fallback only used when Redis is down (disk is still authoritative).
     local_pcm = bytearray()
-    window = bytearray()
 
     max_hours = float(settings.max_meeting_hours or 0)
     max_pcm_bytes = (
@@ -216,7 +235,7 @@ async def transcribe_ws(websocket: WebSocket):
     elif live_available and redis_ok:
         status_message = (
             "Whisper ASR active — disk PCM + Redis rolling buffer "
-            f"(up to {max_hours:g}h); 10s live windows, language=tl / task=transcribe."
+            f"(up to {max_hours:g}h); overlapping live windows, language=auto."
         )
     elif live_available:
         status_message = (
@@ -270,7 +289,6 @@ async def transcribe_ws(websocket: WebSocket):
     bytes_per_hop = int(
         hop_seconds * settings.audio_sample_rate * bytes_per_sample_frame
     )
-    bytes_overlap = max(0, bytes_per_window - bytes_per_hop)
     warmup_seconds = max(1.0, float(settings.whisper_live_warmup_seconds))
     bytes_per_warmup = int(
         warmup_seconds * settings.audio_sample_rate * bytes_per_sample_frame
@@ -533,9 +551,10 @@ async def transcribe_ws(websocket: WebSocket):
                     else:
                         redis_append_failures = 0
                     redis_store.touch_session(meeting_id)
+                    redis_store.refresh_live_lock(meeting_id, lock_token)
                 else:
+                    # Disk is authoritative; keep a short local length mirror only.
                     local_pcm.extend(data)
-                    window.extend(data)
 
                 # Soft milestone warnings for long board meetings.
                 hours = total / (settings.audio_sample_rate * 2 * 3600)
@@ -563,36 +582,8 @@ async def transcribe_ws(websocket: WebSocket):
                             ),
                         },
                     )
+                # Disk-backed ASR worker is the single consumer (Redis up or down).
                 asr_wake.set()
-
-                # Without Redis, also process local overlapping windows inline
-                # (bounded to one window per chunk).
-                if (
-                    not redis_ok
-                    and live_available
-                    and len(window) >= bytes_per_window
-                ):
-                    # Local sliding buffer still keeps hop overlap (trim from front).
-                    approx_offset = max(0, total - len(window))
-                    chunk = bytes(window[:bytes_per_window])
-                    if bytes_overlap > 0:
-                        window[:] = window[bytes_per_hop:]
-                    else:
-                        window.clear()
-                    seq += 1
-                    try:
-                        live_caption, previous_window = await _emit_live_window(
-                            websocket,
-                            meeting_id=meeting_id,
-                            chunk=chunk,
-                            language=language,
-                            seq=seq,
-                            live_caption=live_caption,
-                            previous_window=previous_window,
-                            byte_offset=approx_offset,
-                        )
-                    except Exception as exc:
-                        logger.exception("Live transcription error: %s", exc)
                 continue
 
             text_data = message.get("text")
@@ -628,6 +619,7 @@ async def transcribe_ws(websocket: WebSocket):
                 pass
         _persist_meta()
         live_metrics.session_ended()
+        redis_store.release_live_lock(meeting_id, lock_token)
 
     # Unexpected drops must NOT finalize — REST /stop or reconnect handles it.
     if not explicit_stop:
