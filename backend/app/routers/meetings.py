@@ -12,7 +12,6 @@ from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..database import SessionLocal, get_db
 from ..deps import get_current_user
 from ..models import Meeting, User
