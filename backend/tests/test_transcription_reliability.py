@@ -5,6 +5,8 @@ import sys
 import threading
 from pathlib import Path
 
+import numpy as np
+
 # Allow `python -m pytest` / direct run from repo root or backend/.
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -128,7 +130,7 @@ def test_tagalog_uses_native_tl_and_prefer_forced():
 
 
 def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
-    # Prefer HF fine-tune for hil when backend=auto.
+    # Hiligaynon uses HF only when a real fine-tune is configured; otherwise FW.
     from app.config import settings
 
     prev = settings.whisper_final_backend
@@ -139,16 +141,15 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         settings.whisper_final_backend = "auto"
         settings.whisper_hiligaynon_fine_tuned_model = ""
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
-        assert resolve_final_backend("hil") == "huggingface"
+        # Generic PH medium is not used for Hiligaynon (hallucinates on quiet audio).
+        assert resolve_final_backend("hil") == "faster-whisper"
         assert resolve_final_backend("en") == "faster-whisper"
-        assert hiligaynon_hf_candidates() == ["rbcurzon/whisper-medium-ph"]
-        assert hiligaynon_model_id() == "rbcurzon/whisper-medium-ph"
+        assert hiligaynon_hf_candidates() == []
+        assert hiligaynon_model_id() == settings.whisper_final_model
 
         settings.whisper_hiligaynon_fine_tuned_model = "/models/my-hil-ft"
-        assert hiligaynon_hf_candidates() == [
-            "/models/my-hil-ft",
-            "rbcurzon/whisper-medium-ph",
-        ]
+        assert resolve_final_backend("hil") == "huggingface"
+        assert hiligaynon_hf_candidates() == ["/models/my-hil-ft"]
         assert hiligaynon_model_id() == "/models/my-hil-ft"
 
         settings.whisper_live_hiligaynon_model = "/models/hil-ct2"
@@ -217,8 +218,9 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_tagalog_fine_tuned_model = ""
         settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
-        assert resolve_final_backend("auto") == "huggingface"
-        # Auto path prefers medium-PH only (Tagalog-small omitted — hallucination loops).
+        # auto → Hiligaynon default; without a hil fine-tune, use faster-whisper.
+        assert resolve_final_backend("auto") == "faster-whisper"
+        # auto_hf_candidates still lists medium-PH for Tagalog/legacy callers.
         assert auto_hf_candidates() == [
             "rbcurzon/whisper-medium-ph",
         ]
@@ -231,6 +233,32 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_tagalog_model = prev_tl
         settings.whisper_hiligaynon_model = prev_ph
         settings.whisper_live_hiligaynon_model = prev_live_hil
+
+
+def test_amplify_for_asr_boosts_quiet_audio():
+    from app.services.audio import amplify_for_asr
+
+    rng = np.random.default_rng(0)
+    quiet = (rng.standard_normal(16000).astype(np.float32) * 0.01)
+    # One loud click should not prevent boosting the quiet body.
+    quiet[100] = 0.6
+    boosted = amplify_for_asr(quiet, target_rms=0.1, max_gain=20.0)
+    quiet_rms = float(np.sqrt(np.mean(np.square(quiet))))
+    boost_rms = float(np.sqrt(np.mean(np.square(boosted))))
+    assert boost_rms > quiet_rms * 2
+    assert float(np.max(np.abs(boosted))) <= 1.0
+
+
+def test_ellipsis_spam_is_junk():
+    from app.services.transcription import _is_junk_transcript
+
+    spam = (
+        "magtest?... iyas o?... sa usa sa...... dito sa may...... "
+        "dundi research hub ang...... asa piyang?... dili sir diri na...... "
+        "ah dili lang nga building?... iyes magdiriqo?... dundi sir diri na?... "
+        "o dundi lang nga building?... iyon magdiri diri......"
+    )
+    assert _is_junk_transcript(spam)
 
 
 def test_candidate_quality_score_prefers_diverse_coverage():

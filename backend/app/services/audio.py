@@ -293,6 +293,107 @@ def normalize_for_asr(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     return _resample_mono(samples.astype(np.float32, copy=False), sample_rate, target)
 
 
+def amplify_for_asr(
+    samples: np.ndarray,
+    *,
+    target_rms: float = 0.1,
+    max_gain: float = 20.0,
+    peak_limit: float = 0.95,
+    sample_rate: int | None = None,
+) -> np.ndarray:
+    """Boost quiet mic captures so Whisper does not treat speech as silence.
+
+    Soft board-room / laptop mics often land at RMS ≈ 0.02. With default
+    ``no_speech_threshold``, faster-whisper returns empty and HF PH models
+    invent Bisaya-like filler — verified on a 3-minute Hiligaynon WAV.
+
+    Prefer ``ffmpeg dynaudnorm`` when available (best for multi-minute files);
+    otherwise use percentile-based gain + soft clip.
+    """
+    if samples is None or samples.size == 0:
+        return np.zeros(0, dtype=np.float32)
+    x = samples.astype(np.float32, copy=False)
+    sr = int(sample_rate or settings.audio_sample_rate or 16000)
+    # dynaudnorm is worth it for final passes (≥ ~5s); skip for tiny live hops.
+    if x.size >= int(sr * 5) and ffmpeg_available():
+        try:
+            return _amplify_with_ffmpeg_dynaudnorm(x, sr)
+        except Exception as exc:
+            logger.warning("ffmpeg dynaudnorm failed (%s); using numpy AGC", exc)
+    return _amplify_numpy(x, target_rms=target_rms, max_gain=max_gain, peak_limit=peak_limit)
+
+
+def _amplify_numpy(
+    samples: np.ndarray,
+    *,
+    target_rms: float,
+    max_gain: float,
+    peak_limit: float,
+) -> np.ndarray:
+    x = samples.astype(np.float32, copy=True)
+    rms = float(np.sqrt(np.mean(np.square(x))))
+    if rms < 1e-8:
+        return x
+    abs_x = np.abs(x)
+    ref = float(np.percentile(abs_x, 98)) if abs_x.size >= 32 else float(np.max(abs_x))
+    ref = max(ref, rms * 3.0, 1e-6)
+    gain = 1.0
+    if rms < float(target_rms):
+        gain = min(float(max_gain), float(target_rms) / rms)
+    target_ref = 0.55
+    if ref < target_ref:
+        gain = max(gain, min(float(max_gain), target_ref / ref))
+    if gain > 1.01:
+        x *= gain
+    lim = float(peak_limit)
+    if np.any(np.abs(x) > lim):
+        x = np.tanh(x / lim) * lim
+    return x.astype(np.float32, copy=False)
+
+
+def _amplify_with_ffmpeg_dynaudnorm(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Per-frame loudness normalization via ffmpeg (keeps soft speech audible)."""
+    pcm = float32_to_pcm16(samples)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "s16le",
+        "-ar",
+        str(int(sample_rate)),
+        "-ac",
+        "1",
+        "-i",
+        "pipe:0",
+        "-af",
+        "highpass=f=80,lowpass=f=7600,dynaudnorm=f=150:g=15:p=0.95",
+        "-f",
+        "s16le",
+        "-ar",
+        str(int(sample_rate)),
+        "-ac",
+        "1",
+        "pipe:1",
+    ]
+    limit = float(settings.ffmpeg_timeout_seconds or 120.0)
+    proc = subprocess.run(
+        cmd,
+        input=pcm,
+        capture_output=True,
+        timeout=max(30.0, limit),
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        detail = (proc.stderr or b"").decode("utf-8", errors="replace")[:200]
+        raise RuntimeError(detail or "ffmpeg dynaudnorm returned empty audio")
+    out = pcm16_to_float32(proc.stdout)
+    if out.size == 0:
+        raise RuntimeError("ffmpeg dynaudnorm produced no samples")
+    return out
+
+
 def load_audio_float32(path: str) -> np.ndarray:
     """Load a stored WAV into float32 mono @ ``audio_sample_rate`` for Whisper."""
     with open(path, "rb") as fh:

@@ -8,8 +8,9 @@ Implements the two-pass pipeline:
   (Whisper has no native Hiligaynon token).
 * **Final pass** — when ``WHISPER_FINAL_BACKEND=auto|huggingface``:
   Tagalog prefers custom → ``WHISPER_TAGALOG_MODEL`` → PH medium;
-  Hiligaynon prefers custom → ``WHISPER_HILIGAYNON_MODEL``; then
-  faster-whisper fallback for coverage / availability.
+  Hiligaynon uses a custom fine-tune only (generic PH medium invents
+  Bisaya-like filler on quiet Ilonggo audio) then faster-whisper with
+  loudness normalization + coverage-aware ``tl`` retries.
 
 Fine-tuning itself is done *outside* this repo; point the env vars at your
 checkpoint (see ``docs/FINE_TUNE_HILIGAYNON.md``).
@@ -72,6 +73,8 @@ _HALLUCINATION_PHRASES = (
     "i'm sorry, but i can't do it",
     "i don't want to see you again",
     "i'm not sure if it's because of you",
+    "i love this thing",
+    "i don't know what that",
 )
 
 
@@ -341,11 +344,16 @@ def is_philippine_language(language: str | None) -> bool:
 
 
 def hiligaynon_hf_candidates() -> list[str]:
-    """Ordered HF/local Whisper ids for Hiligaynon final ASR."""
+    """Ordered HF/local Whisper ids for Hiligaynon final ASR.
+
+    Only a real Hiligaynon fine-tune is used. The generic Philippine medium
+    checkpoint (``rbcurzon/whisper-medium-ph``) invents Bisaya-like filler on
+    quiet Ilonggo board audio — prefer faster-whisper + amplify instead unless
+    a Hiligaynon fine-tune is configured.
+    """
     return _dedupe_model_ids(
         [
             settings.whisper_hiligaynon_fine_tuned_model,
-            settings.whisper_hiligaynon_model,
         ]
     )
 
@@ -720,6 +728,15 @@ def _is_junk_transcript(text: str) -> bool:
         top_n = max(counts.values())
         if top_n / len(tokens) >= 0.5:
             return True
+    # Soft-speech PH hallucinations often pad with "?..." / "......" glue.
+    ellipsis_hits = (
+        cleaned.count("?...")
+        + cleaned.count("......")
+        + cleaned.count("?... ")
+        + len(re.findall(r"\.{3,}", cleaned))
+    )
+    if ellipsis_hits >= 6 and ellipsis_hits >= max(3, int(len(tokens) * 0.06)):
+        return True
     # Repeated bigram/trigram loops: "hindi ko hindi ko hindi ko…"
     # These freeze live captions after a couple of seconds if left unfiltered.
     if len(tokens) >= 6:
@@ -762,6 +779,12 @@ def transcribe_live(
     """
     if pcm is None or len(pcm) == 0:
         return [], None
+    from . import audio as audio_svc
+
+    # Boost quiet laptop mics before Whisper's no-speech gate.
+    pcm = audio_svc.amplify_for_asr(
+        pcm.astype(np.float32, copy=False), target_rms=0.09, max_gain=12.0
+    )
     # Soften energy gate — clipped/quiet phrases were skipped entirely.
     if not _energy_ok(pcm, min_rms=0.004):
         return [], None
@@ -806,9 +829,10 @@ def transcribe_live(
                 vad_filter=False,
                 condition_on_previous_text=False,
                 without_timestamps=False,
-                no_speech_threshold=0.7,
+                # Soft speech: do not drop live captions as "no speech".
+                no_speech_threshold=0.4,
                 compression_ratio_threshold=2.4,
-                log_prob_threshold=-1.0,
+                log_prob_threshold=-1.2,
                 initial_prompt=live_prompt,
             )
 
@@ -1065,6 +1089,16 @@ def _audio_to_float32(audio_source) -> np.ndarray:
     return audio_svc.load_audio_float32(str(audio_source))
 
 
+def _prepare_asr_audio(audio_source) -> np.ndarray:
+    """Load float32 PCM and amplify quiet captures for Whisper."""
+    from . import audio as audio_svc
+
+    samples = _audio_to_float32(audio_source)
+    if samples.size == 0:
+        return samples
+    return audio_svc.amplify_for_asr(samples)
+
+
 def _parse_hf_asr_result(result, samples: np.ndarray) -> list[Segment]:
     """Normalize Hugging Face ASR pipeline output into ``Segment`` rows."""
     chunks = result.get("chunks") if isinstance(result, dict) else None
@@ -1157,6 +1191,14 @@ def _sanitize_segments(segments: list[Segment]) -> list[Segment]:
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
         if not text or _is_junk_transcript(text):
+            continue
+        # Drop single-glyph / punctuation-only remnants after collapse.
+        if len(re.findall(r"[A-Za-zÀ-ÿ0-9]", text)) < 2:
+            continue
+        # Drop ultra-long segments that are mostly one repeated short phrase.
+        duration = max(0.0, float(s.end) - float(s.start))
+        words = text.split()
+        if duration >= 20.0 and len(words) <= 4:
             continue
         out.append(Segment(text=text, start=s.start, end=s.end))
     return out
@@ -1282,16 +1324,19 @@ def _run_faster_whisper_final(
             task=_WHISPER_TASK,
             beam_size=5,
             best_of=5,
-            temperature=[0.0, 0.2, 0.4],
+            temperature=[0.0, 0.2],
             vad_filter=vad_filter,
             vad_parameters=_FINAL_VAD_PARAMS if vad_filter else None,
-            # Continuity across phrases — False caused more dropped clauses.
-            condition_on_previous_text=True,
+            # False avoids Whisper latching onto a repeated phrase on quiet PH
+            # audio ("Thank you…" / "Ay, wala…" loops). Coverage retries still
+            # recover dropped clauses.
+            condition_on_previous_text=False,
             without_timestamps=False,
             initial_prompt=initial_prompt(meeting_language),
-            no_speech_threshold=0.6,
-            compression_ratio_threshold=2.4,
-            log_prob_threshold=-1.0,
+            # Quiet laptop/board mics need a lower gate or speech is dropped.
+            no_speech_threshold=0.25,
+            compression_ratio_threshold=2.6,
+            log_prob_threshold=-1.2,
         )
     return _segments_to_list(segments), info
 
@@ -1606,7 +1651,7 @@ def transcribe_final(
 
     Returns ``(segments, language_detection)``.
     """
-    samples = _audio_to_float32(audio_source)
+    samples = _prepare_asr_audio(audio_source)
     if samples.size == 0:
         return [], None
 
