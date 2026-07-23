@@ -41,11 +41,14 @@ behind a secure JWT authentication system with per-user meeting history.
   when available, else faster-whisper `medium`) and replaces live captions with
   the finalized transcript (**Refined** badge).
 - **Automatic language (Hiligaynon-biased)** — no Spoken language picker.
-  Meetings use `auto`; ASR still biases Hiligaynon via
-  `WHISPER_DEFAULT_LANGUAGE=hil` (prompts + `prefer_forced` `tl` decode —
-  Whisper has no native `hil` token). For best accuracy, fine-tune Whisper on
-  Hiligaynon audio with [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/)
-  and set `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
+  Meetings use `auto`; ASR biases Hiligaynon via `WHISPER_DEFAULT_LANGUAGE=hil`
+  and prefers the Philippine dialect Whisper checkpoint
+  (`rbcurzon/whisper-medium-ph`, Visayan-aware) over stock Whisper, with
+  loudness normalization and short prompts (long word-list prompts were being
+  echoed). Whisper has no native `hil` token, so forced decode still uses `tl`.
+  For best accuracy, fine-tune on Hiligaynon audio with
+  [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
+  `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
   (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
 - **English meeting summaries** — mBART translates the **full** transcript into
   English with sliding context windows (PH/mixed via `id_ID`), then topic-aware
