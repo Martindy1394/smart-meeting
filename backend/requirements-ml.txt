@@ -7,7 +7,12 @@
 # Whisper transcription (live + full-accuracy finalization pass)
 faster-whisper==1.1.0
 
-# BART summarization + mBART translation
+# BART summarization + mBART / NLLB translation
 transformers==4.47.1
 torch==2.5.1
 sentencepiece==0.2.0
+
+# Optional: LoRA fine-tuning for Philippine mBART (scripts/ph_mt/)
+# peft>=0.11.0
+# datasets>=2.18.0
+# accelerate>=0.30.0
