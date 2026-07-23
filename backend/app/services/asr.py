@@ -142,8 +142,15 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     meeting.translation = ""
     meeting.translation_language = ""
     # Persist Whisper-detected language + confidence metadata.
+    # Do not overwrite an explicit user label (hil/tl/en) — that label drives
+    # Hiligaynon/Tagalog prompt bias on the next re-transcribe.
     detected = (result.language or "").strip().lower()
-    if detected and detected not in {"auto", "detect", "none"}:
+    prev_lang = (meeting.language or "auto").strip().lower()
+    if prev_lang in {"", "auto", "detect", "none"} and detected and detected not in {
+        "auto",
+        "detect",
+        "none",
+    }:
         meeting.language = detected
     meeting.language_confidence = result.language_confidence
     meeting.language_detected_by = (result.language_detected_by or "").strip()

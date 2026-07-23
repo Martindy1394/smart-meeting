@@ -144,8 +144,13 @@ async def transcribe_ws(websocket: WebSocket):
             and meeting is not None
             and meeting.owner_id == user.id
         )
-        # Live ASR always auto-detects; meeting.language is display metadata.
+        # Prefer meeting language label when set (hil/tl) so live ASR uses the
+        # matching prompt + model path; otherwise auto-detect.
         language = "auto"
+        if meeting is not None:
+            label = (meeting.language or "").strip().lower()
+            if label and label not in {"auto", "detect", "none", ""}:
+                language = label
         meeting_status = meeting.status if meeting else None
     finally:
         db.close()

@@ -98,7 +98,11 @@ def _prepare_whisper_job(meeting: Meeting, db: Session) -> tuple[str, str]:
     meeting.status = "processing"
     meeting.updated_at = datetime.now(timezone.utc)
     db.commit()
-    return path, "auto"
+    # Honor meeting language (hil/tl) so Hiligaynon prompt + PH model path apply.
+    lang = (meeting.language or "auto").strip().lower() or "auto"
+    if lang in {"", "none", "detect"}:
+        lang = "auto"
+    return path, lang
 
 
 async def _read_upload_capped(file: UploadFile) -> bytes:

@@ -115,22 +115,24 @@ export default function MeetingRoom({
   }, []);
 
   const summarizeFromTranscript = useCallback(
-    async (format = summaryFormat) => {
+    async (format = summaryFormat, { forceRetranslate = false } = {}) => {
       setSummarizing(true);
       setSummaryError("");
       try {
-        // Backend: mBART full-transcript → English, then contextual BART summary.
+        // Backend: full-transcript → English, then contextual BART summary.
         const res = await api.summarize({
           meeting_id: meeting.id,
           output_format: format,
+          force_retranslate: Boolean(forceRetranslate),
         });
-        setSummary(res.summary);
+        setSummary(res.summary || "");
         setSummaryEngine(res.engine);
-        if (res.translation) {
-          setTranslation(res.translation);
-          setTranslationLang(res.translation_language || "English");
-          autoTranslateRef.current = (meeting.final_transcript || "").trim();
-        }
+        // Always refresh translation from this pass (clear if empty).
+        setTranslation(res.translation || "");
+        setTranslationLang(res.translation_language || "English");
+        autoTranslateRef.current = (res.translation || "").trim()
+          ? "synced"
+          : "";
         autoSummaryRef.current = `${meeting.id}:${format}`;
         if (onMeetingUpdated) onMeetingUpdated();
       } catch (err) {
@@ -139,14 +141,14 @@ export default function MeetingRoom({
         setSummarizing(false);
       }
     },
-    [meeting.final_transcript, meeting.id, onMeetingUpdated, summaryFormat]
+    [meeting.id, onMeetingUpdated, summaryFormat]
   );
 
   const translateToEnglish = useCallback(
-    async (transcriptText) => {
+    async (transcriptText, { force = false } = {}) => {
       const text = (transcriptText || "").trim();
       if (!text) return;
-      if (autoTranslateRef.current === text) return;
+      if (!force && autoTranslateRef.current === text) return;
       autoTranslateRef.current = text;
       setTranslating(true);
       setTranslateError("");
@@ -178,15 +180,21 @@ export default function MeetingRoom({
       setStatus(detailOrPayload.status || "finalized");
       setHasAudio(Boolean(detailOrPayload.has_audio || text || audioUrl));
       setAsrError("");
+      // New transcript invalidates prior AI outputs — clear UI immediately.
+      setSummary("");
+      setTranslation("");
+      setSummaryError("");
+      setTranslateError("");
+      autoTranslateRef.current = "";
+      autoSummaryRef.current = "";
       if (persistDetails) {
         await saveDetails({ silent: true });
       }
       if (onMeetingUpdated) onMeetingUpdated();
       await loadAudio(meeting.id);
       if (text.trim()) {
-        // Summarize translates the full transcript to English first, then
-        // builds a context-aware English summary (also refreshes translation).
-        await summarizeFromTranscript(summaryFormat);
+        // Force a fresh English translation of the new transcript, then summarize.
+        await summarizeFromTranscript(summaryFormat, { forceRetranslate: true });
       }
     },
     [
@@ -215,6 +223,13 @@ export default function MeetingRoom({
     setAsrBusy(true);
     setAsrError("");
     setStatus("processing");
+    // Clear stale AI panels while Whisper rewrites the transcript.
+    setSummary("");
+    setTranslation("");
+    setSummaryError("");
+    setTranslateError("");
+    autoTranslateRef.current = "";
+    autoSummaryRef.current = "";
     try {
       let detail = await api.retranscribeMeeting(meeting.id);
       // Whisper can take several minutes on CPU — poll instead of one long POST.

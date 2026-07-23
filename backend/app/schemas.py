@@ -221,6 +221,8 @@ class MeetingDetail(BaseModel):
 class SummarizeRequest(BaseModel):
     meeting_id: str
     output_format: str = Field(default="bullets")  # bullets | numbered
+    # When true, always re-translate the transcript (ignore cached English).
+    force_retranslate: bool = False
 
     @field_validator("output_format")
     @classmethod

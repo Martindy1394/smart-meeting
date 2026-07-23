@@ -389,6 +389,10 @@ def hiligaynon_model_id() -> str:
 
 def initial_prompt(language: str | None = None) -> str | None:
     """Language-aware short prompt (avoid long prompts — Whisper may echo them)."""
+    if is_hiligaynon_language(language):
+        prompt = (settings.whisper_hiligaynon_initial_prompt or "").strip()
+        if prompt:
+            return prompt
     if is_tagalog_language(language):
         prompt = (settings.whisper_tagalog_initial_prompt or "").strip()
         if prompt:
@@ -583,14 +587,21 @@ def _forced_language(requested: str | None = None) -> str:
 def _final_language_mode(requested: str | None) -> str:
     """Resolve final language mode.
 
-    Auto-detect is the default product path. Explicit Tagalog may still use
-    ``prefer_forced`` via settings.
+    Auto-detect is the default product path. Explicit Tagalog/Hiligaynon may
+    still use ``prefer_forced`` via settings (Hiligaynon has no Whisper token,
+    so forced decode uses ``tl``).
     """
     if is_auto_language(requested):
         return (settings.whisper_final_language_mode or "auto").strip().lower()
     if is_tagalog_language(requested):
         return (
             settings.whisper_tagalog_final_language_mode
+            or settings.whisper_final_language_mode
+            or "prefer_forced"
+        ).strip().lower()
+    if is_hiligaynon_language(requested):
+        return (
+            settings.whisper_hiligaynon_final_language_mode
             or settings.whisper_final_language_mode
             or "prefer_forced"
         ).strip().lower()

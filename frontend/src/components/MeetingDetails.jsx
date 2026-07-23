@@ -65,6 +65,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   );
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
+  const [language, setLanguage] = useState(meeting.language || "auto");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   const [error, setError] = useState("");
@@ -80,6 +81,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     );
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
+    setLanguage(meeting.language || "auto");
     setError("");
     setSavedAt(0);
   }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -103,6 +105,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       title.trim() !== (meeting.title || "").trim() ||
       venue.trim() !== (meeting.venue || "").trim() ||
       dateTime !== savedDateTime ||
+      (language || "auto") !== (meeting.language || "auto") ||
       !sameAttendees(currentAttendees, savedAttendees)
     );
   };
@@ -111,7 +114,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, meeting]);
+  }, [title, venue, dateTime, attendees, attendeeInput, language, meeting]);
 
   function useCurrentDateTime() {
     const current = nowLocalInput();
@@ -153,6 +156,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         venue: venue.trim(),
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
+        language: language || "auto",
       });
       setAttendees(finalAttendees);
       setAttendeeInput("");
@@ -164,6 +168,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           venue: venue.trim(),
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
+          language: language || "auto",
         });
       }
       return true;
@@ -258,6 +263,20 @@ const MeetingDetails = forwardRef(function MeetingDetails(
               Now
             </button>
           </div>
+        </div>
+
+        <div className="field">
+          <label>Spoken language</label>
+          <select
+            value={language || "auto"}
+            onChange={(e) => setLanguage(e.target.value)}
+            title="Biases Whisper toward Hiligaynon / Tagalog vocabulary"
+          >
+            <option value="auto">Auto-detect</option>
+            <option value="hil">Hiligaynon (Ilonggo)</option>
+            <option value="tl">Tagalog / Filipino</option>
+            <option value="en">English</option>
+          </select>
         </div>
 
         <div className="field attendees-field">

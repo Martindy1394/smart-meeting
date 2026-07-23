@@ -48,13 +48,17 @@ def summarize(
 ):
     meeting = _get_owned_meeting(payload.meeting_id, current_user, db)
     source = _require_transcript(meeting)
-    # Full transcript → English (mBART) → contextual BART summary.
+    # Full transcript → English → contextual BART summary.
+    # After re-transcribe, force a fresh translation of the new transcript.
+    cached_english = None
+    if not payload.force_retranslate:
+        cached_english = (meeting.translation or "").strip() or None
     try:
         summary, summary_engine, english, translate_engine = llm.summarize_to_english(
             source,
             source_language=meeting.language or "auto",
             output_format=payload.output_format,
-            existing_english=(meeting.translation or "").strip() or None,
+            existing_english=cached_english,
         )
     except llm.LLMUnavailable as exc:
         raise HTTPException(

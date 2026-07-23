@@ -114,12 +114,18 @@ class Settings(BaseSettings):
     # Coverage retry / legacy forced decode code for PH speech (hil has no token).
     whisper_decode_language: str = "tl"
     # Optional prompts — keep short to avoid Whisper echoing them.
-    # Used for auto-detect and Hiligaynon-biased meetings.
+    # Used for auto-detect and mixed PH board meetings (Iloilo / Hiligaynon-heavy).
     whisper_initial_prompt: str = (
-        "Board meeting in Filipino and English."
+        "Board meeting in Hiligaynon, Filipino, and English. "
+        "Maayo, indi, kita, sang, nga, gin, naton."
     )
     whisper_tagalog_initial_prompt: str = (
         "Board meeting in Tagalog and English."
+    )
+    # Hiligaynon / Ilonggo bias — Whisper has no hil token; prompt + tl decode help.
+    whisper_hiligaynon_initial_prompt: str = (
+        "Board meeting in Hiligaynon Ilonggo and English. "
+        "Maayong aga. Indi. Kita. Sang. Nga. Kinahanglan. Ginaprobahan."
     )
     # Final-pass language: "auto" (detect), "forced" (whisper_decode_language),
     # or "prefer_forced" (forced first, auto retry if coverage is poor).
@@ -127,6 +133,8 @@ class Settings(BaseSettings):
     whisper_final_language_mode: str = "auto"
     # Only used when meeting language is explicitly Tagalog (API/legacy).
     whisper_tagalog_final_language_mode: str = "prefer_forced"
+    # Hiligaynon: prefer forced tl decode (closest Whisper code) then auto retry.
+    whisper_hiligaynon_final_language_mode: str = "prefer_forced"
     # Final-pass VAD: aggressive VAD was dropping long spans of real speech
     # (especially clipped mic audio / mixed EN+PH). Default off for coverage.
     whisper_final_vad_filter: bool = False

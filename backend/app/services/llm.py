@@ -488,7 +488,8 @@ def _format_summary(units: list[str], output_format: str) -> str:
         return ""
     if output_format == "numbered":
         return "\n".join(f"{i}. {s}" for i, s in enumerate(units, start=1))
-    return "\n".join(f"- {s}" for s in units)
+    # Real bullet points (not ASCII hyphens).
+    return "\n".join(f"• {s}" for s in units)
 
 
 def _strip_list_prefix(text: str) -> str:
@@ -682,7 +683,7 @@ def _format_topic_summaries(
                 lines.append(f"{counter}. {unit}")
                 counter += 1
             else:
-                lines.append(f"- {unit}")
+                lines.append(f"• {unit}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -746,7 +747,7 @@ def _format_meeting_minutes(units: list[str], output_format: str) -> str:
                 lines.append(f"{counter}. {unit}")
                 counter += 1
             else:
-                lines.append(f"- {unit}")
+                lines.append(f"• {unit}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
