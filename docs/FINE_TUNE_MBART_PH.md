@@ -72,5 +72,17 @@ PH_TRANSLATE_BACKEND=mbart
 - Dictionary glosses are a **weak** signal; do not raise `--dict-limit-per-lang` too high.
 - Prefer more **meeting-domain** Hiligaynon/Tagalog sentence pairs for real gains.
 - Full fine-tune without LoRA (`--no-lora`) needs a GPU with ample VRAM.
+- A short CPU LoRA smoke run (`--max-steps 400`) validates the pipeline but is **not**
+  enough for production quality — keep `PH_TRANSLATE_BACKEND=nllb` (or `auto` without
+  a strong checkpoint) until you train ≥1–3 epochs on GPU.
 - NLLB fine-tuning is still the better long-term PH MT path; this pipeline exists
   for teams that want an mBART checkpoint specifically.
+
+## Local artifact layout (gitignored)
+
+```
+models/mbart-ph-en-lora/     # LoRA adapters from finetune_mbart.py
+models/mbart-ph-en-merged/   # merge_lora.py output — point MBART_PH_FINE_TUNED_MODEL here
+scripts/ph_mt/prepared/      # train.jsonl / eval.jsonl from prepare_mbart_dataset.py
+scripts/ph_mt/data/          # optional pinoy-dictionary JSON downloads
+```

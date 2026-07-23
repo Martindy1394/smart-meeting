@@ -102,28 +102,38 @@ def main(argv: list[str] | None = None) -> int:
         model = get_peft_model(model, lora)
         model.print_trainable_parameters()
 
-    def preprocess(batch: dict) -> dict:
-        tokenizer.src_lang = batch.get("src_lang") or "tl_XX"
+    def preprocess(example: dict) -> dict:
+        tokenizer.src_lang = example.get("src_lang") or "tl_XX"
         model_inputs = tokenizer(
-            batch["src"],
-            text_target=batch["tgt"],
+            example["src"],
+            text_target=example["tgt"],
             max_length=args.max_source_length,
             truncation=True,
+            padding=False,
         )
-        # Cap label length separately when needed.
-        if (
-            isinstance(model_inputs.get("labels"), list)
-            and len(model_inputs["labels"]) > args.max_target_length
-        ):
-            model_inputs["labels"] = model_inputs["labels"][: args.max_target_length]
-        return model_inputs
+        labels = model_inputs.get("labels")
+        if isinstance(labels, list) and len(labels) > args.max_target_length:
+            model_inputs["labels"] = labels[: args.max_target_length]
+        return {
+            "input_ids": model_inputs["input_ids"],
+            "attention_mask": model_inputs["attention_mask"],
+            "labels": model_inputs["labels"],
+        }
 
     train_ds = Dataset.from_list(train_rows).map(preprocess)
+    keep = {"input_ids", "attention_mask", "labels"}
+    drop = [c for c in train_ds.column_names if c not in keep]
+    if drop:
+        train_ds = train_ds.remove_columns(drop)
+
     eval_ds = None
     if args.eval_jsonl and args.eval_jsonl.exists():
         eval_rows = _load_jsonl(args.eval_jsonl)
         if eval_rows:
             eval_ds = Dataset.from_list(eval_rows).map(preprocess)
+            drop_e = [c for c in eval_ds.column_names if c not in keep]
+            if drop_e:
+                eval_ds = eval_ds.remove_columns(drop_e)
 
     collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -143,9 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         logging_steps=5,
         predict_with_generate=False,
         report_to=[],
-        remove_unused_columns=False,
+        remove_unused_columns=True,
         save_total_limit=2,
         warmup_steps=10,
+        dataloader_pin_memory=False,
     )
 
     trainer_kwargs = dict(
