@@ -136,15 +136,15 @@ class _Pipelines:
                         "transformers/torch not installed. Install ML deps: "
                         "pip install -r requirements-ml.txt"
                     ) from exc
-                logger.info("Loading mBART translator '%s'", settings.mbart_model)
-                self._mbart_tokenizer = MBart50TokenizerFast.from_pretrained(
+                model_id = (settings.mbart_ph_finetuned_model or "").strip() or (
                     settings.mbart_model
                 )
+                logger.info("Loading mBART translator '%s'", model_id)
+                self._mbart_tokenizer = MBart50TokenizerFast.from_pretrained(model_id)
                 self._mbart_model = MBartForConditionalGeneration.from_pretrained(
-                    settings.mbart_model
+                    model_id
                 )
             return self._mbart_model, self._mbart_tokenizer
-
     def nllb(self):
         with self._lock:
             if self._nllb_model is None:
@@ -1303,8 +1303,7 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
         return "", "none"
 
     primary = (source_language or "auto").strip().lower()
-    # NLLB first for Philippine speech; mBART id only as backup.
-    use_nllb = primary in {
+    is_ph = primary in {
         "hil",
         "tl",
         "fil",
@@ -1318,6 +1317,12 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
         "id",
         "",
     } or _language_scores(normalized)[1] >= 0.08
+
+    backend = (settings.ph_translate_backend or "auto").strip().lower()
+    has_ph_mbart = bool((settings.mbart_ph_finetuned_model or "").strip())
+    # Prefer fine-tuned mBART (tl_XX) when configured; else NLLB-first.
+    prefer_mbart = backend == "mbart" or (backend == "auto" and has_ph_mbart)
+    use_nllb = backend != "mbart" and is_ph
 
     out_units: list[str] = []
     translated_any = False
@@ -1341,9 +1346,14 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
         piece = ""
         last_err = None
         attempts: list[tuple[str, str]] = []
+        if prefer_mbart and is_ph:
+            # Fine-tuned checkpoint expects tl_XX for Tagalog + Hiligaynon.
+            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
         if use_nllb:
             attempts.append(("nllb", primary or "auto"))
-        attempts.extend([("mbart", "id"), ("mbart", "en")])
+        if not prefer_mbart:
+            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+        attempts.append(("mbart", "en"))
 
         for engine, src in attempts:
             try:
@@ -1358,7 +1368,12 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
                 if _is_garbage_english_translation(unit, piece):
                     raise _NonEnglishTranslation(piece)
                 translated_any = True
-                engine_name = "nllb-200" if engine == "nllb" else "mbart-large-50"
+                if engine == "nllb":
+                    engine_name = "nllb-200"
+                elif has_ph_mbart and src == "tl":
+                    engine_name = "mbart-ph-finetuned"
+                else:
+                    engine_name = "mbart-large-50"
                 break
             except _NonEnglishTranslation as exc:
                 last_err = exc

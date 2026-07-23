@@ -162,6 +162,12 @@ class Settings(BaseSettings):
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"
     mbart_model: str = "facebook/mbart-large-50-many-to-many-mmt"
+    # Optional LoRA-merged mBART checkpoint fine-tuned for Tagalog/Hiligaynon→EN.
+    # When set, Philippine sources use ``tl_XX`` (Hiligaynon has no mBART code).
+    mbart_ph_finetuned_model: str = ""
+    # auto | nllb | mbart — Philippine→English backend preference.
+    # auto: fine-tuned mBART first when configured, otherwise NLLB.
+    ph_translate_backend: str = "auto"
     # NLLB has a real Tagalog code (tgl_Latn); used for PH → English.
     nllb_model: str = "facebook/nllb-200-distilled-600M"
     # When true, allow lightweight non-ML fallbacks (extractive summary) so the
