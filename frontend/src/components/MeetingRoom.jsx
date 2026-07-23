@@ -583,13 +583,8 @@ export default function MeetingRoom({
                   )}
                 </div>
               )}
-              <span className="card-tag">
-                Whisper ASR ·{" "}
-                {!meeting.language || meeting.language === "auto"
-                  ? "Hiligaynon (default)"
-                  : meeting.language === "hil"
-                    ? "Hiligaynon"
-                    : meeting.language}
+              <span className="card-tag" title="Whisper auto-detect with Hiligaynon prompt and decode bias">
+                Whisper ASR · auto · Hiligaynon bias
               </span>
             </div>
           </div>

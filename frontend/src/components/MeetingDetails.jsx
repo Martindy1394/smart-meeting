@@ -73,7 +73,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   );
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
-  const [language, setLanguage] = useState(meeting.language || "hil");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   const [error, setError] = useState("");
@@ -93,7 +92,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     );
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
-    setLanguage(meeting.language || "hil");
     setError("");
     setSavedAt(0);
     // Allow the next edit cycle to autosave after state settles.
@@ -122,7 +120,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       title.trim() !== (meeting.title || "").trim() ||
       venue.trim() !== (meeting.venue || "").trim() ||
       dateTime !== savedDateTime ||
-      (language || "hil") !== (meeting.language || "hil") ||
       !sameAttendees(currentAttendees, savedAttendees)
     );
   };
@@ -157,12 +154,13 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     const seq = ++saveSeq.current;
     setSaving(true);
     try {
+      // Spoken language is not user-selected — always auto (Hiligaynon-biased).
       await api.updateMeeting(meeting.id, {
         title: title.trim(),
         venue: venue.trim(),
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
-        language: language || "hil",
+        language: "auto",
       });
       if (seq !== saveSeq.current) return false;
       setAttendees(finalAttendees);
@@ -175,7 +173,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           venue: venue.trim(),
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
-          language: language || "hil",
+          language: "auto",
         });
       }
       return true;
@@ -192,7 +190,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, language, meeting]);
+  }, [title, venue, dateTime, attendees, attendeeInput, meeting]);
 
   // Debounced autosave whenever required fields are complete and dirty.
   useEffect(() => {
@@ -208,7 +206,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, language, meeting, saving]);
+  }, [title, venue, dateTime, attendees, attendeeInput, meeting, saving]);
 
   useEffect(() => {
     if (!onAutosaveStatus) return;
@@ -220,7 +218,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ready: isComplete(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, savedAt, error, title, venue, dateTime, attendees, attendeeInput, language, meeting]);
+  }, [saving, savedAt, error, title, venue, dateTime, attendees, attendeeInput, meeting]);
 
   useEffect(() => {
     return () => {
@@ -329,25 +327,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
               Now
             </button>
           </div>
-        </div>
-
-        <div className="field">
-          <label>Spoken language</label>
-          <select
-            value={language || "hil"}
-            onChange={(e) => setLanguage(e.target.value)}
-            title="Default is Hiligaynon for Iloilo board meetings"
-          >
-            <option value="hil">Hiligaynon (Ilonggo) — default</option>
-            <option value="auto">Auto-detect (still biases Hiligaynon)</option>
-            <option value="tl">Tagalog / Filipino</option>
-            <option value="en">English</option>
-          </select>
-          <p className="hint">
-            Hiligaynon is applied automatically — change this only if the meeting
-            is not Ilonggo. Whisper has no native <code>hil</code> token; the app
-            handles prompting and language bias for you.
-          </p>
         </div>
 
         <div className="field attendees-field">

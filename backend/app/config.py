@@ -108,8 +108,9 @@ class Settings(BaseSettings):
     whisper_final_backend: str = "auto"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    # Meeting language label default. ``hil`` = Hiligaynon-biased ASR (Whisper
-    # has no native hil token; we use tl decode + Hiligaynon prompt/model).
+    # Meeting language label is always ``auto`` in the product UI. This setting
+    # is the ASR bias used when resolving ``auto`` (Hiligaynon prompts + tl
+    # decode — Whisper has no native hil token).
     # Meeting ``auto`` still resolves to this default at transcription time.
     whisper_default_language: str = "hil"
     # Coverage retry / legacy forced decode code for PH speech (hil has no token).

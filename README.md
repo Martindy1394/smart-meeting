@@ -40,18 +40,13 @@ behind a secure JWT authentication system with per-user meeting history.
   whole recording with a stronger Whisper pass (fine-tuned Hiligaynon/PH model
   when available, else faster-whisper `medium`) and replaces live captions with
   the finalized transcript (**Refined** badge).
-- **Hiligaynon by default** — new meetings use Hiligaynon ASR bias automatically
-  (Spoken language defaults to `hil`; `auto` also resolves to Hiligaynon). Whisper
-  has no native `hil` token, so decode uses `tl` plus Hiligaynon prompts/models —
-  you do not need to set Spoken language before recording. For best accuracy,
-  fine-tune Whisper on Hiligaynon audio with
-  [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
-  `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
+- **Automatic language (Hiligaynon-biased)** — no Spoken language picker.
+  Meetings use `auto`; ASR still biases Hiligaynon via
+  `WHISPER_DEFAULT_LANGUAGE=hil` (prompts + `prefer_forced` `tl` decode —
+  Whisper has no native `hil` token). For best accuracy, fine-tune Whisper on
+  Hiligaynon audio with [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/)
+  and set `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
   (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
-- **Spoken language** — optional override for Tagalog / English / etc. Final pass
-  prefers Philippine HF models when available
-  (`WHISPER_HILIGAYNON_MODEL` / `WHISPER_TAGALOG_MODEL`), then faster-whisper,
-  with `prefer_forced` `tl` coverage retries.
 - **English meeting summaries** — mBART translates the **full** transcript into
   English with sliding context windows (PH/mixed via `id_ID`), then topic-aware
   BART summarizes with topic overlap + coverage restore into meeting-minutes

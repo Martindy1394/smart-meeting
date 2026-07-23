@@ -312,7 +312,7 @@ def create_meeting(
     meeting = Meeting(
         owner_id=current_user.id,
         title=payload.title.strip(),
-        language=payload.language or settings.whisper_default_language or "hil",
+        language=(payload.language or "auto").strip().lower() or "auto",
         venue=payload.venue.strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),

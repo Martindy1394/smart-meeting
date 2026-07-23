@@ -118,9 +118,9 @@ class UserResponse(BaseModel):
 # --------------------------- Meetings --------------------------------------
 class MeetingCreate(BaseModel):
     title: str = Field(default="", max_length=255)
-    # ``hil`` = Hiligaynon-biased Whisper (default for Iloilo board meetings).
-    # ``auto`` still resolves to Hiligaynon at ASR time.
-    language: str = Field(default="hil", max_length=16)
+    # ``auto`` = Whisper detects; ASR still biases Hiligaynon via
+    # ``whisper_default_language`` (no Spoken language UI).
+    language: str = Field(default="auto", max_length=16)
     venue: str = Field(default="", max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)
@@ -131,7 +131,7 @@ class MeetingUpdate(BaseModel):
     venue: str | None = Field(default=None, max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] | None = None
-    # Optional override (normally left as auto / Whisper-detected).
+    # Kept for API compatibility; product UI always sends ``auto``.
     language: str | None = Field(default=None, max_length=16)
 
 
