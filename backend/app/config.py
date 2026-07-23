@@ -115,12 +115,10 @@ class Settings(BaseSettings):
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
     # Meeting language label is always ``auto`` in the product UI. This setting
-    # is the ASR bias used when resolving ``auto`` (Hiligaynon prompts + tl
-    # decode — Whisper has no native hil token).
+    # is the ASR bias used when resolving ``auto`` (Hiligaynon prompts + PH
+    # models). Hiligaynon uses Whisper auto-detect — never forced Tagalog.
     # Meeting ``auto`` still resolves to this default at transcription time.
     whisper_default_language: str = "hil"
-    # Coverage retry / legacy forced decode code for PH speech (hil has no token).
-    whisper_decode_language: str = "tl"
     # Optional prompts — keep short to avoid Whisper echoing them.
     # Used for auto-detect and mixed PH board meetings (Iloilo / Hiligaynon-heavy).
     whisper_initial_prompt: str = (
@@ -135,13 +133,13 @@ class Settings(BaseSettings):
         "Diskusyon sa board meeting sa Hiligaynon kag English. "
         "Wala gid, indi, sang, kag, amo."
     )
-    # Final-pass language: prefer forced tl for Iloilo / Hiligaynon board meetings.
-    # ``prefer_forced`` = forced tl first, auto retry if coverage is poor.
-    whisper_final_language_mode: str = "prefer_forced"
+    # Final-pass language for non-Tagalog / non-Hiligaynon fallbacks.
+    # ``prefer_forced`` = forced language first, auto retry if coverage is poor.
+    whisper_final_language_mode: str = "auto"
     # Only used when meeting language is explicitly Tagalog (API/legacy).
     whisper_tagalog_final_language_mode: str = "prefer_forced"
-    # Hiligaynon: prefer forced tl decode (closest Whisper code) then auto retry.
-    whisper_hiligaynon_final_language_mode: str = "prefer_forced"
+    # Hiligaynon: Whisper auto-detect (no hil token; never force Tagalog ``tl``).
+    whisper_hiligaynon_final_language_mode: str = "auto"
     # Final-pass VAD: aggressive VAD was dropping long spans of real speech
     # (especially clipped mic audio / mixed EN+PH). Default off for coverage.
     whisper_final_vad_filter: bool = False

@@ -144,7 +144,9 @@ def health():
                 "tl"
             ),
             "whisper_default_language": settings.whisper_default_language,
-            "whisper_decode_language": settings.whisper_decode_language,
+            "whisper_hiligaynon_final_language_mode": (
+                settings.whisper_hiligaynon_final_language_mode
+            ),
             "whisper_hiligaynon_fine_tuned_model": (
                 settings.whisper_hiligaynon_fine_tuned_model or None
             ),

@@ -8,9 +8,9 @@
 > and set `WHISPER_TAGALOG_FINE_TUNED_MODEL` instead.
 
 Stock Whisper has **no native Hiligaynon (`hil`) language token**. Smart Meeting
-labels meetings as `hil` but decodes with the closest supported Philippine code
-(`tl` / Tagalog) or auto-detect. That mismatch is a major source of Hiligaynon
-transcription discrepancy.
+labels meetings as `hil` and uses **Whisper auto-detect** with a Hiligaynon
+prompt and PH dialect models — it does **not** force Tagalog (`tl`) decode for
+Ilonggo speech (that mismatch was a major source of bad transcripts).
 
 **Fine-tuning is the most effective fix** (same approach as low-resource
 languages such as Basque on `whisper-medium`). This repo:
@@ -70,9 +70,9 @@ WHISPER_HILIGAYNON_MODEL=rbcurzon/whisper-medium-ph
 # Optional: CTranslate2 export for live captions
 WHISPER_LIVE_HILIGAYNON_MODEL=/path/to/your-hiligaynon-whisper-ct2
 
-# Meeting label stays hil; Whisper decode code stays tl (or auto for final).
+# Meeting label stays hil; Whisper uses auto-detect (never forced Tagalog).
 WHISPER_DEFAULT_LANGUAGE=hil
-WHISPER_DECODE_LANGUAGE=tl
+WHISPER_HILIGAYNON_FINAL_LANGUAGE_MODE=auto
 WHISPER_FINAL_LANGUAGE_MODE=auto
 
 # Optional prompt bias (keep short — long prompts can be echoed).

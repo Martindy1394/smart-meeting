@@ -4,13 +4,14 @@ Implements the two-pass pipeline:
 
 * **Live pass** — fast Whisper (or an optional CTranslate2 Tagalog/Hiligaynon
   fine-tune) on overlapping 10s windows (5s hop). Tagalog (``tl``) uses
-  Whisper's native ``tl`` token; Hiligaynon (``hil``) also decodes as ``tl``
-  (Whisper has no native Hiligaynon token).
+  Whisper's native ``tl`` token. Hiligaynon (``hil``) uses **auto-detect**
+  plus a Hiligaynon prompt — Whisper has no ``hil`` token, and we do **not**
+  force Tagalog decode for Ilonggo speech.
 * **Final pass** — when ``WHISPER_FINAL_BACKEND=auto|huggingface``:
   Tagalog prefers custom → ``WHISPER_TAGALOG_MODEL`` → PH medium;
   Hiligaynon prefers custom fine-tune → ``WHISPER_HILIGAYNON_MODEL``
   (``rbcurzon/whisper-medium-ph``, Visayan-aware) then faster-whisper,
-  with loudness normalization, short prompts, and coverage-aware ``tl`` retries.
+  with loudness normalization, short prompts, and auto-detect (no forced ``tl``).
 
 Fine-tuning itself is done *outside* this repo; point the env vars at your
 checkpoint (see ``docs/FINE_TUNE_HILIGAYNON.md``).
@@ -94,7 +95,7 @@ class LanguageDetection:
     """Whisper language-detect metadata for analysis / debugging.
 
     ``detected_by`` is ``whisper`` when auto-detect chose the code, or
-    ``forced_fallback`` when a forced decode code (usually ``tl``) was used.
+    ``forced_fallback`` when a forced decode code (e.g. Tagalog ``tl``) was used.
     """
 
     language: str | None = None
@@ -590,28 +591,27 @@ def _collapse_hallucinations(text: str) -> str:
     return _collapse_repeated_sentences(text)
 
 
-def _forced_language(requested: str | None = None) -> str:
-    """Map app language labels to a Whisper-supported decode code.
+def _forced_language(requested: str | None = None) -> str | None:
+    """Whisper language code when forcing decode.
 
-    Tagalog/Filipino map to Whisper's native ``tl``. Hiligaynon / default use
-    ``whisper_decode_language`` (default ``tl``) — Whisper has no ``hil`` token.
+    Only English and Tagalog/Filipino have Whisper-native codes we force.
+    Hiligaynon is **never** mapped to ``tl`` — callers must use auto-detect
+    (``None``) plus the Hiligaynon prompt / PH model instead.
     """
     app_lang = effective_asr_language(requested)
     if app_lang in {"en", "english"}:
         return "en"
     if is_tagalog_language(app_lang):
         return "tl"
-    # hil / other PH → configured decode code (usually tl)
-    lang = (settings.whisper_decode_language or "tl").strip().lower()
-    return lang or "tl"
+    return None
 
 
 def _final_language_mode(requested: str | None) -> str:
     """Resolve final language mode.
 
     ``auto`` resolves to ``whisper_default_language`` (Hiligaynon by default),
-    then applies that language's prefer_forced / auto setting. Hiligaynon has
-    no Whisper token, so forced decode uses ``tl``.
+    then applies that language's mode. Hiligaynon defaults to auto-detect
+    (no forced Tagalog token).
     """
     lang = effective_asr_language(requested)
     if is_tagalog_language(lang):
@@ -624,7 +624,7 @@ def _final_language_mode(requested: str | None) -> str:
         return (
             settings.whisper_hiligaynon_final_language_mode
             or settings.whisper_final_language_mode
-            or "prefer_forced"
+            or "auto"
         ).strip().lower()
     return (settings.whisper_final_language_mode or "prefer_forced").strip().lower()
 
@@ -632,9 +632,12 @@ def _final_language_mode(requested: str | None) -> str:
 def _final_decode_language(requested: str | None) -> str | None:
     """Language for the final pass.
 
-    Auto / default: detect (``None``). Explicit Tagalog may force ``tl`` first
-    when ``prefer_forced`` is configured; coverage retries still try auto.
+    Hiligaynon / auto→hil: always ``None`` (Whisper auto-detect).
+    Explicit Tagalog may force ``tl`` when ``prefer_forced`` is configured.
     """
+    lang = effective_asr_language(requested)
+    if is_hiligaynon_language(lang):
+        return None
     mode = _final_language_mode(requested)
     if mode in {"forced", "force", "tl", "prefer_forced", "prefer-tl", "prefer_tl"}:
         return _forced_language(requested)
@@ -844,21 +847,24 @@ def transcribe_live(
     cache = get_model_cache()
     model_id = live_model_id(language)
     model = cache.get_faster_whisper(model_id)
-    # Product path resolves auto→hil before ASR; force closest Whisper code (tl).
-    # Still allow true auto-detect only when the raw label is still "auto".
+    # Hiligaynon / auto→hil: Whisper auto-detect (never force Tagalog ``tl``).
+    # Explicit Tagalog still uses native ``tl``; English uses ``en``.
     raw_label = (language or "").strip().lower()
-    if is_auto_language(raw_label):
+    effective = effective_asr_language(language)
+    if (
+        is_auto_language(raw_label)
+        or is_hiligaynon_language(raw_label)
+        or is_hiligaynon_language(effective)
+    ):
         primary_lang: str | None = None
     elif raw_label in {"en", "english"}:
         primary_lang = "en"
-    elif is_tagalog_language(raw_label):
+    elif is_tagalog_language(raw_label) or is_tagalog_language(effective):
         primary_lang = "tl"
     else:
-        # hil / PH label (including effective hil) — closest Whisper token.
-        primary_lang = _forced_language(language)
+        primary_lang = None
 
     # Always bias live PH/Hiligaynon decode with the short language prompt.
-    # (Previously skipped for resolved "hil", so Ilonggo bias never applied.)
     live_prompt = initial_prompt(language)
     t0 = time.perf_counter()
     winning_decode: str | None = primary_lang
@@ -895,9 +901,9 @@ def transcribe_live(
             continue
         out.append(Segment(text=text, start=s.start, end=s.end))
 
-    # Empty/junk: retry the other strategy (auto ↔ tl) for mixed board speech.
-    if not out:
-        retry_lang = None if primary_lang is not None else _forced_language(language)
+    # Empty/junk: Tagalog can retry auto↔tl. Hiligaynon stays on auto only.
+    if not out and is_tagalog_language(effective):
+        retry_lang = None if primary_lang is not None else "tl"
         if retry_lang != primary_lang:
             try:
                 segments, info = _run(retry_lang)
@@ -1402,9 +1408,8 @@ def _transcribe_final_hf(
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Final pass with a Hugging Face fine-tuned Whisper checkpoint.
 
-    For auto/PH meetings, if the primary decode (usually auto) is thin,
-    retry with forced ``tl`` and keep the higher-scoring transcript. This
-    mirrors the coverage-aware strategy used by the faster-whisper final path.
+    For auto/Hiligaynon meetings the primary decode is Whisper auto-detect
+    (never forced Tagalog). Tagalog meetings may retry with forced ``tl``.
     """
     model_id = (model_id or hiligaynon_model_id()).strip()
     cache = get_model_cache()
@@ -1416,8 +1421,11 @@ def _transcribe_final_hf(
     duration = float(samples.size) / float(settings.audio_sample_rate or 16000)
     primary = _final_decode_language(language)
     lang_attempts: list[str | None] = [primary]
-    if is_philippine_language(language) and primary is None:
-        lang_attempts.append(_forced_language(language))
+    # Tagalog only: if primary was auto, also try forced native ``tl``.
+    # Never append ``tl`` for Hiligaynon.
+    forced = _forced_language(language)
+    if forced is not None and forced not in lang_attempts:
+        lang_attempts.append(forced)
 
     # Prompt token lists often get echoed (and can truncate PH-medium output).
     # Skip HF prompt_ids for Hiligaynon / PH dialect checkpoints.
@@ -1587,10 +1595,11 @@ def _transcribe_final_faster_whisper(
         attempts.append(("no_vad", primary_lang, False))
         attempts.append(("auto_no_vad", None, False))
     else:
-        # Even with VAD off, a forced-language miss should retry auto / tl.
-        if primary_lang is None:
-            attempts.append(("forced_tl_retry", _forced_language(language), False))
-        else:
+        # Tagalog-only forced retry when primary was auto. Never force tl for hil.
+        forced = _forced_language(language)
+        if primary_lang is None and forced is not None:
+            attempts.append(("forced_lang_retry", forced, False))
+        elif primary_lang is not None:
             attempts.append(("auto_retry2", None, False))
     # Tagalog: if primary was auto somehow, still ensure a forced-tl attempt.
     if is_tagalog_language(language) and mode in {"auto", "detect", "none"}:

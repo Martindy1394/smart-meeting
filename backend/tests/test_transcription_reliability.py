@@ -85,15 +85,18 @@ def test_per_model_locks_are_distinct():
     assert cache.fw_infer_lock("small") is lock_a
 
 
-def test_hiligaynon_maps_to_whisper_tl():
+def test_hiligaynon_never_forced_as_tagalog():
     assert is_philippine_language("hil")
     assert is_philippine_language("Hiligaynon")
     assert is_philippine_language("tl")
     assert not is_philippine_language("en")
-    # Whisper has no native hil token — decode uses configured PH code.
-    assert _forced_language("hil") == "tl"
-    assert _forced_language("fil") == "tl"
+    # Hiligaynon must NOT decode as Tagalog ``tl``.
+    assert _forced_language("hil") is None
+    assert _forced_language("auto") is None  # auto → hil default
+    assert _forced_language("fil") == "tl"  # fil is Tagalog/Filipino
     assert _forced_language("en") == "en"
+    assert _final_decode_language("hil") is None
+    assert _final_language_mode("hil") == "auto"
 
 
 def test_auto_language_resolves_to_hiligaynon_default():
@@ -107,8 +110,8 @@ def test_auto_language_resolves_to_hiligaynon_default():
     assert effective_asr_language("") == "hil"
     assert effective_asr_language("en") == "en"
     assert is_hiligaynon_language(effective_asr_language("auto"))
-    assert _final_language_mode("auto") == "prefer_forced"
-    assert _final_decode_language("auto") == "tl"
+    assert _final_language_mode("auto") == "auto"
+    assert _final_decode_language("auto") is None
     prompt = initial_prompt("auto")
     assert prompt
     assert "Hiligaynon" in prompt or "Ilonggo" in prompt
@@ -423,7 +426,8 @@ if __name__ == "__main__":
     test_merge_live_caption_never_shrinks()
     test_model_cache_lru_eviction()
     test_per_model_locks_are_distinct()
-    test_hiligaynon_maps_to_whisper_tl()
+    test_hiligaynon_never_forced_as_tagalog()
+    test_auto_language_resolves_to_hiligaynon_default()
     test_auto_language_detects_and_uses_ph_models()
     test_tagalog_uses_native_tl_and_prefer_forced()
     test_auto_final_backend_prefers_hf_for_hiligaynon()

@@ -45,7 +45,8 @@ behind a secure JWT authentication system with per-user meeting history.
   and prefers the Philippine dialect Whisper checkpoint
   (`rbcurzon/whisper-medium-ph`, Visayan-aware) over stock Whisper, with
   loudness normalization and short prompts (long word-list prompts were being
-  echoed). Whisper has no native `hil` token, so forced decode still uses `tl`.
+  echoed). Whisper has no native `hil` token, so Hiligaynon uses **auto-detect**
+  (never forced Tagalog `tl`) plus Hiligaynon prompts / PH-medium models.
   For best accuracy, fine-tune on Hiligaynon audio with
   [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
   `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
