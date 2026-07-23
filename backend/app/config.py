@@ -130,8 +130,10 @@ class Settings(BaseSettings):
         "Board meeting discussion in Tagalog and English."
     )
     # Keep SHORT — long word lists get echoed into the transcript by Whisper.
+    # A few stable Ilonggo markers bias decode without a word-list dump.
     whisper_hiligaynon_initial_prompt: str = (
-        "Diskusyon sa board meeting sa Hiligaynon kag English."
+        "Diskusyon sa board meeting sa Hiligaynon kag English. "
+        "Wala gid, indi, sang, kag, amo."
     )
     # Final-pass language: prefer forced tl for Iloilo / Hiligaynon board meetings.
     # ``prefer_forced`` = forced tl first, auto retry if coverage is poor.

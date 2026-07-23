@@ -342,7 +342,9 @@ export function useRecorder({ onFinalTranscript } = {}) {
             channelCount: 1,
             echoCancellation: false,
             noiseSuppression: false,
-            autoGainControl: true,
+            // Browser AGC raises the noise floor so quiet tails look like
+            // speech and Whisper loops the last phrase after you stop talking.
+            autoGainControl: false,
           },
         });
       } catch (err) {

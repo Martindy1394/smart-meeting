@@ -6,9 +6,10 @@ This is the single integration surface for turning audio into text:
 * Saved / uploaded WAV files → ``transcribe_file`` (full-accuracy Whisper pass)
 * Meeting pipeline → persist segments + transcript
 
-Live captions prefer FastConformer RNN-T for Philippine meetings when
-``WHISPER_LIVE_BACKEND=auto|rnnt`` and NeMo is installed. Final pass stays on
-Whisper / PH-medium (see ``transcription.py``).
+Live captions prefer FastConformer RNN-T for **Tagalog** meetings when
+``WHISPER_LIVE_BACKEND=auto|rnnt`` and NeMo is installed. Hiligaynon-biased
+``auto`` meetings stay on Whisper. Final pass stays on Whisper / PH-medium
+(see ``transcription.py``).
 """
 from __future__ import annotations
 
@@ -55,7 +56,7 @@ def engine_name() -> str:
     try:
         from . import rnnt
 
-        if rnnt.should_use_rnnt_live("auto") and rnnt.is_available():
+        if rnnt.should_use_rnnt_live("tl") and rnnt.is_available():
             return "rnnt+whisper"
     except Exception:
         pass

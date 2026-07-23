@@ -31,7 +31,7 @@ from typing import Any
 import numpy as np
 
 from ..config import settings
-from .transcription import LanguageDetection, Segment, effective_asr_language, is_philippine_language
+from .transcription import LanguageDetection, Segment
 
 logger = logging.getLogger("smart_meeting.rnnt")
 
@@ -54,14 +54,27 @@ def rnnt_model_id() -> str:
 
 
 def should_use_rnnt_live(language: str | None) -> bool:
-    """True when live captions should prefer RNN-T for this meeting language."""
+    """True when live captions should prefer RNN-T for this meeting language.
+
+    Tagalog FastConformer helps Tagalog/Filipino live captions. It is *not*
+    used for Hiligaynon-biased ``auto`` meetings — the Tagalog lexicon maps
+    Ilonggo poorly and worsens live word recognition.
+    """
     mode = live_backend()
     if mode in {"whisper", "fw", "faster-whisper", "off", "none"}:
         return False
     if mode not in {"auto", "rnnt", "nemo", "transducer"}:
         return False
-    # RNNT checkpoint is Tagalog/PH-oriented — use for Hiligaynon-biased auto too.
-    return is_philippine_language(effective_asr_language(language))
+    from .transcription import (
+        effective_asr_language,
+        is_hiligaynon_language,
+        is_tagalog_language,
+    )
+
+    lang = effective_asr_language(language)
+    if is_hiligaynon_language(lang):
+        return False
+    return is_tagalog_language(lang)
 
 
 def is_available() -> bool:

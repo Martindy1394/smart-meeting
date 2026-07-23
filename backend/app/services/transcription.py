@@ -779,9 +779,10 @@ def transcribe_live(
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Low-latency transcription of a live audio window.
 
-    When ``WHISPER_LIVE_BACKEND=auto|rnnt`` and NeMo is installed, Philippine /
-    Hiligaynon-biased meetings prefer FastConformer RNN-T for live captions.
-    Otherwise (or on RNNT failure) uses faster-whisper on overlapping windows.
+    When ``WHISPER_LIVE_BACKEND=auto|rnnt`` and NeMo is installed, Tagalog
+    meetings may use FastConformer RNN-T for live captions. Hiligaynon-biased
+    ``auto`` stays on Whisper (Tagalog RNNT maps Ilonggo poorly). On RNNT
+    failure, always falls back to faster-whisper.
 
     Returns ``(segments, language_detection)``.
     """
@@ -789,15 +790,33 @@ def transcribe_live(
         return [], None
     from . import audio as audio_svc
 
-    # Boost quiet laptop mics before Whisper's no-speech gate.
+    raw = pcm.astype(np.float32, copy=False)
+    sr = int(settings.audio_sample_rate or 16000)
+    # Gate on *raw* PCM before AGC — amplifying silence first made every
+    # quiet tail look like speech and Whisper re-looped the last phrase.
+    if not _energy_ok(raw, min_rms=0.006):
+        return [], None
+    # Full live windows whose newest hop is silence: user stopped talking.
+    # Skip so Whisper cannot re-decode old speech from a silent tail.
+    window_s = float(settings.whisper_live_window_seconds or 10.0)
+    hop_s = float(settings.whisper_live_hop_seconds or 5.0)
+    if len(raw) >= int(0.85 * window_s * sr):
+        hop_n = max(1, int(hop_s * sr))
+        if len(raw) >= hop_n and not _energy_ok(raw[-hop_n:], min_rms=0.005):
+            logger.info("asr.live skip_silent_tail samples=%d hop=%d", len(raw), hop_n)
+            return [], None
+
+    # Mild numpy AGC only — never dynaudnorm on live (boosts room noise).
     pcm = audio_svc.amplify_for_asr(
-        pcm.astype(np.float32, copy=False), target_rms=0.09, max_gain=12.0
+        raw,
+        target_rms=0.06,
+        max_gain=4.0,
+        allow_dynaudnorm=False,
     )
-    # Soften energy gate — clipped/quiet phrases were skipped entirely.
-    if not _energy_ok(pcm, min_rms=0.004):
+    if not _energy_ok(pcm, min_rms=0.008):
         return [], None
 
-    # Optional NeMo RNN-T live path (PH / Hiligaynon-biased meetings).
+    # Optional NeMo RNN-T live path (Tagalog meetings when enabled).
     try:
         from . import rnnt as rnnt_svc
 
@@ -825,26 +844,22 @@ def transcribe_live(
     cache = get_model_cache()
     model_id = live_model_id(language)
     model = cache.get_faster_whisper(model_id)
-    # Auto (default): detect. Explicit labels: force Whisper code.
-    if is_auto_language(language):
+    # Product path resolves auto→hil before ASR; force closest Whisper code (tl).
+    # Still allow true auto-detect only when the raw label is still "auto".
+    raw_label = (language or "").strip().lower()
+    if is_auto_language(raw_label):
         primary_lang: str | None = None
-    elif (language or "").strip().lower() in {"en", "english"}:
+    elif raw_label in {"en", "english"}:
         primary_lang = "en"
-    elif is_tagalog_language(language):
+    elif is_tagalog_language(raw_label):
         primary_lang = "tl"
     else:
-        # Legacy hil / PH label — closest Whisper token.
+        # hil / PH label (including effective hil) — closest Whisper token.
         primary_lang = _forced_language(language)
 
-    # Short multilingual prompt biases PH board speech without forcing a token.
-    if is_auto_language(language) or is_tagalog_language(language):
-        live_prompt = initial_prompt(language)
-    elif (settings.whisper_live_hiligaynon_model or "").strip() and is_philippine_language(
-        language
-    ):
-        live_prompt = initial_prompt(language)
-    else:
-        live_prompt = None
+    # Always bias live PH/Hiligaynon decode with the short language prompt.
+    # (Previously skipped for resolved "hil", so Ilonggo bias never applied.)
+    live_prompt = initial_prompt(language)
     t0 = time.perf_counter()
     winning_decode: str | None = primary_lang
     winning_info: object | None = None
@@ -858,14 +873,14 @@ def transcribe_live(
                 beam_size=5,
                 best_of=5,
                 temperature=0.0,
-                # VAD off for live — board mics / soft speech were dropped.
-                vad_filter=False,
+                # Soft VAD drops silent tails that caused phrase loops.
+                vad_filter=True,
                 condition_on_previous_text=False,
                 without_timestamps=False,
-                # Soft speech: do not drop live captions as "no speech".
-                no_speech_threshold=0.4,
-                compression_ratio_threshold=2.4,
-                log_prob_threshold=-1.2,
+                # Stricter than before — silence was emitting looped captions.
+                no_speech_threshold=0.6,
+                compression_ratio_threshold=2.2,
+                log_prob_threshold=-1.0,
                 initial_prompt=live_prompt,
             )
 
@@ -981,13 +996,12 @@ def _novel_suffix_from_window(
     overlap = _token_overlap_size(prev_n, cur_n, min_size=3)
 
     if overlap == 0:
-        # No reliable overlap — keep most of the window (not just the hop).
-        # Using only ~50% previously dropped mid-window words when Whisper
-        # rephrased the overlap enough to break exact token matching.
+        # No reliable overlap — keep only the newest hop fraction.
+        # Keeping ~85% re-appended hallucinated repeats after the user stopped.
         frac = hop_fraction
         if frac is None:
-            frac = 0.85
-        frac = min(1.0, max(0.5, float(frac)))
+            frac = 0.5
+        frac = min(0.75, max(0.35, float(frac)))
         cut = max(1, int(round(len(cur_tokens) * frac)))
         novel = " ".join(cur_tokens[-cut:]).strip()
         logger.debug(
@@ -1048,6 +1062,24 @@ def _append_novel(caption: str, novel: str) -> str:
     return f"{prev} {addition}".strip()
 
 
+def _near_duplicate_window(previous_window: str, current_window: str) -> bool:
+    """True when the new window mostly repeats the previous one (silence loop)."""
+    a = _norm_tokens(previous_window)
+    b = _norm_tokens(current_window)
+    if not b:
+        return True
+    if not a:
+        return False
+    if a == b:
+        return True
+    sb = set(b)
+    if not sb:
+        return True
+    inter = len(set(a) & sb)
+    # ≥85% of current tokens already in previous → treat as re-emit / loop.
+    return inter / len(sb) >= 0.85 and len(b) <= len(a) + 3
+
+
 def merge_live_caption(
     previous: str,
     window_text: str,
@@ -1069,6 +1101,10 @@ def merge_live_caption(
         return prev
     if not prev:
         return cur
+
+    # Silence / hallucination often re-emits the last window — do not grow.
+    if previous_window and _near_duplicate_window(previous_window, cur):
+        return prev
 
     # Prefer window-to-window novel extraction (correct for 10s/5s overlap).
     if previous_window:

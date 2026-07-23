@@ -290,6 +290,51 @@ def test_amplify_for_asr_boosts_quiet_audio():
     assert float(np.max(np.abs(boosted))) <= 1.0
 
 
+def test_amplify_live_skips_dynaudnorm_path():
+    """Live AGC must not run dynaudnorm (silence → hallucination loops)."""
+    from app.services.audio import amplify_for_asr
+
+    rng = np.random.default_rng(1)
+    # 10s of quiet noise — would qualify for dynaudnorm if allowed.
+    quiet = (rng.standard_normal(16000 * 10).astype(np.float32) * 0.008)
+    boosted = amplify_for_asr(
+        quiet, target_rms=0.06, max_gain=4.0, allow_dynaudnorm=False
+    )
+    # Mild numpy gain only — should not explode silence into loud noise.
+    boost_rms = float(np.sqrt(np.mean(np.square(boosted))))
+    assert boost_rms < 0.2
+    assert float(np.max(np.abs(boosted))) <= 1.0
+
+
+def test_merge_rejects_near_duplicate_window():
+    from app.services.transcription import merge_live_caption
+
+    prev = "Maayong aga. Wala gid kami sang budget subong."
+    # Whisper often re-emits the same window from a silent tail.
+    looped = "Maayong aga. Wala gid kami sang budget subong."
+    merged = merge_live_caption(prev, looped, previous_window=prev)
+    assert merged == prev
+
+
+def test_energy_ok_rejects_near_silence():
+    from app.services.transcription import _energy_ok
+
+    silence = np.zeros(16000, dtype=np.float32)
+    assert _energy_ok(silence, min_rms=0.006) is False
+    speech = np.zeros(16000, dtype=np.float32)
+    speech[1000:3000] = 0.05
+    assert _energy_ok(speech, min_rms=0.006) is True
+
+
+def test_hiligaynon_initial_prompt_always_available():
+    from app.services.transcription import initial_prompt
+
+    prompt = initial_prompt("hil")
+    assert prompt
+    assert "Hiligaynon" in prompt or "hiligaynon" in prompt.lower()
+    assert initial_prompt("auto")  # resolves to default hil
+
+
 def test_ellipsis_spam_is_junk():
     from app.services.transcription import _is_junk_transcript
 
@@ -384,6 +429,12 @@ if __name__ == "__main__":
     test_auto_final_backend_prefers_hf_for_hiligaynon()
     test_auto_final_backend_prefers_hf_for_tagalog()
     test_auto_meeting_uses_combined_ph_hf_candidates()
+    test_amplify_for_asr_boosts_quiet_audio()
+    test_amplify_live_skips_dynaudnorm_path()
+    test_merge_rejects_near_duplicate_window()
+    test_energy_ok_rejects_near_silence()
+    test_hiligaynon_initial_prompt_always_available()
+    test_ellipsis_spam_is_junk()
     test_candidate_quality_score_prefers_diverse_coverage()
     test_collapse_phrase_and_sentence_loops()
     test_language_detection_from_whisper_auto()

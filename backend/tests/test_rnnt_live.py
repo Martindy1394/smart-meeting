@@ -16,8 +16,9 @@ def test_should_use_rnnt_for_ph_when_auto():
     prev = settings.whisper_live_backend
     try:
         settings.whisper_live_backend = "auto"
-        assert rnnt.should_use_rnnt_live("auto") is True
-        assert rnnt.should_use_rnnt_live("hil") is True
+        # Hiligaynon-biased auto stays on Whisper (Tagalog RNNT hurts Ilonggo).
+        assert rnnt.should_use_rnnt_live("auto") is False
+        assert rnnt.should_use_rnnt_live("hil") is False
         assert rnnt.should_use_rnnt_live("tl") is True
         assert rnnt.should_use_rnnt_live("en") is False
     finally:

@@ -53,22 +53,29 @@ async def _emit_live_window(
     samples = audio.pcm16_to_float32(chunk)
     rms_i16 = audio.pcm_rms_int16(chunk)
     dur_s = len(chunk) / float(settings.audio_sample_rate * 2) if chunk else 0.0
-    # Skip near-silent frames — softened so quiet board-mic speech is kept.
+    # Skip near-silent frames (RMS + peak) before ASR — browser AGC noise
+    # often exceeds a peak-only gate and Whisper then loops the last phrase.
     peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-    if samples.size == 0 or peak < 0.004:
+    rms = (
+        float(np.sqrt(np.mean(np.square(samples.astype(np.float32)))))
+        if samples.size
+        else 0.0
+    )
+    if samples.size == 0 or (peak < 0.01 and rms < 0.005):
         logger.info(
             "live.window skip_silence meeting=%s seq=%d bytes=%d dur=%.2fs "
-            "rms_i16=%.1f peak=%.4f offset=%s",
+            "rms=%.4f rms_i16=%.1f peak=%.4f offset=%s",
             meeting_id,
             seq,
             len(chunk),
             dur_s,
+            rms,
             rms_i16,
             peak,
             byte_offset,
         )
-        # Clear stale previous_window after silence so the next hop merges cleanly.
-        return live_caption, ""
+        # Keep previous_window so the next speech hop still merges cleanly.
+        return live_caption, previous_window
 
     result = await asyncio.to_thread(asr.transcribe_pcm, samples, language, live=True)
     window_text = result.text

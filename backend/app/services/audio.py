@@ -300,6 +300,7 @@ def amplify_for_asr(
     max_gain: float = 20.0,
     peak_limit: float = 0.95,
     sample_rate: int | None = None,
+    allow_dynaudnorm: bool = True,
 ) -> np.ndarray:
     """Boost quiet mic captures so Whisper does not treat speech as silence.
 
@@ -307,15 +308,20 @@ def amplify_for_asr(
     ``no_speech_threshold``, faster-whisper returns empty and HF PH models
     invent Bisaya-like filler — verified on a 3-minute Hiligaynon WAV.
 
-    Prefer ``ffmpeg dynaudnorm`` when available (best for multi-minute files);
-    otherwise use percentile-based gain + soft clip.
+    Prefer ``ffmpeg dynaudnorm`` for *final* multi-minute files. Live windows
+    must pass ``allow_dynaudnorm=False`` — dynaudnorm boosts trailing silence
+    into noise that Whisper re-emits as looping captions.
     """
     if samples is None or samples.size == 0:
         return np.zeros(0, dtype=np.float32)
     x = samples.astype(np.float32, copy=False)
     sr = int(sample_rate or settings.audio_sample_rate or 16000)
-    # dynaudnorm is worth it for final passes (≥ ~5s); skip for tiny live hops.
-    if x.size >= int(sr * 5) and ffmpeg_available():
+    # dynaudnorm is for final passes only (≥ ~5s) — never for live captions.
+    if (
+        allow_dynaudnorm
+        and x.size >= int(sr * 5)
+        and ffmpeg_available()
+    ):
         try:
             return _amplify_with_ffmpeg_dynaudnorm(x, sr)
         except Exception as exc:
