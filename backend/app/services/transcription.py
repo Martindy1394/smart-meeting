@@ -315,6 +315,20 @@ def is_hiligaynon_language(language: str | None) -> bool:
     return lang in _HILIGAYNON_LANGUAGE_LABELS
 
 
+def effective_asr_language(language: str | None) -> str:
+    """Resolve meeting/UI language to the ASR bias used at runtime.
+
+    ``auto`` / empty maps to ``whisper_default_language`` (Hiligaynon by default)
+    so Iloilo board meetings get Hiligaynon prompts + PH models without a
+    manual Spoken language selection.
+    """
+    lang = (language or "").strip().lower()
+    if is_auto_language(lang) or not lang:
+        default = (settings.whisper_default_language or "hil").strip().lower()
+        return default or "hil"
+    return lang
+
+
 def is_philippine_language(language: str | None) -> bool:
     """True when ASR should use the Philippine model path.
 
@@ -370,13 +384,14 @@ def auto_hf_candidates() -> list[str]:
 
 def philippine_hf_candidates(language: str | None) -> list[str]:
     """HF candidates for the meeting language (auto / Tagalog / Hiligaynon)."""
-    if is_tagalog_language(language):
+    lang = effective_asr_language(language)
+    if is_tagalog_language(lang):
         return tagalog_hf_candidates()
-    if is_hiligaynon_language(language):
+    if is_hiligaynon_language(lang):
         return hiligaynon_hf_candidates()
-    if is_auto_language(language) or is_philippine_language(language):
+    if is_philippine_language(lang):
         return auto_hf_candidates()
-    return []
+    return hiligaynon_hf_candidates()
 
 
 def hiligaynon_model_id() -> str:
@@ -389,11 +404,12 @@ def hiligaynon_model_id() -> str:
 
 def initial_prompt(language: str | None = None) -> str | None:
     """Language-aware short prompt (avoid long prompts — Whisper may echo them)."""
-    if is_hiligaynon_language(language):
+    lang = effective_asr_language(language)
+    if is_hiligaynon_language(lang):
         prompt = (settings.whisper_hiligaynon_initial_prompt or "").strip()
         if prompt:
             return prompt
-    if is_tagalog_language(language):
+    if is_tagalog_language(lang):
         prompt = (settings.whisper_tagalog_initial_prompt or "").strip()
         if prompt:
             return prompt
@@ -403,22 +419,16 @@ def initial_prompt(language: str | None = None) -> str | None:
 
 def live_model_id(language: str | None) -> str:
     """faster-whisper model for live captions (optional PH CT2 fine-tune)."""
-    if is_tagalog_language(language):
+    lang = effective_asr_language(language)
+    if is_tagalog_language(lang):
         custom = (settings.whisper_live_tagalog_model or "").strip()
         if custom:
             return custom
-    if is_hiligaynon_language(language):
+    if is_hiligaynon_language(lang):
         custom = (settings.whisper_live_hiligaynon_model or "").strip()
         if custom:
             return custom
-    if is_auto_language(language):
-        for custom in (
-            (settings.whisper_live_hiligaynon_model or "").strip(),
-            (settings.whisper_live_tagalog_model or "").strip(),
-        ):
-            if custom:
-                return custom
-    if is_philippine_language(language):
+    if is_philippine_language(lang):
         custom = (settings.whisper_live_hiligaynon_model or "").strip()
         if custom:
             return custom
@@ -571,15 +581,15 @@ def _collapse_hallucinations(text: str) -> str:
 def _forced_language(requested: str | None = None) -> str:
     """Map app language labels to a Whisper-supported decode code.
 
-    Tagalog/Filipino map to Whisper's native ``tl``. Hiligaynon / auto use
-    ``whisper_decode_language`` (default ``tl``) for coverage retries only.
+    Tagalog/Filipino map to Whisper's native ``tl``. Hiligaynon / default use
+    ``whisper_decode_language`` (default ``tl``) — Whisper has no ``hil`` token.
     """
-    app_lang = (requested or "").strip().lower()
+    app_lang = effective_asr_language(requested)
     if app_lang in {"en", "english"}:
         return "en"
     if is_tagalog_language(app_lang):
         return "tl"
-    # auto / hil / other PH → configured decode code (usually tl)
+    # hil / other PH → configured decode code (usually tl)
     lang = (settings.whisper_decode_language or "tl").strip().lower()
     return lang or "tl"
 
@@ -587,25 +597,24 @@ def _forced_language(requested: str | None = None) -> str:
 def _final_language_mode(requested: str | None) -> str:
     """Resolve final language mode.
 
-    Auto-detect is the default product path. Explicit Tagalog/Hiligaynon may
-    still use ``prefer_forced`` via settings (Hiligaynon has no Whisper token,
-    so forced decode uses ``tl``).
+    ``auto`` resolves to ``whisper_default_language`` (Hiligaynon by default),
+    then applies that language's prefer_forced / auto setting. Hiligaynon has
+    no Whisper token, so forced decode uses ``tl``.
     """
-    if is_auto_language(requested):
-        return (settings.whisper_final_language_mode or "auto").strip().lower()
-    if is_tagalog_language(requested):
+    lang = effective_asr_language(requested)
+    if is_tagalog_language(lang):
         return (
             settings.whisper_tagalog_final_language_mode
             or settings.whisper_final_language_mode
             or "prefer_forced"
         ).strip().lower()
-    if is_hiligaynon_language(requested):
+    if is_hiligaynon_language(lang):
         return (
             settings.whisper_hiligaynon_final_language_mode
             or settings.whisper_final_language_mode
             or "prefer_forced"
         ).strip().lower()
-    return (settings.whisper_final_language_mode or "auto").strip().lower()
+    return (settings.whisper_final_language_mode or "prefer_forced").strip().lower()
 
 
 def _final_decode_language(requested: str | None) -> str | None:

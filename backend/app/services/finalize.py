@@ -89,8 +89,12 @@ def finalize_meeting_recording(
             meta = redis_store.get_session_meta(meeting_id)
             live_caption = meta.get("live_caption") or ""
 
-        # Always auto-detect — Spoken language is not user-selected.
-        lang = language or "auto"
+        # Resolve auto/empty → Hiligaynon by default (Whisper has no hil token).
+        from . import transcription as transcription_svc
+
+        lang = transcription_svc.effective_asr_language(
+            language or (meeting.language if meeting else None)
+        )
         pcm_bytes = load_recording_pcm(meeting_id)
 
         if len(pcm_bytes) < 2:

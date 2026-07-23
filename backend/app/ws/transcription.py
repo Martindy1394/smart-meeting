@@ -144,13 +144,13 @@ async def transcribe_ws(websocket: WebSocket):
             and meeting is not None
             and meeting.owner_id == user.id
         )
-        # Prefer meeting language label when set (hil/tl) so live ASR uses the
-        # matching prompt + model path; otherwise auto-detect.
-        language = "auto"
-        if meeting is not None:
-            label = (meeting.language or "").strip().lower()
-            if label and label not in {"auto", "detect", "none", ""}:
-                language = label
+        # Resolve auto → Hiligaynon by default so live ASR uses the PH prompt path
+        # without requiring a manual Spoken language selection.
+        from ..services import transcription as transcription_svc
+
+        language = transcription_svc.effective_asr_language(
+            meeting.language if meeting is not None else None
+        )
         meeting_status = meeting.status if meeting else None
     finally:
         db.close()
@@ -240,7 +240,7 @@ async def transcribe_ws(websocket: WebSocket):
     elif live_available and redis_ok:
         status_message = (
             "Whisper ASR active — disk PCM + Redis rolling buffer "
-            f"(up to {max_hours:g}h); overlapping live windows, language=auto."
+            f"(up to {max_hours:g}h); overlapping live windows, language={language}."
         )
     elif live_available:
         status_message = (

@@ -108,9 +108,10 @@ class Settings(BaseSettings):
     whisper_final_backend: str = "auto"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    # Meeting language label default. ``auto`` = Whisper language detection
-    # (no Spoken language UI; detected code is stored after finalize).
-    whisper_default_language: str = "auto"
+    # Meeting language label default. ``hil`` = Hiligaynon-biased ASR (Whisper
+    # has no native hil token; we use tl decode + Hiligaynon prompt/model).
+    # Meeting ``auto`` still resolves to this default at transcription time.
+    whisper_default_language: str = "hil"
     # Coverage retry / legacy forced decode code for PH speech (hil has no token).
     whisper_decode_language: str = "tl"
     # Optional prompts — keep short to avoid Whisper echoing them.
@@ -127,10 +128,9 @@ class Settings(BaseSettings):
         "Board meeting in Hiligaynon Ilonggo and English. "
         "Maayong aga. Indi. Kita. Sang. Nga. Kinahanglan. Ginaprobahan."
     )
-    # Final-pass language: "auto" (detect), "forced" (whisper_decode_language),
-    # or "prefer_forced" (forced first, auto retry if coverage is poor).
-    # Default auto — Spoken language is no longer selected in the UI.
-    whisper_final_language_mode: str = "auto"
+    # Final-pass language: prefer forced tl for Iloilo / Hiligaynon board meetings.
+    # ``prefer_forced`` = forced tl first, auto retry if coverage is poor.
+    whisper_final_language_mode: str = "prefer_forced"
     # Only used when meeting language is explicitly Tagalog (API/legacy).
     whisper_tagalog_final_language_mode: str = "prefer_forced"
     # Hiligaynon: prefer forced tl decode (closest Whisper code) then auto retry.

@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import SessionLocal, get_db
 from ..deps import get_current_user
 from ..models import Meeting, User
@@ -98,10 +99,11 @@ def _prepare_whisper_job(meeting: Meeting, db: Session) -> tuple[str, str]:
     meeting.status = "processing"
     meeting.updated_at = datetime.now(timezone.utc)
     db.commit()
-    # Honor meeting language (hil/tl) so Hiligaynon prompt + PH model path apply.
-    lang = (meeting.language or "auto").strip().lower() or "auto"
-    if lang in {"", "none", "detect"}:
-        lang = "auto"
+    # Honor meeting language (hil/tl). ``auto`` resolves to Hiligaynon by default
+    # via transcription.effective_asr_language — no manual Spoken language needed.
+    from ..services import transcription as transcription_svc
+
+    lang = transcription_svc.effective_asr_language(meeting.language)
     return path, lang
 
 
@@ -310,7 +312,7 @@ def create_meeting(
     meeting = Meeting(
         owner_id=current_user.id,
         title=payload.title.strip(),
-        language=payload.language or "auto",
+        language=payload.language or settings.whisper_default_language or "hil",
         venue=payload.venue.strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
@@ -479,7 +481,7 @@ async def stop_meeting_recording(
         finalize.finalize_meeting_recording,
         meeting_id,
         live_caption,
-        language="auto",
+        language=meeting.language or settings.whisper_default_language or "hil",
     )
     if not result.get("ok"):
         raise HTTPException(

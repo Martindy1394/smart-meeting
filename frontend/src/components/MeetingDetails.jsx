@@ -65,7 +65,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   );
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
-  const [language, setLanguage] = useState(meeting.language || "auto");
+  const [language, setLanguage] = useState(meeting.language || "hil");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   const [error, setError] = useState("");
@@ -81,7 +81,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     );
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
-    setLanguage(meeting.language || "auto");
+    setLanguage(meeting.language || "hil");
     setError("");
     setSavedAt(0);
   }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -105,7 +105,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       title.trim() !== (meeting.title || "").trim() ||
       venue.trim() !== (meeting.venue || "").trim() ||
       dateTime !== savedDateTime ||
-      (language || "auto") !== (meeting.language || "auto") ||
+      (language || "hil") !== (meeting.language || "hil") ||
       !sameAttendees(currentAttendees, savedAttendees)
     );
   };
@@ -156,7 +156,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         venue: venue.trim(),
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
-        language: language || "auto",
+        language: language || "hil",
       });
       setAttendees(finalAttendees);
       setAttendeeInput("");
@@ -168,7 +168,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           venue: venue.trim(),
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
-          language: language || "auto",
+          language: language || "hil",
         });
       }
       return true;
@@ -268,15 +268,20 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         <div className="field">
           <label>Spoken language</label>
           <select
-            value={language || "auto"}
+            value={language || "hil"}
             onChange={(e) => setLanguage(e.target.value)}
-            title="Biases Whisper toward Hiligaynon / Tagalog vocabulary"
+            title="Default is Hiligaynon for Iloilo board meetings"
           >
-            <option value="auto">Auto-detect</option>
-            <option value="hil">Hiligaynon (Ilonggo)</option>
+            <option value="hil">Hiligaynon (Ilonggo) — default</option>
+            <option value="auto">Auto-detect (still biases Hiligaynon)</option>
             <option value="tl">Tagalog / Filipino</option>
             <option value="en">English</option>
           </select>
+          <p className="hint">
+            Hiligaynon is applied automatically — change this only if the meeting
+            is not Ilonggo. Whisper has no native <code>hil</code> token; the app
+            handles prompting and language bias for you.
+          </p>
         </div>
 
         <div className="field attendees-field">

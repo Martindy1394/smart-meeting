@@ -18,11 +18,13 @@ from app.services.transcription import (  # noqa: E402
     _forced_language,
     _language_detection_from_info,
     auto_hf_candidates,
+    effective_asr_language,
     final_faster_model_id,
     hiligaynon_hf_candidates,
     hiligaynon_model_id,
     initial_prompt,
     is_auto_language,
+    is_hiligaynon_language,
     is_philippine_language,
     is_tagalog_language,
     live_model_id,
@@ -92,16 +94,22 @@ def test_hiligaynon_maps_to_whisper_tl():
     assert _forced_language("en") == "en"
 
 
-def test_auto_language_detects_and_uses_ph_models():
+def test_auto_language_resolves_to_hiligaynon_default():
     assert is_auto_language("auto")
     assert is_auto_language("detect")
-    assert is_auto_language(None)  # default is auto
+    assert is_auto_language(None)  # unset still counts as auto
     assert is_philippine_language("auto")
-    assert _final_language_mode("auto") == "auto"
-    assert _final_decode_language("auto") is None
+    # Product default: auto → Hiligaynon bias (no manual Spoken language step).
+    assert effective_asr_language("auto") == "hil"
+    assert effective_asr_language(None) == "hil"
+    assert effective_asr_language("") == "hil"
+    assert effective_asr_language("en") == "en"
+    assert is_hiligaynon_language(effective_asr_language("auto"))
+    assert _final_language_mode("auto") == "prefer_forced"
+    assert _final_decode_language("auto") == "tl"
     prompt = initial_prompt("auto")
     assert prompt
-    assert "Filipino" in prompt or "English" in prompt or "Tagalog" in prompt
+    assert "Hiligaynon" in prompt or "Ilonggo" in prompt
 
 
 def test_tagalog_uses_native_tl_and_prefer_forced():

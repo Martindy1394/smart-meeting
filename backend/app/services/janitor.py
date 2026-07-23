@@ -99,7 +99,7 @@ def sweep_abandoned_sessions() -> dict:
             result = finalize.finalize_meeting_recording(
                 meeting_id,
                 meta.get("live_caption") or meeting.final_transcript or "",
-                language="auto",
+                language=meeting.language or settings.whisper_default_language or "hil",
             )
             if result.get("ok"):
                 finalized += 1

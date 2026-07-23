@@ -82,7 +82,7 @@ export default function Workspace() {
     try {
       const detail = await api.createMeeting({
         title: "",
-        language: "auto",
+        language: "hil",
         // Always create with the current date/time (local → ISO).
         meeting_date: new Date().toISOString(),
       });
