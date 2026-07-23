@@ -1,4 +1,10 @@
-import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { api } from "../api/client";
 
 function pad2(n) {
@@ -52,8 +58,10 @@ function sameAttendees(a, b) {
   return a.every((name, i) => name === b[i]);
 }
 
+const AUTOSAVE_MS = 750;
+
 const MeetingDetails = forwardRef(function MeetingDetails(
-  { meeting, onUpdated, onValidityChange, onDirtyChange },
+  { meeting, onUpdated, onValidityChange, onDirtyChange, onAutosaveStatus },
   ref
 ) {
   const [title, setTitle] = useState(meeting.title || "");
@@ -69,8 +77,12 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   const [error, setError] = useState("");
+  const autosaveTimer = useRef(null);
+  const saveSeq = useRef(0);
+  const skipAutosave = useRef(false);
 
   useEffect(() => {
+    skipAutosave.current = true;
     setTitle(meeting.title || "");
     setVenue(meeting.venue || "");
     // New meetings always open on the current local date & time.
@@ -84,6 +96,11 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     setLanguage(meeting.language || "hil");
     setError("");
     setSavedAt(0);
+    // Allow the next edit cycle to autosave after state settles.
+    const t = setTimeout(() => {
+      skipAutosave.current = false;
+    }, 0);
+    return () => clearTimeout(t);
   }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isComplete = () => {
@@ -109,18 +126,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       !sameAttendees(currentAttendees, savedAttendees)
     );
   };
-
-  useEffect(() => {
-    if (onValidityChange) onValidityChange(isComplete());
-    if (onDirtyChange) onDirtyChange(isDirty());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, language, meeting]);
-
-  function useCurrentDateTime() {
-    const current = nowLocalInput();
-    setDateTime(current);
-    return current;
-  }
 
   async function save({ silent = false } = {}) {
     setError("");
@@ -149,6 +154,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       return false;
     }
 
+    const seq = ++saveSeq.current;
     setSaving(true);
     try {
       await api.updateMeeting(meeting.id, {
@@ -158,6 +164,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         attendees: finalAttendees,
         language: language || "hil",
       });
+      if (seq !== saveSeq.current) return false;
       setAttendees(finalAttendees);
       setAttendeeInput("");
       setSavedAt(Date.now());
@@ -173,12 +180,54 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       }
       return true;
     } catch (err) {
-      if (!silent) setError(err.message || "Could not save details.");
+      if (seq !== saveSeq.current) return false;
+      setError(err.message || "Could not autosave details.");
       return false;
     } finally {
-      setSaving(false);
+      if (seq === saveSeq.current) setSaving(false);
     }
   }
+
+  useEffect(() => {
+    if (onValidityChange) onValidityChange(isComplete());
+    if (onDirtyChange) onDirtyChange(isDirty());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, venue, dateTime, attendees, attendeeInput, language, meeting]);
+
+  // Debounced autosave whenever required fields are complete and dirty.
+  useEffect(() => {
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    if (skipAutosave.current) return undefined;
+    if (!isDirty() || !isComplete() || saving) return undefined;
+
+    autosaveTimer.current = setTimeout(() => {
+      void save({ silent: true });
+    }, AUTOSAVE_MS);
+
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, venue, dateTime, attendees, attendeeInput, language, meeting, saving]);
+
+  useEffect(() => {
+    if (!onAutosaveStatus) return;
+    onAutosaveStatus({
+      saving,
+      savedAt,
+      error,
+      dirty: isDirty(),
+      ready: isComplete(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saving, savedAt, error, title, venue, dateTime, attendees, attendeeInput, language, meeting]);
+
+  useEffect(() => {
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+      if (onAutosaveStatus) onAutosaveStatus(null);
+    };
+  }, [onAutosaveStatus]);
 
   useImperativeHandle(ref, () => ({
     save,
@@ -187,6 +236,12 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     isSaving: () => saving,
     useCurrentDateTime,
   }));
+
+  function useCurrentDateTime() {
+    const current = nowLocalInput();
+    setDateTime(current);
+    return current;
+  }
 
   function addAttendee() {
     const name = attendeeInput.trim();
@@ -206,12 +261,23 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     setAttendees((prev) => prev.filter((n) => n !== name));
   }
 
+  let statusLabel = "Autosave on";
+  if (saving) statusLabel = "Saving…";
+  else if (error) statusLabel = "Autosave failed";
+  else if (savedAt > 0) statusLabel = "Saved";
+  else if (isDirty() && !isComplete()) statusLabel = "Fill required fields";
+
   return (
     <div className="details-card">
       <div className="details-head">
         <h3>Meeting details</h3>
         <div className="details-actions">
-          {savedAt > 0 && !saving && <span className="saved-tag">Saved ✓</span>}
+          <span
+            className={`saved-tag${saving ? " is-saving" : ""}${error ? " is-error" : ""}`}
+            title="Changes save automatically"
+          >
+            {statusLabel}
+          </span>
           {error && <span className="details-error">{error}</span>}
         </div>
       </div>

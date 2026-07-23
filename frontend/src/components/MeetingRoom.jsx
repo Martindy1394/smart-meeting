@@ -38,13 +38,12 @@ function MiniIcon({ children }) {
 export default function MeetingRoom({
   meeting,
   onMeetingUpdated,
-  onSaveControls,
+  onAutosaveStatus,
   historyView = false,
   onBack,
 }) {
   const detailsRef = useRef(null);
   const [detailsReady, setDetailsReady] = useState(false);
-  const [detailsDirty, setDetailsDirty] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
 
   const [finalTranscript, setFinalTranscript] = useState(meeting.final_transcript || "");
@@ -256,45 +255,6 @@ export default function MeetingRoom({
   }, [applyTranscriptResult, meeting.id, meeting.status]);
 
   const recorder = useRecorder({ onFinalTranscript });
-
-  // Save is only available after a meeting/recording has finished.
-  const canSaveMeeting =
-    !recorder.recording &&
-    recorder.status !== "starting" &&
-    recorder.status !== "paused" &&
-    recorder.status !== "finalizing" &&
-    (Boolean(finalTranscript) ||
-      hasAudio ||
-      status === "finalized" ||
-      historyView);
-
-  // Publish save controls so the parent can place the Save button in the topbar.
-  // In History, Save stays disabled until meeting details actually change.
-  useEffect(() => {
-    if (!onSaveControls) return;
-    if (!canSaveMeeting) {
-      onSaveControls(null);
-      return;
-    }
-    onSaveControls({
-      save: () => saveDetails(),
-      saving: savingDetails,
-      disabled: historyView ? !detailsDirty : false,
-    });
-  }, [
-    onSaveControls,
-    saveDetails,
-    savingDetails,
-    canSaveMeeting,
-    historyView,
-    detailsDirty,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      if (onSaveControls) onSaveControls(null);
-    };
-  }, [onSaveControls]);
 
   // Reset local state when the selected meeting changes.
   useEffect(() => {
@@ -544,7 +504,7 @@ export default function MeetingRoom({
           meeting={meeting}
           onUpdated={onMeetingUpdated}
           onValidityChange={setDetailsReady}
-          onDirtyChange={setDetailsDirty}
+          onAutosaveStatus={onAutosaveStatus}
         />
 
         <div className="card transcript-card">
@@ -655,7 +615,7 @@ export default function MeetingRoom({
               <div className="placeholder">
                 Press <strong>Start a meeting</strong> for live Whisper captions.
                 Ending a meeting runs the full-accuracy Whisper pass
-                automatically. Save becomes available after the recording ends.
+                automatically. Meeting details autosave as you edit.
               </div>
             )}
           </div>

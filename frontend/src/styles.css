@@ -1280,6 +1280,22 @@ select.inline {
   font-size: 13px;
   font-weight: 600;
 }
+.saved-tag.is-saving,
+.autosave-indicator.is-saving {
+  color: #a16207;
+}
+.saved-tag.is-error,
+.autosave-indicator.is-error {
+  color: #b91c1c;
+}
+.autosave-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 600;
+}
 .details-error {
   color: #b91c1c;
   font-size: 13px;

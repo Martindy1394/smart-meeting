@@ -17,14 +17,13 @@ export default function Workspace() {
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loadingMeeting, setLoadingMeeting] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [saveControls, setSaveControls] = useState(null);
+  const [autosaveStatus, setAutosaveStatus] = useState(null);
   // True when opening an existing meeting from History (review mode).
   const [historyView, setHistoryView] = useState(false);
   const searchTimer = useRef(null);
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
 
   const loadMeetings = useCallback(async (q) => {
     setLoadingList(true);
@@ -57,7 +56,7 @@ export default function Workspace() {
   const selectMeeting = useCallback(async (id) => {
     setSection("meeting");
     setActiveId(id);
-    setSaveControls(null);
+    setAutosaveStatus(null);
     setHistoryView(true);
     setLoadingMeeting(true);
     try {
@@ -73,7 +72,7 @@ export default function Workspace() {
   const backToHistory = useCallback(() => {
     setSection("history");
     setHistoryView(false);
-    setSaveControls(null);
+    setAutosaveStatus(null);
     setLoadingMeeting(false);
     // Keep activeId so the list can highlight the last opened meeting.
   }, []);
@@ -87,7 +86,7 @@ export default function Workspace() {
         meeting_date: new Date().toISOString(),
       });
       setSection("meeting");
-      setSaveControls(null);
+      setAutosaveStatus(null);
       setHistoryView(false);
       setActiveId(detail.id);
       setActiveMeeting(detail);
@@ -119,7 +118,7 @@ export default function Workspace() {
       if (id === activeId) {
         setActiveId(null);
         setActiveMeeting(null);
-        setSaveControls(null);
+        setAutosaveStatus(null);
         setHistoryView(false);
         setSection("dashboard");
       }
@@ -130,19 +129,6 @@ export default function Workspace() {
       setDeleteBusy(false);
     }
   }, [activeId, deleteTarget, loadMeetings, search]);
-
-  const confirmSaveMeeting = useCallback(async () => {
-    if (!saveControls?.save) return;
-    setSaveConfirmOpen(false);
-    const ok = await saveControls.save();
-    if (!ok) return;
-    // After saving a finished recording, return to the dashboard overview.
-    setSection("dashboard");
-    setHistoryView(false);
-    setSaveControls(null);
-    setLoadingMeeting(false);
-    loadMeetings(search);
-  }, [loadMeetings, saveControls, search]);
 
   const refreshActive = useCallback(
     async (updated) => {
@@ -165,6 +151,14 @@ export default function Workspace() {
   const showSettings = section === "settings";
   const showHistory = section === "history" || section === "recordings";
   const showMeeting = section === "meeting";
+
+  let autosaveLabel = "Autosave on";
+  if (autosaveStatus?.saving) autosaveLabel = "Saving…";
+  else if (autosaveStatus?.error) autosaveLabel = "Autosave failed";
+  else if (autosaveStatus?.savedAt) autosaveLabel = "Saved";
+  else if (autosaveStatus?.dirty && !autosaveStatus?.ready) {
+    autosaveLabel = "Fill required fields";
+  }
 
   return (
     <div className="app-shell">
@@ -196,15 +190,22 @@ export default function Workspace() {
                       : "Smart Meeting"}
             </h1>
           </div>
-          {showMeeting && activeMeeting && saveControls && (
+          {showMeeting && activeMeeting && (
             <div className="topbar-right">
-              <button
-                className="btn"
-                onClick={() => setSaveConfirmOpen(true)}
-                disabled={saveControls.disabled || saveControls.saving}
+              <span
+                className={`autosave-indicator${
+                  autosaveStatus?.saving ? " is-saving" : ""
+                }${autosaveStatus?.error ? " is-error" : ""}`}
+                title="Meeting details save automatically"
               >
-                {saveControls.saving ? <span className="spinner" /> : "Save"}
-              </button>
+                {autosaveStatus?.saving ? (
+                  <>
+                    <span className="spinner" /> Saving…
+                  </>
+                ) : (
+                  autosaveLabel
+                )}
+              </span>
             </div>
           )}
         </div>
@@ -238,7 +239,7 @@ export default function Workspace() {
             key={activeMeeting.id}
             meeting={activeMeeting}
             onMeetingUpdated={refreshActive}
-            onSaveControls={setSaveControls}
+            onAutosaveStatus={setAutosaveStatus}
             historyView={historyView}
             onBack={historyView ? backToHistory : undefined}
           />
@@ -270,17 +271,6 @@ export default function Workspace() {
           if (!deleteBusy) setDeleteTarget(null);
         }}
         onConfirm={confirmDeleteMeeting}
-      />
-
-      <ConfirmDialog
-        open={saveConfirmOpen}
-        title="Save meeting details?"
-        message="Save the current title, venue, date & time, and attendees for this meeting?"
-        confirmLabel="Save"
-        cancelLabel="Cancel"
-        busy={Boolean(saveControls?.saving)}
-        onCancel={() => setSaveConfirmOpen(false)}
-        onConfirm={confirmSaveMeeting}
       />
     </div>
   );
