@@ -26,18 +26,23 @@ languages such as Basque on `whisper-medium`). This repo:
 | Fine-tune Whisper on Hiligaynon audio + transcripts | Supported via `scripts/hiligaynon_asr/finetune_whisper.py` (HF Transformers). SpeechBrain is also fine — export a transformers-compatible folder. |
 | Use ~tens–100+ hours when possible (Basque ~116h → ~8.7% WER) | Documented; you supply the dataset. Even a few clean hours helps. |
 | faster-whisper / SpeechBrain fine-tunes | Final ASR uses HF transformers checkpoints. Live captions use a **CTranslate2** export (`export_ct2.sh`) with faster-whisper. |
-| Improve accuracy beyond stock Whisper | Runtime path: custom fine-tune → `rbcurzon/whisper-medium-ph` → faster-whisper, plus prompt bias and auto/`tl` coverage retries. |
+| Improve accuracy beyond stock Whisper | Runtime: custom fine-tune → `rbcurzon/whisper-medium-ph` → faster-whisper, plus Hiligaynon prompt bias and auto-detect (no forced `tl`). Preferred training data: **UP-DSP PLD** (~41h Hiligaynon) — see [`docs/PLD.md`](PLD.md). |
 
 ## Scripts (train → evaluate → plug in)
 
 ```bash
-# 1) Build JSONL from WAV+TXT pairs (or CSV)
+# 0) Preferred: import Hiligaynon from UP-DSP Philippine Languages Database
+#    (download from Mozilla Data Collective — see docs/PLD.md)
+python scripts/hiligaynon_asr/import_pld.py \
+  --pld-root ./data/PLD --language hil --output ./hil-pld-train.jsonl
+
+# 1) Or build JSONL from your own WAV+TXT pairs (or CSV)
 python scripts/hiligaynon_asr/prepare_dataset.py \
   --input-dir ./hil-data --output ./hil-train.jsonl
 
-# 2) Fine-tune whisper-medium (GPU recommended)
+# 2) Fine-tune whisper-medium (GPU recommended; omit --language for hil)
 python scripts/hiligaynon_asr/finetune_whisper.py \
-  --train-jsonl ./hil-train.jsonl \
+  --train-jsonl ./hil-pld-train.jsonl \
   --output-dir ./models/whisper-medium-hiligaynon \
   --model-name openai/whisper-medium \
   --fp16

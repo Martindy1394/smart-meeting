@@ -49,6 +49,7 @@ _WHISPER_TASK = "transcribe"
 # App / UI language labels that should use the Philippine ASR path.
 _PH_LANGUAGE_LABELS = frozenset(
     {
+        # Product defaults
         "hil",
         "hiligaynon",
         "ilonggo",
@@ -56,6 +57,25 @@ _PH_LANGUAGE_LABELS = frozenset(
         "tl",
         "tagalog",
         "filipino",
+        # UP-DSP Philippine Languages Database (PLD) codes
+        "ceb",
+        "cebuano",
+        "bisaya",
+        "ilo",
+        "ilokano",
+        "ilocano",
+        "bik",
+        "bikol",
+        "bikolano",
+        "war",
+        "waray",
+        "pam",
+        "kapampangan",
+        "pag",
+        "pangasinense",
+        "pangasinan",
+        "tsg",
+        "tausug",
     }
 )
 _TAGALOG_LANGUAGE_LABELS = frozenset({"tl", "tagalog", "fil", "filipino"})

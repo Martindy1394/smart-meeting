@@ -10,6 +10,9 @@ Expected layout:
 
 Or a CSV with columns: audio,text
 
+For UP-DSP Philippine Languages Database (PLD) session folders, use
+``import_pld.py`` instead (preferred Hiligaynon source — see docs/PLD.md).
+
 Output JSONL rows: {"audio": "...", "text": "...", "language": "hil"}
 
 Usage:

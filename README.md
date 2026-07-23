@@ -47,10 +47,12 @@ behind a secure JWT authentication system with per-user meeting history.
   loudness normalization and short prompts (long word-list prompts were being
   echoed). Whisper has no native `hil` token, so Hiligaynon uses **auto-detect**
   (never forced Tagalog `tl`) plus Hiligaynon prompts / PH-medium models.
-  For best accuracy, fine-tune on Hiligaynon audio with
-  [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
-  `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
-  (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
+  For best accuracy, fine-tune on the **UP-DSP Philippine Languages Database
+  (PLD)** Hiligaynon subset (~41h) with
+  [`scripts/hiligaynon_asr/import_pld.py`](scripts/hiligaynon_asr/import_pld.py)
+  and set `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
+  (see [`docs/PLD.md`](docs/PLD.md) and
+  [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
 - **Optional RNN-T live captions** — when NeMo is installed
   (`requirements-rnnt.txt`), live PH captions can use a Tagalog
   FastConformer hybrid RNN-T for lower latency; final pass stays on Whisper

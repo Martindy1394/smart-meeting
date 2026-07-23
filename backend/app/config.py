@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     whisper_final_model: str = "medium"
     # Your own Hiligaynon fine-tune (HF repo id or local transformers folder).
     # Tried first for hil meetings when set; leave empty until you have one.
+    # Recommended source: UP-DSP PLD Hiligaynon (~41h) via
+    # scripts/hiligaynon_asr/import_pld.py — see docs/PLD.md.
     whisper_hiligaynon_fine_tuned_model: str = ""
     # Philippine / Hiligaynon-capable HF fallback (used when no custom fine-tune,
     # or after the custom checkpoint fails).

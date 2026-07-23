@@ -41,7 +41,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--eval-jsonl", type=Path, default=None)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--model-name", default="openai/whisper-medium")
-    p.add_argument("--language", default="tl", help="Whisper language code (hil→tl)")
+    p.add_argument(
+        "--language",
+        default=None,
+        help=(
+            "Optional Whisper language code for the processor. "
+            "Omit for multilingual/auto (recommended for Hiligaynon / PLD). "
+            "Do not pass tl for Hiligaynon."
+        ),
+    )
     p.add_argument("--num-train-epochs", type=float, default=3.0)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--gradient-accumulation-steps", type=int, default=8)
@@ -79,13 +87,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Training JSONL is empty.", file=sys.stderr)
         return 1
 
-    processor = WhisperProcessor.from_pretrained(
-        args.model_name, language=args.language, task="transcribe"
-    )
+    processor_kwargs = {"task": "transcribe"}
+    if args.language:
+        processor_kwargs["language"] = args.language
+    processor = WhisperProcessor.from_pretrained(args.model_name, **processor_kwargs)
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name)
     model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
-    model.generation_config.language = args.language
+    if args.language:
+        model.generation_config.language = args.language
     model.generation_config.task = "transcribe"
 
     sampling_rate = 16000
