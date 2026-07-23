@@ -1,14 +1,14 @@
-"""Whisper ASR — automatic speech recognition for meeting audio.
+"""Whisper + optional NeMo RNN-T ASR for meeting audio.
 
 This is the single integration surface for turning audio into text:
 
-* Live PCM windows → ``transcribe_pcm`` (fast captions)
-* Saved / uploaded WAV files → ``transcribe_file`` (full-accuracy pass)
-* Meeting pipeline → ``process_meeting_audio`` (persist segments + transcript)
+* Live PCM windows → ``transcribe_pcm`` (faster-whisper, or NeMo RNN-T when enabled)
+* Saved / uploaded WAV files → ``transcribe_file`` (full-accuracy Whisper pass)
+* Meeting pipeline → persist segments + transcript
 
-Live captions use faster-whisper (optional CT2 Hiligaynon fine-tune). Final
-pass prefers a fine-tuned Hiligaynon HF checkpoint when configured, then
-falls back to faster-whisper (see ``transcription.py``).
+Live captions prefer FastConformer RNN-T for Philippine meetings when
+``WHISPER_LIVE_BACKEND=auto|rnnt`` and NeMo is installed. Final pass stays on
+Whisper / PH-medium (see ``transcription.py``).
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ LanguageDetection = transcription.LanguageDetection
 
 @dataclass
 class ASRResult:
-    """Normalized Whisper ASR output for a processed audio source."""
+    """Normalized ASR output for a processed audio source."""
 
     text: str
     segments: list[Segment]
@@ -40,12 +40,26 @@ class ASRResult:
 
 
 def is_available() -> bool:
-    """True when the Whisper ASR backend can be loaded."""
-    return transcription.is_available()
+    """True when at least one live ASR backend can be loaded."""
+    if transcription.is_available():
+        return True
+    try:
+        from . import rnnt
+
+        return rnnt.is_available()
+    except Exception:
+        return False
 
 
 def engine_name() -> str:
-    return "whisper" if is_available() else "unavailable"
+    try:
+        from . import rnnt
+
+        if rnnt.should_use_rnnt_live("auto") and rnnt.is_available():
+            return "rnnt+whisper"
+    except Exception:
+        pass
+    return "whisper" if transcription.is_available() else "unavailable"
 
 
 def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool = False) -> ASRResult:
@@ -69,13 +83,15 @@ def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool =
 
     text = " ".join(s.text for s in segments).strip()
     resolved = (detection.language if detection else None) or language
+    detected_by = (detection.detected_by if detection else "") or ""
+    engine = "rnnt" if detected_by == "rnnt" else "whisper"
     return ASRResult(
         text=text,
         segments=segments,
-        engine="whisper",
+        engine=engine,
         language=resolved,
         language_confidence=detection.confidence if detection else None,
-        language_detected_by=(detection.detected_by if detection else "") or "",
+        language_detected_by=detected_by,
     )
 
 

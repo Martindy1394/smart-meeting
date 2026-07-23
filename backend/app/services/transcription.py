@@ -779,10 +779,9 @@ def transcribe_live(
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Low-latency transcription of a live audio window.
 
-    Uses overlapping windows upstream. Default product path is Whisper
-    **auto language detection** (Spoken language is not user-selected). Explicit
-    Tagalog/English labels still force a decode code; empty/junk output retries
-    with auto or ``tl`` as appropriate.
+    When ``WHISPER_LIVE_BACKEND=auto|rnnt`` and NeMo is installed, Philippine /
+    Hiligaynon-biased meetings prefer FastConformer RNN-T for live captions.
+    Otherwise (or on RNNT failure) uses faster-whisper on overlapping windows.
 
     Returns ``(segments, language_detection)``.
     """
@@ -797,6 +796,31 @@ def transcribe_live(
     # Soften energy gate — clipped/quiet phrases were skipped entirely.
     if not _energy_ok(pcm, min_rms=0.004):
         return [], None
+
+    # Optional NeMo RNN-T live path (PH / Hiligaynon-biased meetings).
+    try:
+        from . import rnnt as rnnt_svc
+
+        if rnnt_svc.should_use_rnnt_live(language) and rnnt_svc.is_available():
+            try:
+                segs, detection = rnnt_svc.transcribe_live(pcm, language)
+                cleaned: list[Segment] = []
+                for s in segs:
+                    text = _collapse_hallucinations((s.text or "").strip())
+                    text = _strip_initial_prompt_echo(text, initial_prompt(language))
+                    if (
+                        text
+                        and any(ch.isalnum() for ch in text)
+                        and not _is_junk_transcript(text)
+                    ):
+                        cleaned.append(Segment(text=text, start=s.start, end=s.end))
+                if cleaned:
+                    return cleaned, detection
+                logger.info("RNNT live returned empty/junk; falling back to Whisper")
+            except Exception as exc:
+                logger.warning("RNNT live failed (%s); falling back to Whisper", exc)
+    except Exception as exc:
+        logger.debug("RNNT module unavailable: %s", exc)
 
     cache = get_model_cache()
     model_id = live_model_id(language)

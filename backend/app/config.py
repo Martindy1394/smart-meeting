@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     # auto | huggingface | faster-whisper
     # auto: for Hiligaynon/Tagalog/PH meetings try HF candidates, then FW.
     whisper_final_backend: str = "auto"
+    # Live captions backend: whisper | rnnt | auto
+    # auto = NeMo FastConformer-RNNT for PH/Hiligaynon-biased meetings when
+    # installed, else faster-whisper. Final pass always stays on Whisper.
+    whisper_live_backend: str = "auto"
+    # NeMo .nemo path or HF repo for live RNN-T (Tagalog FastConformer-Hybrid).
+    rnnt_live_model: str = "NCSpeech/stt_tl_fastconformer_hybrid_large"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
     # Meeting language label is always ``auto`` in the product UI. This setting

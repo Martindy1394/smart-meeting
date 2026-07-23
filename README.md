@@ -50,6 +50,10 @@ behind a secure JWT authentication system with per-user meeting history.
   [`scripts/hiligaynon_asr/`](scripts/hiligaynon_asr/) and set
   `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`
   (see [`docs/FINE_TUNE_HILIGAYNON.md`](docs/FINE_TUNE_HILIGAYNON.md)).
+- **Optional RNN-T live captions** — when NeMo is installed
+  (`requirements-rnnt.txt`), live PH captions can use a Tagalog
+  FastConformer hybrid RNN-T for lower latency; final pass stays on Whisper
+  (see [`docs/RNN_T_LIVE.md`](docs/RNN_T_LIVE.md)).
 - **English meeting summaries** — mBART translates the **full** transcript into
   English with sliding context windows (PH/mixed via `id_ID`), then topic-aware
   BART summarizes with topic overlap + coverage restore into meeting-minutes

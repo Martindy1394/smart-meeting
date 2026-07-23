@@ -104,6 +104,7 @@ else:
 
 @app.get("/api/health", tags=["system"])
 def health():
+    from .services import rnnt as rnnt_svc
     from .services import transcription as transcription_svc
 
     whisper_ok = asr.is_available()
@@ -159,6 +160,8 @@ def health():
             "whisper_tagalog_final_language_mode": settings.whisper_tagalog_final_language_mode,
             "whisper_live_window_seconds": settings.whisper_live_window_seconds,
             "whisper_live_hop_seconds": settings.whisper_live_hop_seconds,
+            "whisper_live_backend": settings.whisper_live_backend,
+            "rnnt_live": rnnt_svc.status(),
             "redis_url": settings.redis_url if redis_ok else None,
             "max_meeting_hours": settings.max_meeting_hours,
             "redis_audio_ttl_seconds": settings.redis_audio_ttl_seconds,

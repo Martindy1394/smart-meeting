@@ -583,8 +583,11 @@ export default function MeetingRoom({
                   )}
                 </div>
               )}
-              <span className="card-tag" title="Whisper auto-detect with Hiligaynon prompt and decode bias">
-                Whisper ASR · auto · Hiligaynon bias
+              <span
+                className="card-tag"
+                title="Live captions: Whisper, or FastConformer RNN-T when NeMo is installed. Final/re-transcribe: Whisper with Hiligaynon bias."
+              >
+                ASR · auto · Hiligaynon bias
               </span>
             </div>
           </div>
