@@ -8,9 +8,9 @@ Implements the two-pass pipeline:
   (Whisper has no native Hiligaynon token).
 * **Final pass** — when ``WHISPER_FINAL_BACKEND=auto|huggingface``:
   Tagalog prefers custom → ``WHISPER_TAGALOG_MODEL`` → PH medium;
-  Hiligaynon uses a custom fine-tune only (generic PH medium invents
-  Bisaya-like filler on quiet Ilonggo audio) then faster-whisper with
-  loudness normalization + coverage-aware ``tl`` retries.
+  Hiligaynon prefers custom fine-tune → ``WHISPER_HILIGAYNON_MODEL``
+  (``rbcurzon/whisper-medium-ph``, Visayan-aware) then faster-whisper,
+  with loudness normalization, short prompts, and coverage-aware ``tl`` retries.
 
 Fine-tuning itself is done *outside* this repo; point the env vars at your
 checkpoint (see ``docs/FINE_TUNE_HILIGAYNON.md``).
@@ -346,14 +346,18 @@ def is_philippine_language(language: str | None) -> bool:
 def hiligaynon_hf_candidates() -> list[str]:
     """Ordered HF/local Whisper ids for Hiligaynon final ASR.
 
-    Only a real Hiligaynon fine-tune is used. The generic Philippine medium
-    checkpoint (``rbcurzon/whisper-medium-ph``) invents Bisaya-like filler on
-    quiet Ilonggo board audio — prefer faster-whisper + amplify instead unless
-    a Hiligaynon fine-tune is configured.
+    1. Custom Hiligaynon fine-tune (best when available)
+    2. Philippine dialect medium (``rbcurzon/whisper-medium-ph``) — trained on
+       Visayan/PH speech and recovers Ilonggo forms (``gid``, ``nakapoy``,
+       ``mangita sang``) far better than stock Whisper+``tl``
+
+    Quiet-mic hallucinations are mitigated by ``amplify_for_asr`` before decode;
+    results are still scored against faster-whisper and the better transcript wins.
     """
     return _dedupe_model_ids(
         [
             settings.whisper_hiligaynon_fine_tuned_model,
+            settings.whisper_hiligaynon_model,
         ]
     )
 
@@ -729,13 +733,18 @@ def _is_junk_transcript(text: str) -> bool:
         if top_n / len(tokens) >= 0.5:
             return True
     # Soft-speech PH hallucinations often pad with "?..." / "......" glue.
+    # Skip this check when the text still looks like real Visayan/Hiligaynon.
     ellipsis_hits = (
         cleaned.count("?...")
         + cleaned.count("......")
         + cleaned.count("?... ")
         + len(re.findall(r"\.{3,}", cleaned))
     )
-    if ellipsis_hits >= 6 and ellipsis_hits >= max(3, int(len(tokens) * 0.06)):
+    if (
+        ellipsis_hits >= 6
+        and ellipsis_hits >= max(3, int(len(tokens) * 0.06))
+        and _visayan_marker_ratio(cleaned) < 0.04
+    ):
         return True
     # Repeated bigram/trigram loops: "hindi ko hindi ko hindi ko…"
     # These freeze live captions after a couple of seconds if left unfiltered.
@@ -1101,6 +1110,7 @@ def _prepare_asr_audio(audio_source) -> np.ndarray:
 
 def _parse_hf_asr_result(result, samples: np.ndarray) -> list[Segment]:
     """Normalize Hugging Face ASR pipeline output into ``Segment`` rows."""
+    duration = float(samples.size) / float(settings.audio_sample_rate or 16000)
     chunks = result.get("chunks") if isinstance(result, dict) else None
     if chunks:
         out: list[Segment] = []
@@ -1110,7 +1120,10 @@ def _parse_hf_asr_result(result, samples: np.ndarray) -> list[Segment]:
                 continue
             ts = chunk.get("timestamp") or (None, None)
             start = float(ts[0] or 0.0)
-            end = float(ts[1] if ts[1] is not None else start)
+            end_raw = ts[1] if len(ts) > 1 else None
+            end = float(end_raw) if end_raw is not None else max(start, duration)
+            if end < start:
+                end = start
             out.append(Segment(text=text, start=start, end=end))
         if out:
             return out
@@ -1122,7 +1135,6 @@ def _parse_hf_asr_result(result, samples: np.ndarray) -> list[Segment]:
         text = _collapse_hallucinations(result.strip())
     if not text:
         return []
-    duration = float(samples.size) / float(settings.audio_sample_rate or 16000)
     return [Segment(text=text, start=0.0, end=duration)]
 
 
@@ -1152,11 +1164,117 @@ def _score_segments(segments: list[Segment], duration: float) -> float:
     return float(words) * max(0.15, cov)
 
 
+def _strip_initial_prompt_echo(text: str, prompt: str | None) -> str:
+    """Remove Whisper's habit of pasting initial_prompt tokens into output."""
+    raw = (text or "").strip()
+    tip = (prompt or "").strip()
+    if not raw or not tip:
+        return raw
+    # Drop an exact leading copy of the prompt.
+    if raw.lower().startswith(tip.lower()):
+        raw = raw[len(tip) :].lstrip(" .,-:;|")
+    # Isolated prompt content words (e.g. "Sang... Nga... Mga...") leaking mid-text.
+    prompt_tokens = {
+        t.lower()
+        for t in re.findall(r"[A-Za-zÀ-ÿ']+", tip)
+        if len(t) >= 3
+    }
+    # Never strip ubiquitous PH particles that also appear in real speech.
+    keep = {
+        "ang",
+        "mga",
+        "nga",
+        "sang",
+        "kag",
+        "sa",
+        "ko",
+        "mo",
+        "ni",
+        "na",
+        "pa",
+        "lang",
+        "man",
+        "kay",
+        "kon",
+        "indi",
+        "dili",
+        "wala",
+        "english",
+        "hiligaynon",
+        "ilonggo",
+        "board",
+        "meeting",
+        "diskusyon",
+        "discussion",
+    }
+    drop = prompt_tokens - keep
+    if not drop:
+        return raw
+    parts = re.split(r"(\s+)", raw)
+    out: list[str] = []
+    for part in parts:
+        core = re.sub(r"^[^A-Za-zÀ-ÿ0-9']+|[^A-Za-zÀ-ÿ0-9']+$", "", part)
+        if core.lower() in drop and not re.search(r"[.!?]", part):
+            # Skip bare echoed prompt tokens (keep if part of a sentence fragment).
+            continue
+        out.append(part)
+    cleaned = "".join(out)
+    cleaned = re.sub(r"(\s*\.\.\.\s*){2,}", "... ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" .")
+    return cleaned or raw
+
+
+_VISAYAN_MARKERS = frozenset(
+    {
+        "gid",
+        "guid",
+        "indi",
+        "dili",
+        "buwas",
+        "buas",
+        "nakapoy",
+        "mangita",
+        "kabalo",
+        "subong",
+        "subung",
+        "sige",
+        "dayon",
+        "ila",
+        "inyo",
+        "naton",
+        "ninyo",
+        "kamo",
+        "ako",
+        "siya",
+        "nila",
+        "kon",
+        "kung",
+        "pero",
+        "tapos",
+        "wala",
+        "may",
+        "ara",
+        "diri",
+        "dida",
+        "didto",
+    }
+)
+
+
+def _visayan_marker_ratio(text: str) -> float:
+    tokens = [t.lower() for t in re.findall(r"[A-Za-zÀ-ÿ']+", text or "")]
+    if not tokens:
+        return 0.0
+    hits = sum(1 for t in tokens if t in _VISAYAN_MARKERS)
+    return hits / float(len(tokens))
+
+
 def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
     """Rank ASR candidates by coverage, word mass, and lexical diversity.
 
     Collapses Whisper repetition loops first so a hallucinating model cannot
-    beat a cleaner transcript purely by word count.
+    beat a cleaner transcript purely by word count. Boosts transcripts that
+    retain Visayan/Hiligaynon markers (``gid``, ``nakapoy``, ``indi``…).
     """
     if not segments:
         return -1.0
@@ -1164,6 +1282,7 @@ def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
     if not raw:
         return -1.0
     collapsed = _collapse_hallucinations(raw)
+    collapsed = _strip_initial_prompt_echo(collapsed, initial_prompt("hil"))
     if not collapsed or _is_junk_transcript(collapsed):
         return -1.0
     raw_tokens = _norm_tokens(raw)
@@ -1177,19 +1296,31 @@ def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
     keep_ratio = len(tokens) / float(max(1, len(raw_tokens)))
     if keep_ratio < 0.45:
         return -1.0
+    visayan = _visayan_marker_ratio(collapsed)
+    visayan_boost = 1.0 + min(0.45, visayan * 2.5)
+    # Quiet-mic PH-medium often invents Cebuano filler loops ("adunay daku…").
+    low = collapsed.lower()
+    filler_hits = low.count("adunay") + low.count("daku nga") + low.count("......")
+    filler_penalty = 1.0
+    if filler_hits >= 3:
+        filler_penalty = max(0.35, 1.0 - 0.15 * filler_hits)
     return (
         float(words)
         * max(0.15, cov)
         * (0.45 + 0.55 * uniq_ratio)
         * (0.35 + 0.65 * keep_ratio)
+        * visayan_boost
+        * filler_penalty
     )
 
 
 def _sanitize_segments(segments: list[Segment]) -> list[Segment]:
     """Collapse hallucination loops inside segment text before persistence."""
+    prompt = initial_prompt("hil")
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
+        text = _strip_initial_prompt_echo(text, prompt)
         if not text or _is_junk_transcript(text):
             continue
         # Drop single-glyph / punctuation-only remnants after collapse.
@@ -1228,7 +1359,16 @@ def _transcribe_final_hf(
     if is_philippine_language(language) and primary is None:
         lang_attempts.append(_forced_language(language))
 
-    prompt_ids = _hf_prompt_ids(pipe, initial_prompt(language))
+    # Prompt token lists often get echoed (and can truncate PH-medium output).
+    # Skip HF prompt_ids for Hiligaynon / PH dialect checkpoints.
+    use_prompt = not (
+        is_hiligaynon_language(effective_asr_language(language))
+        or "whisper-medium-ph" in (model_id or "").lower()
+        or "hiligaynon" in (model_id or "").lower()
+    )
+    prompt_ids = (
+        _hf_prompt_ids(pipe, initial_prompt(language)) if use_prompt else None
+    )
     best: list[Segment] = []
     best_score = -1.0
     best_detection: LanguageDetection | None = None

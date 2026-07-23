@@ -130,7 +130,7 @@ def test_tagalog_uses_native_tl_and_prefer_forced():
 
 
 def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
-    # Hiligaynon uses HF only when a real fine-tune is configured; otherwise FW.
+    # Hiligaynon prefers HF PH dialect model (Visayan-aware) then FW fallback.
     from app.config import settings
 
     prev = settings.whisper_final_backend
@@ -141,15 +141,17 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         settings.whisper_final_backend = "auto"
         settings.whisper_hiligaynon_fine_tuned_model = ""
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
-        # Generic PH medium is not used for Hiligaynon (hallucinates on quiet audio).
-        assert resolve_final_backend("hil") == "faster-whisper"
+        assert resolve_final_backend("hil") == "huggingface"
         assert resolve_final_backend("en") == "faster-whisper"
-        assert hiligaynon_hf_candidates() == []
-        assert hiligaynon_model_id() == settings.whisper_final_model
+        assert hiligaynon_hf_candidates() == ["rbcurzon/whisper-medium-ph"]
+        assert hiligaynon_model_id() == "rbcurzon/whisper-medium-ph"
 
         settings.whisper_hiligaynon_fine_tuned_model = "/models/my-hil-ft"
         assert resolve_final_backend("hil") == "huggingface"
-        assert hiligaynon_hf_candidates() == ["/models/my-hil-ft"]
+        assert hiligaynon_hf_candidates() == [
+            "/models/my-hil-ft",
+            "rbcurzon/whisper-medium-ph",
+        ]
         assert hiligaynon_model_id() == "/models/my-hil-ft"
 
         settings.whisper_live_hiligaynon_model = "/models/hil-ct2"
@@ -203,6 +205,45 @@ def test_auto_final_backend_prefers_hf_for_tagalog():
         settings.whisper_live_tagalog_model = prev_live
 
 
+def test_visayan_markers_boost_quality_and_strip_prompt_echo():
+    from app.services.transcription import (
+        Segment,
+        _candidate_quality_score,
+        _strip_initial_prompt_echo,
+    )
+
+    hil = [
+        Segment(
+            text=(
+                "Buwas naman nakapoy na ko mangita sang kostum. "
+                "Wala gid ko kabalo. Wala gid problema."
+            ),
+            start=0.0,
+            end=20.0,
+        )
+    ]
+    tl_ish = [
+        Segment(
+            text=(
+                "Bukas naman pagod na ako maghanap ng costume. "
+                "Wala akong alam. Wala problema."
+            ),
+            start=0.0,
+            end=20.0,
+        )
+    ]
+    assert _candidate_quality_score(hil, 20.0) > _candidate_quality_score(tl_ish, 20.0)
+
+    echoed = "Sang Nga Mga Kostyo Buwas naman nakapoy na ko"
+    # Old long prompt words should not wipe real speech tokens we keep.
+    cleaned = _strip_initial_prompt_echo(
+        echoed,
+        "Board meeting in Hiligaynon Ilonggo and English. Maayong aga. Indi. Kita. Sang. Nga.",
+    )
+    assert "nakapoy" in cleaned.lower()
+    assert "Buwas" in cleaned or "buwas" in cleaned.lower()
+
+
 def test_auto_meeting_uses_combined_ph_hf_candidates():
     from app.config import settings
 
@@ -218,8 +259,8 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_tagalog_fine_tuned_model = ""
         settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
-        # auto → Hiligaynon default; without a hil fine-tune, use faster-whisper.
-        assert resolve_final_backend("auto") == "faster-whisper"
+        # auto → Hiligaynon default; uses PH dialect HF candidates.
+        assert resolve_final_backend("auto") == "huggingface"
         # auto_hf_candidates still lists medium-PH for Tagalog/legacy callers.
         assert auto_hf_candidates() == [
             "rbcurzon/whisper-medium-ph",

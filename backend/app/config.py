@@ -118,16 +118,14 @@ class Settings(BaseSettings):
     # Optional prompts — keep short to avoid Whisper echoing them.
     # Used for auto-detect and mixed PH board meetings (Iloilo / Hiligaynon-heavy).
     whisper_initial_prompt: str = (
-        "Board meeting in Hiligaynon, Filipino, and English. "
-        "Maayo, indi, kita, sang, nga, gin, naton."
+        "Board meeting discussion in Hiligaynon and English."
     )
     whisper_tagalog_initial_prompt: str = (
-        "Board meeting in Tagalog and English."
+        "Board meeting discussion in Tagalog and English."
     )
-    # Hiligaynon / Ilonggo bias — Whisper has no hil token; prompt + tl decode help.
+    # Keep SHORT — long word lists get echoed into the transcript by Whisper.
     whisper_hiligaynon_initial_prompt: str = (
-        "Board meeting in Hiligaynon Ilonggo and English. "
-        "Maayong aga. Indi. Kita. Sang. Nga. Kinahanglan. Ginaprobahan."
+        "Diskusyon sa board meeting sa Hiligaynon kag English."
     )
     # Final-pass language: prefer forced tl for Iloilo / Hiligaynon board meetings.
     # ``prefer_forced`` = forced tl first, auto retry if coverage is poor.
