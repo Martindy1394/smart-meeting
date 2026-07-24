@@ -14,8 +14,9 @@ if str(SCRIPTS) not in sys.path:
 import import_pld  # noqa: E402
 
 
-def _write_mini_pld(tmp: Path) -> Path:
-    lang = tmp / "HIL" / "0123"
+def _write_mini_pld(tmp: Path, *, nested: bool = False) -> Path:
+    base = tmp / "download" / "UP-DSP-PLD" / "PLD" if nested else tmp
+    lang = base / "HIL" / "0123"
     lang.mkdir(parents=True)
     (lang / "utt_001.wav").write_bytes(b"RIFF....WAVE")
     (lang / "session.log").write_text(
@@ -27,7 +28,7 @@ def _write_mini_pld(tmp: Path) -> Path:
         'missing.wav "prompt" "This wav is absent."\n',
         encoding="utf-8",
     )
-    return tmp / "HIL"
+    return base / "HIL"
 
 
 def test_normalize_pld_language():
@@ -47,6 +48,17 @@ def test_import_pld_language_reads_log():
         assert "wala gid" in rows[0]["text"].lower()
         assert rows[0]["source"] == "UP-DSP-PLD"
         assert Path(rows[0]["audio"]).name == "utt_001.wav"
+
+
+def test_resolve_nested_pld_root():
+    with tempfile.TemporaryDirectory(prefix="pld_nested_") as td:
+        tmp = Path(td)
+        _write_mini_pld(tmp, nested=True)
+        # Point at download root — importer should find …/PLD/HIL
+        lang_dir = import_pld.resolve_lang_dir(tmp / "download", None, "hil")
+        assert lang_dir.name.upper() == "HIL"
+        rows = import_pld.import_pld_language(lang_dir, language="hil")
+        assert len(rows) == 1
 
 
 def test_cli_writes_jsonl():
@@ -71,8 +83,22 @@ def test_cli_writes_jsonl():
         assert row["language"] == "hil"
 
 
+def test_missing_root_has_helpful_error():
+    with tempfile.TemporaryDirectory(prefix="pld_miss_") as td:
+        missing = Path(td) / "nope" / "PLD"
+        try:
+            import_pld.resolve_lang_dir(missing, None, "hil")
+            raise AssertionError("expected FileNotFoundError")
+        except FileNotFoundError as exc:
+            msg = str(exc)
+            assert "not found" in msg.lower()
+            assert "python3" in msg
+
+
 if __name__ == "__main__":
     test_normalize_pld_language()
     test_import_pld_language_reads_log()
+    test_resolve_nested_pld_root()
     test_cli_writes_jsonl()
+    test_missing_root_has_helpful_error()
     print("all_pld_import_tests_passed")

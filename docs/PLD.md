@@ -22,23 +22,32 @@ Waray, Tausug, Pangasinense.
 
 ## Recommended path (Hiligaynon)
 
-```bash
-# 1) Download UP-DSP-PLD and unpack so you have something like:
-#    data/PLD/HIL/<speaker_id>/*.wav + *.log
+Use **`python3`** (many Linux/macOS setups have no `python` command).
 
-# 2) Import Hiligaynon sessions → JSONL for our trainer
-python scripts/hiligaynon_asr/import_pld.py \
+```bash
+# 1) Unpack UP-DSP-PLD, then inspect so you can see where HIL/ lives:
+python3 scripts/hiligaynon_asr/import_pld.py --pld-root ./data --inspect
+# Wanted: a folder containing HIL/ (or Hiligaynon/) with speaker subfolders
+#          HIL/<speaker_id>/*.wav + *.log
+
+# 2) Import Hiligaynon sessions → JSONL
+python3 scripts/hiligaynon_asr/import_pld.py \
   --pld-root ./data/PLD \
   --language hil \
   --output ./hil-pld-train.jsonl
 
+# If that path is wrong, point at the language folder directly:
+# python3 scripts/hiligaynon_asr/import_pld.py \
+#   --pld-lang-dir /absolute/path/to/HIL \
+#   --output ./hil-pld-train.jsonl
+
 # Optional: hold out a slice for WER
-python scripts/hiligaynon_asr/import_pld.py \
+python3 scripts/hiligaynon_asr/import_pld.py \
   --pld-root ./data/PLD --language hil \
   --output ./hil-pld-eval.jsonl --limit 500
 
 # 3) Fine-tune Whisper (GPU recommended; no forced Tagalog token)
-python scripts/hiligaynon_asr/finetune_whisper.py \
+python3 scripts/hiligaynon_asr/finetune_whisper.py \
   --train-jsonl ./hil-pld-train.jsonl \
   --eval-jsonl ./hil-pld-eval.jsonl \
   --output-dir ./models/whisper-medium-pld-hil \
@@ -64,7 +73,7 @@ The same importer works for `ceb`, `ilo`, `war`, `bik`, `pam`, `pag`, `tsg`,
 `fil` — useful if you later expand Smart Meeting beyond Hiligaynon/Tagalog.
 
 ```bash
-python scripts/hiligaynon_asr/import_pld.py \
+python3 scripts/hiligaynon_asr/import_pld.py \
   --pld-root ./data/PLD --language ceb --output ./ceb-pld-train.jsonl
 ```
 
