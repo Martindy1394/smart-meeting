@@ -33,8 +33,9 @@ languages such as Basque on `whisper-medium`). This repo:
 ```bash
 # 0) Preferred: import Hiligaynon from UP-DSP Philippine Languages Database
 #    (download from Mozilla Data Collective — see docs/PLD.md)
-python scripts/hiligaynon_asr/import_pld.py \
+python3 scripts/hiligaynon_asr/import_pld.py \
   --pld-root ./data/PLD --language hil --output ./hil-pld-train.jsonl
+# If unsure of the layout: python3 scripts/hiligaynon_asr/import_pld.py --pld-root ./data --inspect
 
 # 1) Or build JSONL from your own WAV+TXT pairs (or CSV)
 python scripts/hiligaynon_asr/prepare_dataset.py \
