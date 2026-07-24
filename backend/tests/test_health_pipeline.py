@@ -36,6 +36,11 @@ class HealthPipelineTests(unittest.TestCase):
         self.assertTrue(pipe["bart"]["available"])
         self.assertIn("nllb_model", pipe["mbart_nllb"])
         self.assertIn("model", pipe["bart"])
+        self.assertIn("size_hint_live", pipe["whisper"])
+        self.assertIn("hardware_hint", pipe["bart"])
+        self.assertIn("metrics_status", pipe["mbart_nllb"])
+        self.assertEqual(pipe["whisper"]["size_hint_live"], "small")
+        self.assertIn("TBD", pipe["whisper"]["metrics_status"])
 
 
 if __name__ == "__main__":

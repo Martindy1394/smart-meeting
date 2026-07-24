@@ -27,6 +27,75 @@ logger = logging.getLogger("smart_meeting")
 _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
+def _whisper_size_hint(model_id: str) -> str:
+    name = (model_id or "").strip().lower()
+    if not name:
+        return "unknown"
+    if "large" in name:
+        return "large"
+    if "medium" in name:
+        return "medium"
+    if "small" in name or "base" in name or "tiny" in name:
+        return "small"
+    return "custom-or-unknown"
+
+
+def _build_pipeline_status() -> dict:
+    """Three-model ownership map + size/hardware hints (not live benchmarks).
+
+    See docs/MODELS.md — hints are derived from configured ids / code posture.
+    Accuracy, wall-clock latency, and dollar cost remain team-measured TBDs.
+    """
+    from .services import asr
+
+    whisper_ok = asr.is_available()
+    llm_ok = llm.summarizer_available()
+    ph_backend = (settings.ph_translate_backend or "auto").strip().lower()
+    device = (settings.whisper_device or "auto").strip() or "auto"
+    return {
+        "whisper": {
+            "role": "asr",
+            "owns": "accuracy of what was said",
+            "available": whisper_ok,
+            "live_model": settings.whisper_live_model,
+            "final_model": settings.whisper_final_model,
+            "final_backend": settings.whisper_final_backend,
+            "default_language": settings.whisper_default_language,
+            "size_hint_live": _whisper_size_hint(settings.whisper_live_model),
+            "size_hint_final": _whisper_size_hint(settings.whisper_final_model),
+            "hardware_hint": (
+                f"device={device}; compute_type={settings.whisper_compute_type}; "
+                "live favors latency (small), final favors accuracy (medium/HF PH)"
+            ),
+            "metrics_status": "WER/latency/cost TBD — see docs/MODELS.md",
+        },
+        "mbart_nllb": {
+            "role": "translation",
+            "owns": "language access",
+            "available": llm_ok,
+            "ph_translate_backend": ph_backend,
+            "nllb_model": settings.nllb_model,
+            "mbart_model": settings.mbart_model,
+            "mbart_ph_finetuned": bool(
+                (settings.mbart_ph_finetuned_model or "").strip()
+            ),
+            "size_hint": "multi-gb (NLLB distilled-600M; mBART-large-50)",
+            "hardware_hint": "loaded on demand via transformers; CPU or GPU host",
+            "metrics_status": "BLEU/latency/cost TBD — see docs/MODELS.md",
+        },
+        "bart": {
+            "role": "summarization",
+            "owns": "readable English minutes",
+            "available": llm_ok,
+            "model": settings.bart_model,
+            "allow_fallback": settings.allow_llm_fallback,
+            "size_hint": "multi-gb (bart-large-cnn class)",
+            "hardware_hint": "pipeline load uses CPU (device=-1) in llm.py",
+            "metrics_status": "quality/latency/cost TBD — see docs/MODELS.md",
+        },
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
@@ -111,38 +180,6 @@ def health():
     redis_ok = redis_store.is_available()
     env = settings.environment.lower()
     detailed = env in {"development", "dev", "test"} or settings.debug
-    llm_ok = llm.summarizer_available()
-    ph_backend = (settings.ph_translate_backend or "auto").strip().lower()
-    # Compact three-model map (always present) — see docs/MODELS.md.
-    pipeline = {
-        "whisper": {
-            "role": "asr",
-            "owns": "accuracy of what was said",
-            "available": whisper_ok,
-            "live_model": settings.whisper_live_model,
-            "final_model": settings.whisper_final_model,
-            "final_backend": settings.whisper_final_backend,
-            "default_language": settings.whisper_default_language,
-        },
-        "mbart_nllb": {
-            "role": "translation",
-            "owns": "language access",
-            "available": llm_ok,
-            "ph_translate_backend": ph_backend,
-            "nllb_model": settings.nllb_model,
-            "mbart_model": settings.mbart_model,
-            "mbart_ph_finetuned": bool(
-                (settings.mbart_ph_finetuned_model or "").strip()
-            ),
-        },
-        "bart": {
-            "role": "summarization",
-            "owns": "readable English minutes",
-            "available": llm_ok,
-            "model": settings.bart_model,
-            "allow_fallback": settings.allow_llm_fallback,
-        },
-    }
     payload = {
         "status": "ok",
         "version": __version__,
@@ -150,10 +187,10 @@ def health():
         "whisper_available": whisper_ok,
         "redis_available": redis_ok,
         "ffmpeg_available": audio.ffmpeg_available(),
-        "llm_available": llm_ok,
+        "llm_available": llm.summarizer_available(),
         "environment": settings.environment,
         "live_metrics": live_metrics.snapshot(),
-        "pipeline": pipeline,
+        "pipeline": _build_pipeline_status(),
     }
     if not detailed:
         return payload
