@@ -26,25 +26,32 @@ Prefer **`py -3`** on Windows, or **`python3`** on Linux/macOS.
 
 ### Windows (`M:\MSCS\PLD`)
 
-Open PowerShell in the Smart Meeting repo, then:
+**If your terminal is bash / Git Bash** (prompt looks like `user@pc MINGW64`), use
+`python3` and put the whole command on **one line** (do not use PowerShell `` ` ``):
+
+```bash
+python3 scripts/hiligaynon_asr/import_pld.py --pld-root "M:/MSCS/PLD" --inspect
+
+python3 scripts/hiligaynon_asr/import_pld.py --pld-root "M:/MSCS/PLD" --language hil --output ./hil-pld-train.jsonl
+```
+
+Git Bash path form also works: `--pld-root "/m/MSCS/PLD"`.
+
+**If your terminal is PowerShell**, use `py -3` and backticks for line breaks:
 
 ```powershell
-# 1) Confirm Hiligaynon folder is visible under your PLD path
 py -3 scripts/hiligaynon_asr/import_pld.py --pld-root "M:\MSCS\PLD" --inspect
 
-# 2) Import Hiligaynon → JSONL
 py -3 scripts/hiligaynon_asr/import_pld.py `
   --pld-root "M:\MSCS\PLD" `
   --language hil `
   --output ".\hil-pld-train.jsonl"
 ```
 
-If inspect shows `HIL` directly at `M:\MSCS\PLD\HIL`, you can also do:
+If inspect shows `HIL` at `M:\MSCS\PLD\HIL`:
 
-```powershell
-py -3 scripts/hiligaynon_asr/import_pld.py `
-  --pld-lang-dir "M:\MSCS\PLD\HIL" `
-  --output ".\hil-pld-train.jsonl"
+```bash
+python3 scripts/hiligaynon_asr/import_pld.py --pld-lang-dir "M:/MSCS/PLD/HIL" --output ./hil-pld-train.jsonl
 ```
 
 Wanted layout:
