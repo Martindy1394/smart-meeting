@@ -24,7 +24,8 @@ behind a secure JWT authentication system with per-user meeting history.
 ```
 
 Per-model project summaries (Whisper ASR, BART minutes, mBART/NLLB
-translation): [`docs/MODELS.md`](docs/MODELS.md).
+translation), including audience split, decision rationale, and the merged
+performance/cost gap: [`docs/MODELS.md`](docs/MODELS.md).
 
 ## Features
 
