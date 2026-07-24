@@ -22,59 +22,74 @@ Waray, Tausug, Pangasinense.
 
 ## Recommended path (Hiligaynon)
 
-Use **`python3`** (many Linux/macOS setups have no `python` command).
+Prefer **`py -3`** on Windows, or **`python3`** on Linux/macOS.
+
+### Windows (`M:\MSCS\PLD`)
+
+Open PowerShell in the Smart Meeting repo, then:
+
+```powershell
+# 1) Confirm Hiligaynon folder is visible under your PLD path
+py -3 scripts/hiligaynon_asr/import_pld.py --pld-root "M:\MSCS\PLD" --inspect
+
+# 2) Import Hiligaynon → JSONL
+py -3 scripts/hiligaynon_asr/import_pld.py `
+  --pld-root "M:\MSCS\PLD" `
+  --language hil `
+  --output ".\hil-pld-train.jsonl"
+```
+
+If inspect shows `HIL` directly at `M:\MSCS\PLD\HIL`, you can also do:
+
+```powershell
+py -3 scripts/hiligaynon_asr/import_pld.py `
+  --pld-lang-dir "M:\MSCS\PLD\HIL" `
+  --output ".\hil-pld-train.jsonl"
+```
+
+Wanted layout:
+
+```text
+M:\MSCS\PLD\HIL\<speaker_id>\*.wav
+M:\MSCS\PLD\HIL\<speaker_id>\*.log
+```
+
+(Folder may be named `Hiligaynon` instead of `HIL` — the importer accepts both.)
+
+### Linux / macOS
 
 ```bash
-# 1) Unpack UP-DSP-PLD, then inspect so you can see where HIL/ lives:
 python3 scripts/hiligaynon_asr/import_pld.py --pld-root ./data --inspect
-# Wanted: a folder containing HIL/ (or Hiligaynon/) with speaker subfolders
-#          HIL/<speaker_id>/*.wav + *.log
 
-# 2) Import Hiligaynon sessions → JSONL
 python3 scripts/hiligaynon_asr/import_pld.py \
   --pld-root ./data/PLD \
   --language hil \
   --output ./hil-pld-train.jsonl
+```
 
-# If that path is wrong, point at the language folder directly:
-# python3 scripts/hiligaynon_asr/import_pld.py \
-#   --pld-lang-dir /absolute/path/to/HIL \
-#   --output ./hil-pld-train.jsonl
+### Fine-tune and plug in
 
-# Optional: hold out a slice for WER
-python3 scripts/hiligaynon_asr/import_pld.py \
-  --pld-root ./data/PLD --language hil \
-  --output ./hil-pld-eval.jsonl --limit 500
+```bash
+# Optional eval slice
+py -3 scripts/hiligaynon_asr/import_pld.py --pld-root "M:\MSCS\PLD" --language hil --output .\hil-pld-eval.jsonl --limit 500
 
-# 3) Fine-tune Whisper (GPU recommended; no forced Tagalog token)
-python3 scripts/hiligaynon_asr/finetune_whisper.py \
-  --train-jsonl ./hil-pld-train.jsonl \
-  --eval-jsonl ./hil-pld-eval.jsonl \
-  --output-dir ./models/whisper-medium-pld-hil \
-  --model-name openai/whisper-medium \
+py -3 scripts/hiligaynon_asr/finetune_whisper.py `
+  --train-jsonl .\hil-pld-train.jsonl `
+  --eval-jsonl .\hil-pld-eval.jsonl `
+  --output-dir .\models\whisper-medium-pld-hil `
+  --model-name openai/whisper-medium `
   --fp16
 
-# 4) Plug into Smart Meeting
-# .env
-WHISPER_HILIGAYNON_FINE_TUNED_MODEL=/path/to/models/whisper-medium-pld-hil
+# backend/.env
+WHISPER_HILIGAYNON_FINE_TUNED_MODEL=M:/MSCS/smart-meeting/models/whisper-medium-pld-hil
 WHISPER_FINAL_BACKEND=auto
 WHISPER_HILIGAYNON_FINAL_LANGUAGE_MODE=auto
-
-# Optional live CT2 export
-./scripts/hiligaynon_asr/export_ct2.sh \
-  ./models/whisper-medium-pld-hil \
-  ./models/whisper-medium-pld-hil-ct2
-# WHISPER_LIVE_HILIGAYNON_MODEL=/path/to/models/whisper-medium-pld-hil-ct2
 ```
 
 ## Other PLD languages
 
-The same importer works for `ceb`, `ilo`, `war`, `bik`, `pam`, `pag`, `tsg`,
-`fil` — useful if you later expand Smart Meeting beyond Hiligaynon/Tagalog.
-
-```bash
-python3 scripts/hiligaynon_asr/import_pld.py \
-  --pld-root ./data/PLD --language ceb --output ./ceb-pld-train.jsonl
+```powershell
+py -3 scripts/hiligaynon_asr/import_pld.py --pld-root "M:\MSCS\PLD" --language ceb --output .\ceb-pld-train.jsonl
 ```
 
 Optional community tooling: [`dka-speech`](https://pypi.org/project/dka-speech/)
