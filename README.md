@@ -23,6 +23,9 @@ behind a secure JWT authentication system with per-user meeting history.
                                       └─────────┘
 ```
 
+Per-model project summaries (Whisper ASR, BART minutes, mBART/NLLB
+translation): [`docs/MODELS.md`](docs/MODELS.md).
+
 ## Features
 
 - **Redis audio memory** — every recorded PCM chunk is appended to Redis during
