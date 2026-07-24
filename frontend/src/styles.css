@@ -1150,7 +1150,7 @@ button {
   border-radius: var(--radius);
   background: linear-gradient(
     120deg,
-    color-mix(in srgb, var(--surface) 88%, var(--accent) 12%),
+    color-mix(in srgb, var(--surface) 88%, var(--primary) 12%),
     var(--surface)
   );
 }
@@ -1169,6 +1169,7 @@ button {
   margin: 0;
   padding: 0;
   flex: 1;
+  align-items: center;
 }
 .ai-pipeline-steps li {
   display: inline-flex;
@@ -1176,7 +1177,7 @@ button {
   gap: 6px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 8px;
   font-size: 12px;
   color: var(--text-dim);
   background: var(--bg);
@@ -1190,8 +1191,8 @@ button {
 }
 .ai-pipeline-steps li.done {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  background: color-mix(in srgb, var(--primary) 12%, var(--bg));
 }
 .ai-pipeline-model {
   font-weight: 700;
