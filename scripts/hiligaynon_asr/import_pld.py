@@ -165,15 +165,21 @@ def resolve_lang_dir(
     if pld_root is None:
         raise ValueError("Provide --pld-lang-dir or --pld-root")
 
-    root = pld_root.expanduser().resolve()
+    root = pld_root.expanduser()
+    if _looks_like_windows_drive(root) and not root.exists():
+        raise FileNotFoundError(_windows_drive_help(root))
+    root = root.resolve()
     if not root.exists():
         raise FileNotFoundError(
             f"--pld-root not found: {root}\n"
             "Unpack UP-DSP-PLD first, then point --pld-root at the folder that "
             "contains language dirs (HIL, CEB, …) or a parent of that folder.\n"
-            "Example:\n"
+            "If you used a Windows path (M:/…) inside the Cursor cloud Linux "
+            "shell, that drive is not available here — run locally or copy PLD "
+            "into /workspace/data/PLD.\n"
+            "Example (this environment):\n"
             "  python3 scripts/hiligaynon_asr/import_pld.py "
-            "--pld-root ./data/PLD --language hil --output ./hil-pld-train.jsonl\n"
+            "--pld-root /workspace/data/PLD --language hil --output ./hil-pld-train.jsonl\n"
             "Or inspect:\n"
             "  python3 scripts/hiligaynon_asr/import_pld.py "
             f"--pld-root {pld_root} --inspect"
@@ -280,11 +286,50 @@ def import_pld_language(
     return rows
 
 
+def _looks_like_windows_drive(path: Path) -> bool:
+    """True for paths like M:/… or M:\\… that only exist on Windows hosts."""
+    text = str(path)
+    # Unresolved: "M:/MSCS/PLD" or "M:\\MSCS\\PLD"
+    if re.match(r"^[A-Za-z]:[\\/]", text):
+        return True
+    # Mistakenly resolved under cwd: "/workspace/M:/MSCS/PLD"
+    if re.search(r"(^|/)[A-Za-z]:(/|\\)", text):
+        return True
+    return False
+
+
+def _windows_drive_help(path: Path) -> str:
+    return (
+        f"This looks like a Windows drive path ({path}), but this shell is Linux "
+        f"(cwd under /workspace) — the M: drive is not mounted here.\n"
+        "Fix (pick one):\n"
+        "  1) Run the importer on your Windows PC (Git Bash / PowerShell) where "
+        "M:\\MSCS\\PLD exists, from your local smart-meeting repo clone.\n"
+        "  2) Or copy/sync PLD into this environment, e.g.:\n"
+        "       /workspace/data/PLD/HIL/<speaker_id>/*.wav + *.log\n"
+        "     then:\n"
+        "       python3 scripts/hiligaynon_asr/import_pld.py "
+        "--pld-root /workspace/data/PLD --inspect\n"
+    )
+
+
 def inspect_tree(root: Path) -> int:
+    raw = root
+    if _looks_like_windows_drive(raw) and not raw.exists():
+        print(_windows_drive_help(raw), file=sys.stderr)
+        return 2
     root = root.expanduser().resolve()
     print(f"inspect root: {root}")
     if not root.exists():
-        print("ERROR: path does not exist", file=sys.stderr)
+        if _looks_like_windows_drive(raw) or _looks_like_windows_drive(root):
+            print(_windows_drive_help(raw), file=sys.stderr)
+        else:
+            print("ERROR: path does not exist", file=sys.stderr)
+            print(
+                "Tip: pass an absolute path that exists on *this* machine, e.g. "
+                "/workspace/data/PLD",
+                file=sys.stderr,
+            )
         return 2
     if not root.is_dir():
         print("ERROR: path is not a directory", file=sys.stderr)

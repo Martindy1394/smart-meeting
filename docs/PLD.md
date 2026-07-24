@@ -24,7 +24,18 @@ Waray, Tausug, Pangasinense.
 
 Prefer **`py -3`** on Windows, or **`python3`** on Linux/macOS.
 
-### Windows (`M:\MSCS\PLD`)
+### Important: where you run the command
+
+`M:\MSCS\PLD` exists on your **Windows PC**. The Cursor cloud agent terminal is
+**Linux** (`/workspace/…`) and cannot see the `M:` drive — that is why you saw
+`inspect root: /workspace/M:/MSCS/PLD` / path does not exist.
+
+- To use files on `M:\MSCS\PLD`, open a **local** terminal in your repo clone on
+  Windows (Git Bash or PowerShell) and run the commands there.
+- Or copy `M:\MSCS\PLD\HIL` into the cloud workspace as `/workspace/data/PLD/HIL`
+  and then use `--pld-root /workspace/data/PLD`.
+
+### Windows local (`M:\MSCS\PLD`)
 
 **If your terminal is bash / Git Bash** (prompt looks like `user@pc MINGW64`), use
 `python3` and put the whole command on **one line** (do not use PowerShell `` ` ``):
