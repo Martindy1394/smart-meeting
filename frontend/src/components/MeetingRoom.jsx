@@ -353,6 +353,8 @@ export default function MeetingRoom({
     recorder.status !== "starting";
   const isRefined = status === "finalized" && finalTranscript;
   const hasTranscript = Boolean(finalTranscript);
+  const hasEnglish = Boolean((translation || "").trim());
+  const hasMinutes = Boolean((summary || "").trim());
   const showLive =
     recorder.recording ||
     recorder.status === "finalizing" ||
@@ -766,13 +768,43 @@ export default function MeetingRoom({
         </div>
       </div>
 
+      <div
+        className="ai-pipeline"
+        aria-label="AI pipeline: Whisper transcript, mBART English, BART minutes"
+      >
+        <span className="ai-pipeline-label">AI pipeline</span>
+        <ol className="ai-pipeline-steps">
+          <li className={hasTranscript || showLive ? "done" : ""}>
+            <span className="ai-pipeline-model">Whisper</span>
+            <span className="ai-pipeline-role">
+              {showLive && !isRefined ? "live captions" : "transcript"}
+            </span>
+          </li>
+          <li className="ai-pipeline-sep" aria-hidden="true">
+            →
+          </li>
+          <li className={hasEnglish ? "done" : ""}>
+            <span className="ai-pipeline-model">mBART / NLLB</span>
+            <span className="ai-pipeline-role">English</span>
+          </li>
+          <li className="ai-pipeline-sep" aria-hidden="true">
+            →
+          </li>
+          <li className={hasMinutes ? "done" : ""}>
+            <span className="ai-pipeline-model">BART</span>
+            <span className="ai-pipeline-role">minutes</span>
+          </li>
+        </ol>
+      </div>
+
       <div className="cards bottom-cards">
-        {/* Summary card (BART) — from finalized transcript */}
+        {/* Summary card (BART) — from English translation of transcript */}
         <div className="card">
           <div className="card-head">
             <h3>Summary</h3>
             <span className="card-tag">
-              BART · from transcript{summaryEngine ? ` · ${summaryEngine}` : ""}
+              BART · English minutes
+              {summaryEngine ? ` · ${summaryEngine}` : ""}
             </span>
           </div>
           <div className="card-head" style={{ borderTop: "none", paddingTop: 0 }}>
@@ -816,12 +848,12 @@ export default function MeetingRoom({
           </div>
         </div>
 
-        {/* Translation card (mBART) — auto English */}
+        {/* Translation card (mBART/NLLB) — auto English for BART */}
         <div className="card">
           <div className="card-head">
             <h3>English translation</h3>
             <span className="card-tag">
-              mBART · {translationLang || "English"}
+              mBART / NLLB · {translationLang || "English"}
             </span>
           </div>
           <div className="card-body">

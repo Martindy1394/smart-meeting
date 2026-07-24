@@ -1,14 +1,17 @@
 # Smart Meeting — model summaries
 
+Revised edition — standardized sections + glossary  
+Reviewed: July 24, 2026
+
 Pipeline: **audio → Whisper (transcript) → mBART/NLLB (English) → BART (minutes)**,
 with optional mBART translation to other languages on demand.
 
-```
-Live PCM ──► Whisper (live captions)
-Full WAV ──► Whisper (final transcript)
-Transcript ──► NLLB / mBART ──► English ──► BART ──► meeting minutes
-Transcript ──► mBART ──► other languages (on demand)
-```
+| Stage | Detail |
+|---|---|
+| Live PCM | → Whisper (live captions) |
+| Full WAV | → Whisper (final transcript) |
+| Transcript | → NLLB / mBART → English → BART → meeting minutes |
+| Transcript | → mBART → other languages (on demand) |
 
 ---
 
@@ -26,18 +29,22 @@ translation, history search) depends on this transcript.
   `WHISPER_FINAL_BACKEND=auto`).
 - Meetings are Hiligaynon-biased (`WHISPER_DEFAULT_LANGUAGE=hil`). Whisper has
   **no native `hil` token**, so decode uses **auto-detect** plus Hiligaynon
-  prompts — it does **not** force Tagalog `tl`.
+  prompts — it does **not** force Tagalog (`tl`).
 - Final Hiligaynon candidate order: custom fine-tune →
   `rbcurzon/whisper-medium-ph` → faster-whisper `medium`.
-- Optional: Tagalog-only live RNN-T; PLD fine-tune tooling for better Hiligaynon.
+- Optional: Tagalog-only live RNN-T (streaming recurrent neural network
+  transducer); PLD fine-tune tooling for better Hiligaynon.
 
 **Inputs / outputs**
 
-| | |
+| Field | Detail |
 |---|---|
 | Input | 16 kHz mono PCM (live) or archived WAV (final) |
 | Output | Plain transcript + timed segments → `meeting.final_transcript` |
 | Trigger | WebSocket while recording; finalize on stop / upload / retranscribe |
+
+**Settings:** `WHISPER_DEFAULT_LANGUAGE`, `WHISPER_FINAL_BACKEND`,
+`WHISPER_LIVE_MODEL`, `WHISPER_FINAL_MODEL`, `WHISPER_HILIGAYNON_*`
 
 **Key files:** `backend/app/services/transcription.py`, `asr.py`,
 `ws/transcription.py`, `finalize.py`  
@@ -68,14 +75,16 @@ items.
 
 **Inputs / outputs**
 
-| | |
+| Field | Detail |
 |---|---|
 | Input | Normalized English text (preferred), not raw PH speech |
 | Output | Formatted minutes string (`• …` or `1. …`) |
-| Trigger | Explicit summarize API call (not automatic on stop) |
+| Trigger | Explicit summarize API call (not automatic on stop; UI auto-runs after finalize) |
 
-**Key files:** `backend/app/services/llm.py`, `routers/ai.py`  
-**Settings:** `BART_MODEL`, `BART_MAX_INPUT_TOKENS`, `BART_TOPIC_*`
+**Settings:** `BART_MODEL`, `BART_MAX_INPUT_TOKENS`, `BART_TOPIC_*`,
+`ALLOW_LLM_FALLBACK`
+
+**Key files:** `backend/app/services/llm.py`, `routers/ai.py`
 
 **Project in one line (BART’s view):** “I never hear the audio — I only see
 English text that mBART/NLLB already produced, and I turn that into short
@@ -101,11 +110,14 @@ separately, translate the transcript into other UI languages on demand.
 
 **Inputs / outputs**
 
-| | |
+| Field | Detail |
 |---|---|
 | Input | Full meeting transcript (any source language) |
 | Output | Plain translated string |
 | Trigger | Always as step 1 of summarize (→ English); also `POST /api/ai/translate` |
+
+**Settings:** `MBART_MODEL`, `NLLB_MODEL`, `PH_TRANSLATE_BACKEND`,
+`MBART_PH_FINE_TUNED_MODEL`
 
 **Key files:** `backend/app/services/llm.py`, `languages.py`, `routers/ai.py`  
 **Docs:** [`FINE_TUNE_MBART_PH.md`](FINE_TUNE_MBART_PH.md)
@@ -127,3 +139,28 @@ transcript into other languages when the user asks.”
 
 Whisper owns **accuracy of what was said**. mBART/NLLB owns **language access**.
 BART owns **readable minutes** from English only.
+
+Runtime operators can inspect the same ownership map at `GET /api/health`
+under `pipeline`.
+
+---
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| **ASR** | Automatic Speech Recognition — the general task Whisper performs. |
+| **NLLB** | No Language Left Behind — Meta’s multilingual translation model family, used here as the preferred PH→EN backend. |
+| **RNN-T** | Recurrent Neural Network Transducer — a streaming speech-recognition architecture used here for the optional Tagalog-only live captioning path. |
+| **PLD** | **Philippine Languages Database** (UP-DSP PLD; Guevara et al., SIGUL @ LREC-COLING 2024) — open speech corpus (~454h, 10 languages including ~41h Hiligaynon). Smart Meeting uses it as **training data** for Whisper fine-tuning, not as a runtime checkpoint. See [`PLD.md`](PLD.md). |
+
+---
+
+## Improvements from this review
+
+Applied in-repo after the July 24 model-summary review:
+
+1. Document settings + glossary (PLD expanded so readers need not open PLD.md).
+2. Expose `NLLB_MODEL` in `.env.example` (already in `config.py`).
+3. Add a compact `pipeline` object on `/api/health` matching the three-model map.
+4. Show Whisper → mBART/NLLB → BART stage status in the meeting room UI.

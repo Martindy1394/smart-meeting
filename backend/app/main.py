@@ -111,6 +111,38 @@ def health():
     redis_ok = redis_store.is_available()
     env = settings.environment.lower()
     detailed = env in {"development", "dev", "test"} or settings.debug
+    llm_ok = llm.summarizer_available()
+    ph_backend = (settings.ph_translate_backend or "auto").strip().lower()
+    # Compact three-model map (always present) — see docs/MODELS.md.
+    pipeline = {
+        "whisper": {
+            "role": "asr",
+            "owns": "accuracy of what was said",
+            "available": whisper_ok,
+            "live_model": settings.whisper_live_model,
+            "final_model": settings.whisper_final_model,
+            "final_backend": settings.whisper_final_backend,
+            "default_language": settings.whisper_default_language,
+        },
+        "mbart_nllb": {
+            "role": "translation",
+            "owns": "language access",
+            "available": llm_ok,
+            "ph_translate_backend": ph_backend,
+            "nllb_model": settings.nllb_model,
+            "mbart_model": settings.mbart_model,
+            "mbart_ph_finetuned": bool(
+                (settings.mbart_ph_finetuned_model or "").strip()
+            ),
+        },
+        "bart": {
+            "role": "summarization",
+            "owns": "readable English minutes",
+            "available": llm_ok,
+            "model": settings.bart_model,
+            "allow_fallback": settings.allow_llm_fallback,
+        },
+    }
     payload = {
         "status": "ok",
         "version": __version__,
@@ -118,9 +150,10 @@ def health():
         "whisper_available": whisper_ok,
         "redis_available": redis_ok,
         "ffmpeg_available": audio.ffmpeg_available(),
-        "llm_available": llm.summarizer_available(),
+        "llm_available": llm_ok,
         "environment": settings.environment,
         "live_metrics": live_metrics.snapshot(),
+        "pipeline": pipeline,
     }
     if not detailed:
         return payload
