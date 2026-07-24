@@ -85,23 +85,58 @@ python3 scripts/hiligaynon_asr/import_pld.py \
   --output ./hil-pld-train.jsonl
 ```
 
-### Fine-tune and plug in
+### Clean + split for Whisper (recommended)
+
+Same filtering ideas as OmniVoice Filipino PLD prep (drop spontaneous /
+digit-paren noise, keep 1–15s clips, speaker-disjoint train/dev/test), adapted
+to Smart Meeting's Whisper JSONL trainer:
 
 ```bash
-# Optional eval slice
-py -3 scripts/hiligaynon_asr/import_pld.py --pld-root "M:\MSCS\PLD" --language hil --output .\hil-pld-eval.jsonl --limit 500
+python3 scripts/hiligaynon_asr/prepare_whisper_pld.py \
+  --pld-root ./data/PLD \
+  --language hil \
+  --out-dir ./data/pld_hiligaynon_clean
 
-py -3 scripts/hiligaynon_asr/finetune_whisper.py `
-  --train-jsonl .\hil-pld-train.jsonl `
-  --eval-jsonl .\hil-pld-eval.jsonl `
-  --output-dir .\models\whisper-medium-pld-hil `
-  --model-name openai/whisper-medium `
+# Optional standalone package (hardlink WAVs to save disk):
+# python3 scripts/hiligaynon_asr/prepare_whisper_pld.py \
+#   --pld-root ./data/PLD --language hil \
+#   --out-dir ./data/pld_hiligaynon_clean \
+#   --package-dir ./data/pld_hiligaynon_clean_pkg --package-mode hardlink
+```
+
+Windows / Git Bash (one line):
+
+```bash
+python3 scripts/hiligaynon_asr/prepare_whisper_pld.py --pld-root "M:/MSCS/PLD" --language hil --out-dir ./data/pld_hiligaynon_clean
+```
+
+### Fine-tune and plug in
+
+Use the cleaned speaker-disjoint splits from `prepare_whisper_pld.py`:
+
+```bash
+python3 scripts/hiligaynon_asr/finetune_whisper.py \
+  --train-jsonl ./data/pld_hiligaynon_clean/train.jsonl \
+  --eval-jsonl ./data/pld_hiligaynon_clean/dev.jsonl \
+  --output-dir ./models/whisper-medium-pld-hil \
+  --model-name openai/whisper-medium \
   --fp16
 
 # backend/.env
 WHISPER_HILIGAYNON_FINE_TUNED_MODEL=M:/MSCS/smart-meeting/models/whisper-medium-pld-hil
 WHISPER_FINAL_BACKEND=auto
 WHISPER_HILIGAYNON_FINAL_LANGUAGE_MODE=auto
+```
+
+Windows (PowerShell):
+
+```powershell
+py -3 scripts/hiligaynon_asr/finetune_whisper.py `
+  --train-jsonl .\data\pld_hiligaynon_clean\train.jsonl `
+  --eval-jsonl .\data\pld_hiligaynon_clean\dev.jsonl `
+  --output-dir .\models\whisper-medium-pld-hil `
+  --model-name openai/whisper-medium `
+  --fp16
 ```
 
 ## Other PLD languages

@@ -38,8 +38,9 @@ import sys
 from pathlib import Path
 
 # UP recording-tool log formats (tolerant variants).
+# wav "prompt_source" "transcript"
 LOG_ROW = re.compile(
-    r'^(?P<wav>\S+\.wav)\s+"[^"]*"\s+"(?P<text>.*)"\s*$',
+    r'^(?P<wav>\S+\.wav)\s+"(?P<prompt>[^"]*)"\s+"(?P<text>.*)"\s*$',
     re.IGNORECASE,
 )
 # Some exports use: name.wav <tab> transcript
@@ -100,18 +101,36 @@ def read_meta(log_path: Path) -> dict[str, str]:
     return meta
 
 
-def read_utterances(log_path: Path) -> list[tuple[str, str]]:
-    rows: list[tuple[str, str]] = []
+def read_utterance_rows(log_path: Path) -> list[tuple[str, str, str]]:
+    """Return ``(wav_name, prompt_source, text)`` rows from a PLD session log."""
+    rows: list[tuple[str, str, str]] = []
     for raw in log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        match = LOG_ROW.match(line) or LOG_ROW_TSV.match(line)
+        match = LOG_ROW.match(line)
         if match:
             text = match.group("text").strip()
             if text:
-                rows.append((match.group("wav"), text))
+                rows.append(
+                    (
+                        match.group("wav"),
+                        (match.group("prompt") or "").strip(),
+                        text,
+                    )
+                )
+            continue
+        match = LOG_ROW_TSV.match(line)
+        if match:
+            text = match.group("text").strip()
+            if text:
+                rows.append((match.group("wav"), "", text))
     return rows
+
+
+def read_utterances(log_path: Path) -> list[tuple[str, str]]:
+    """Return ``(wav_name, text)`` rows (compat wrapper)."""
+    return [(wav, text) for wav, _prompt, text in read_utterance_rows(log_path)]
 
 
 def _list_top_dirs(root: Path, limit: int = 40) -> list[str]:
@@ -248,9 +267,9 @@ def import_pld_language(
     for log_path in logs:
         meta = read_meta(log_path)
         speaker_id = meta.get("SpeakerID") or log_path.parent.name
-        utterances = read_utterances(log_path)
+        utterances = read_utterance_rows(log_path)
         parsed_utt += len(utterances)
-        for wav_name, text in utterances:
+        for wav_name, prompt_source, text in utterances:
             wav_path = (log_path.parent / wav_name).resolve()
             if not wav_path.is_file():
                 # Some packs put wavs beside a nested transcript dir.
@@ -269,7 +288,8 @@ def import_pld_language(
                     "gender": meta.get("SpeakerGender", ""),
                     "age": meta.get("SpeakerAge", ""),
                     "dialect": meta.get("SpeakerDialect", ""),
-                    "source": "UP-DSP-PLD",
+                    "prompt_source": prompt_source,
+                    "corpus": "UP-DSP-PLD",
                 }
             )
             if limit is not None and len(rows) >= limit:

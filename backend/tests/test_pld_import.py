@@ -46,7 +46,7 @@ def test_import_pld_language_reads_log():
         assert rows[0]["language"] == "hil"
         assert rows[0]["speaker_id"] == "0123"
         assert "wala gid" in rows[0]["text"].lower()
-        assert rows[0]["source"] == "UP-DSP-PLD"
+        assert rows[0]["corpus"] == "UP-DSP-PLD"
         assert Path(rows[0]["audio"]).name == "utt_001.wav"
 
 

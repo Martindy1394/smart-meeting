@@ -31,11 +31,12 @@ languages such as Basque on `whisper-medium`). This repo:
 ## Scripts (train → evaluate → plug in)
 
 ```bash
-# 0) Preferred: import Hiligaynon from UP-DSP Philippine Languages Database
-#    (download from Mozilla Data Collective — see docs/PLD.md)
-python3 scripts/hiligaynon_asr/import_pld.py \
-  --pld-root ./data/PLD --language hil --output ./hil-pld-train.jsonl
-# If unsure of the layout: python3 scripts/hiligaynon_asr/import_pld.py --pld-root ./data --inspect
+# 0) Preferred: clean + speaker-disjoint PLD splits for Whisper
+#    (OmniVoice-style filters: drop spontaneous, digits/parens, keep 1–15s)
+#    See docs/PLD.md
+python3 scripts/hiligaynon_asr/prepare_whisper_pld.py \
+  --pld-root ./data/PLD --language hil --out-dir ./data/pld_hiligaynon_clean
+# Inspect layout only: python3 scripts/hiligaynon_asr/import_pld.py --pld-root ./data --inspect
 
 # 1) Or build JSONL from your own WAV+TXT pairs (or CSV)
 python scripts/hiligaynon_asr/prepare_dataset.py \
@@ -43,7 +44,8 @@ python scripts/hiligaynon_asr/prepare_dataset.py \
 
 # 2) Fine-tune whisper-medium (GPU recommended; omit --language for hil)
 python scripts/hiligaynon_asr/finetune_whisper.py \
-  --train-jsonl ./hil-pld-train.jsonl \
+  --train-jsonl ./data/pld_hiligaynon_clean/train.jsonl \
+  --eval-jsonl ./data/pld_hiligaynon_clean/dev.jsonl \
   --output-dir ./models/whisper-medium-hiligaynon \
   --model-name openai/whisper-medium \
   --fp16
