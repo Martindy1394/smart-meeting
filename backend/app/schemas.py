@@ -96,8 +96,31 @@ class ProfileUpdateRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str = ""
     token_type: str = "bearer"
+    expires_in: int = 0  # access token lifetime seconds
     user: "UserResponse"
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=20)
+
+
+class LogoutRequest(BaseModel):
+    access_token: str | None = None
+    refresh_token: str | None = None
+
+
+class FaithfulnessLine(BaseModel):
+    section: str
+    line: str
+    overlap: float = 0.0
+
+
+class FaithfulnessReport(BaseModel):
+    status: str = "ok"  # ok | warn | skipped
+    untraced: list[FaithfulnessLine] = Field(default_factory=list)
+    checked: int = 0
 
 
 class UserResponse(BaseModel):
@@ -240,6 +263,9 @@ class SummarizeResponse(BaseModel):
     # English text produced (or reused) before BART summarization.
     translation: str = ""
     translation_language: str = "English"
+    # True when engine is extractive / non-BART degraded path.
+    extractive_fallback: bool = False
+    faithfulness: FaithfulnessReport | None = None
 
 
 class TranslateRequest(BaseModel):

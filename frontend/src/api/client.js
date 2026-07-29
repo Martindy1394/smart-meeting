@@ -1,14 +1,34 @@
 // Thin API client wrapping fetch with JWT auth + JSON handling.
 
 const TOKEN_KEY = "sm_token";
+const REFRESH_KEY = "sm_refresh";
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+export function getRefreshToken() {
+  return localStorage.getItem(REFRESH_KEY);
+}
+
 export function setToken(token) {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
+}
+
+export function setRefreshToken(token) {
+  if (token) localStorage.setItem(REFRESH_KEY, token);
+  else localStorage.removeItem(REFRESH_KEY);
+}
+
+export function setSessionTokens({ access_token, refresh_token } = {}) {
+  setToken(access_token || null);
+  setRefreshToken(refresh_token || null);
+}
+
+export function clearSessionTokens() {
+  setToken(null);
+  setRefreshToken(null);
 }
 
 class ApiError extends Error {
@@ -18,7 +38,37 @@ class ApiError extends Error {
   }
 }
 
-async function request(path, { method = "GET", body, auth = true } = {}) {
+let refreshInFlight = null;
+
+async function refreshAccessToken() {
+  const refresh = getRefreshToken();
+  if (!refresh) return null;
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+      if (!res.ok) {
+        clearSessionTokens();
+        return null;
+      }
+      const data = await res.json();
+      setSessionTokens(data);
+      return data.access_token || null;
+    } catch {
+      clearSessionTokens();
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+async function request(path, { method = "GET", body, auth = true, _retry = true } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (auth) {
     const token = getToken();
@@ -36,6 +86,13 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
       "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
       0
     );
+  }
+
+  if (res.status === 401 && auth && _retry && getRefreshToken()) {
+    const next = await refreshAccessToken();
+    if (next) {
+      return request(path, { method, body, auth, _retry: false });
+    }
   }
 
   if (res.status === 204) return null;
@@ -64,6 +121,25 @@ export const api = {
   // Auth
   signup: (payload) => request("/auth/signup", { method: "POST", body: payload, auth: false }),
   login: (payload) => request("/auth/login", { method: "POST", body: payload, auth: false }),
+  refresh: (refresh_token) =>
+    request("/auth/refresh", {
+      method: "POST",
+      body: { refresh_token },
+      auth: false,
+    }),
+  logout: async () => {
+    const access = getToken();
+    const refresh = getRefreshToken();
+    try {
+      await request("/auth/logout", {
+        method: "POST",
+        body: { access_token: access, refresh_token: refresh },
+      });
+    } catch {
+      /* still clear local session */
+    }
+    clearSessionTokens();
+  },
   me: () => request("/auth/me"),
   updateProfile: (payload) => request("/auth/me", { method: "PATCH", body: payload }),
 
@@ -102,6 +178,12 @@ export const api = {
         0
       );
     }
+    if (res.status === 401 && getRefreshToken()) {
+      const next = await refreshAccessToken();
+      if (next) {
+        return api.exportMeeting(id, format);
+      }
+    }
     if (!res.ok) {
       let detail = "Could not export meeting.";
       try {
@@ -134,6 +216,12 @@ export const api = {
         "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
         0
       );
+    }
+    if (res.status === 401 && getRefreshToken()) {
+      const next = await refreshAccessToken();
+      if (next) {
+        return api.getMeetingAudioUrl(id);
+      }
     }
     if (res.status === 404) return null;
     if (!res.ok) {

@@ -1,5 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api, getToken, setToken } from "../api/client";
+import {
+  api,
+  clearSessionTokens,
+  getToken,
+  setSessionTokens,
+} from "../api/client";
 
 const AuthContext = createContext(null);
 
@@ -18,7 +23,7 @@ export function AuthProvider({ children }) {
         const me = await api.me();
         if (!cancelled) setUser(me);
       } catch {
-        setToken(null);
+        clearSessionTokens();
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -31,14 +36,14 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (username, password) => {
     const res = await api.login({ username, password });
-    setToken(res.access_token);
+    setSessionTokens(res);
     setUser(res.user);
     return res.user;
   }, []);
 
   const signup = useCallback(async (payload) => {
     const res = await api.signup(payload);
-    setToken(res.access_token);
+    setSessionTokens(res);
     setUser(res.user);
     return res.user;
   }, []);
@@ -49,8 +54,12 @@ export function AuthProvider({ children }) {
     return user;
   }, []);
 
-  const logout = useCallback(() => {
-    setToken(null);
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      clearSessionTokens();
+    }
     setUser(null);
   }, []);
 

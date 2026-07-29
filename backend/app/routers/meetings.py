@@ -73,8 +73,14 @@ def _ensure_meeting_wav(meeting: Meeting, db: Session) -> str:
     wav_bytes = redis_store.get_wav_bytes(meeting.id)
     if wav_bytes:
         path = os.path.join(audio.audio_dir(), f"{meeting.id}.wav")
+        try:
+            from ..services import crypto_at_rest
+
+            disk_bytes = crypto_at_rest.encrypt_bytes(wav_bytes)
+        except Exception:
+            disk_bytes = wav_bytes
         with open(path, "wb") as fh:
-            fh.write(wav_bytes)
+            fh.write(disk_bytes)
         path = os.path.abspath(path)
         meeting.audio_path = path
         db.commit()
@@ -401,11 +407,19 @@ def get_meeting_audio(
             detail="No audio recording is available for this meeting yet.",
         ) from None
 
-    return FileResponse(
-        path=path,
+    try:
+        wav_bytes = audio.read_stored_wav_bytes(path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not read meeting audio: {exc}",
+        ) from exc
+    return Response(
+        content=wav_bytes,
         media_type="audio/wav",
-        filename=filename,
-        content_disposition_type=disposition,
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+        },
     )
 
 

@@ -199,17 +199,29 @@ def append_pcm(meeting_id: str, chunk: bytes) -> int:
         max_bytes -= 1
     key = _pcm_key(meeting_id)
     try:
+        from . import crypto_at_rest
+
+        encrypting = crypto_at_rest.encryption_enabled()
         # Truncate oversized incoming chunks so one write cannot blow the cap.
         if len(chunk) > max_bytes:
             chunk = chunk[-max_bytes:]
             if len(chunk) % 2:
                 chunk = chunk[1:]
-        total = int(client.append(key, chunk))
-        if total > max_bytes:
-            # Keep only the newest window — cheap for ~MB-scale buffers.
-            kept = client.getrange(key, total - max_bytes, -1) or b""
-            client.set(key, kept)
-            total = len(kept)
+        if encrypting:
+            existing = crypto_at_rest.decrypt_bytes(client.get(key) or b"")
+            combined = existing + chunk
+            if len(combined) > max_bytes:
+                combined = combined[-max_bytes:]
+                if len(combined) % 2:
+                    combined = combined[1:]
+            client.set(key, crypto_at_rest.encrypt_bytes(combined))
+            total = len(combined)
+        else:
+            total = int(client.append(key, chunk))
+            if total > max_bytes:
+                kept = client.getrange(key, total - max_bytes, -1) or b""
+                client.set(key, kept)
+                total = len(kept)
         _touch_ttl(client, meeting_id)
         return total
     except Exception as exc:
@@ -223,8 +235,10 @@ def get_pcm(meeting_id: str) -> bytes:
     if client is None:
         return b""
     try:
-        data = client.get(_pcm_key(meeting_id))
-        return data or b""
+        data = client.get(_pcm_key(meeting_id)) or b""
+        from . import crypto_at_rest
+
+        return crypto_at_rest.decrypt_bytes(data)
     except Exception as exc:
         logger.exception("Redis GET pcm failed for meeting %s: %s", meeting_id, exc)
         return b""
@@ -245,28 +259,17 @@ def iter_pcm_chunks(meeting_id: str, chunk_bytes: int):
 
 
 def get_pcm_length(meeting_id: str) -> int:
-    client = get_client()
-    if client is None:
-        return 0
-    try:
-        return int(client.strlen(_pcm_key(meeting_id)))
-    except Exception:
-        return 0
+    return len(get_pcm(meeting_id))
 
 
 def get_pcm_slice(meeting_id: str, start: int, end: int) -> bytes:
-    """Inclusive Redis GETRANGE slice ``[start, end]`` within the rolling buffer."""
-    client = get_client()
-    if client is None:
-        return b""
+    """Inclusive slice ``[start, end]`` within the rolling plaintext buffer."""
     if end < start:
         return b""
-    try:
-        data = client.getrange(_pcm_key(meeting_id), start, end)
-        return data or b""
-    except Exception as exc:
-        logger.exception("Redis GETRANGE failed for meeting %s: %s", meeting_id, exc)
+    data = get_pcm(meeting_id)
+    if not data:
         return b""
+    return data[start : end + 1]
 
 
 def save_wav_bytes(meeting_id: str, wav_bytes: bytes) -> bool:
@@ -277,7 +280,9 @@ def save_wav_bytes(meeting_id: str, wav_bytes: bytes) -> bool:
     if client is None:
         return False
     try:
-        client.set(_wav_key(meeting_id), wav_bytes)
+        from . import crypto_at_rest
+
+        client.set(_wav_key(meeting_id), crypto_at_rest.encrypt_bytes(wav_bytes))
         _touch_ttl(client, meeting_id)
         return True
     except Exception as exc:
@@ -290,8 +295,10 @@ def get_wav_bytes(meeting_id: str) -> bytes:
     if client is None:
         return b""
     try:
-        data = client.get(_wav_key(meeting_id))
-        return data or b""
+        data = client.get(_wav_key(meeting_id)) or b""
+        from . import crypto_at_rest
+
+        return crypto_at_rest.decrypt_bytes(data)
     except Exception:
         return b""
 

@@ -53,6 +53,8 @@ export default function MeetingRoom({
   const [summaryFormat, setSummaryFormat] = useState(meeting.summary_format || "bullets");
   const [summary, setSummary] = useState(meeting.summary || "");
   const [summaryEngine, setSummaryEngine] = useState("");
+  const [extractiveFallback, setExtractiveFallback] = useState(false);
+  const [faithfulness, setFaithfulness] = useState(null);
   const [exportFormat, setExportFormat] = useState("pdf");
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState("");
@@ -126,7 +128,9 @@ export default function MeetingRoom({
           force_retranslate: Boolean(forceRetranslate),
         });
         setSummary(res.summary || "");
-        setSummaryEngine(res.engine);
+        setSummaryEngine(res.engine || "");
+        setExtractiveFallback(Boolean(res.extractive_fallback));
+        setFaithfulness(res.faithfulness || null);
         // Always refresh translation from this pass (clear if empty).
         setTranslation(res.translation || "");
         setTranslationLang(res.translation_language || "English");
@@ -841,7 +845,9 @@ export default function MeetingRoom({
           <div className="card-head">
             <h3>Summary</h3>
             <span className="card-tag">
-              BART · English minutes
+              {extractiveFallback
+                ? "Extractive fallback · not full BART"
+                : "BART · English minutes"}
               {summaryEngine ? ` · ${summaryEngine}` : ""}
             </span>
           </div>
@@ -869,13 +875,46 @@ export default function MeetingRoom({
             </button>
           </div>
           <div className="card-body">
+            {extractiveFallback && summary && (
+              <div className="banner-warn" role="status">
+                Extractive summary fallback — install <code>requirements-ml.txt</code>{" "}
+                for full BART minutes. Do not treat this as generative board minutes.
+              </div>
+            )}
+            {faithfulness?.status === "warn" &&
+              Array.isArray(faithfulness.untraced) &&
+              faithfulness.untraced.length > 0 && (
+                <div className="banner-warn faithfulness-warn" role="status">
+                  <strong>Faithfulness check:</strong>{" "}
+                  {faithfulness.untraced.length} Decision/Action line
+                  {faithfulness.untraced.length === 1 ? "" : "s"} could not be
+                  traced to the English source — review before using as a legal
+                  or board record.
+                  <ul className="faithfulness-list">
+                    {faithfulness.untraced.slice(0, 8).map((item, idx) => (
+                      <li key={`${item.section}-${idx}`}>
+                        <span className="faithfulness-section">{item.section}</span>
+                        {item.line}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             {summaryError && <div className="error-banner">{summaryError}</div>}
             {summarizing ? (
               <div className="center-spin">
                 <span className="spinner" /> Summarizing transcript…
               </div>
             ) : summary ? (
-              summary
+              <div
+                className={
+                  faithfulness?.status === "warn"
+                    ? "summary-text has-faithfulness-warn"
+                    : "summary-text"
+                }
+              >
+                {summary}
+              </div>
             ) : (
               <div className="placeholder">
                 {!hasTranscript

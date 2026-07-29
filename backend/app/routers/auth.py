@@ -1,21 +1,30 @@
-"""Authentication routes: signup, login, current user / profile."""
+"""Authentication routes: signup, login, refresh, logout, current user."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
 from ..limiter import auth_rate_limit
 from ..models import User
 from ..schemas import (
     LoginRequest,
+    LogoutRequest,
     ProfileUpdateRequest,
+    RefreshRequest,
     SignupRequest,
     TokenResponse,
     UserResponse,
 )
-from ..security import create_access_token, hash_password, verify_password
+from ..security import (
+    decode_refresh_token,
+    hash_password,
+    issue_token_pair,
+    revoke_token,
+    verify_password,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -31,6 +40,19 @@ def _user_response(user: User) -> UserResponse:
         workplace=user.workplace or "",
         full_name=user.display_name(),
         created_at=user.created_at,
+    )
+
+
+def _token_response(user: User) -> TokenResponse:
+    pair = issue_token_pair(
+        subject=user.id, extra={"username": user.username, "email": user.email}
+    )
+    return TokenResponse(
+        access_token=pair["access_token"],
+        refresh_token=pair["refresh_token"],
+        token_type="bearer",
+        expires_in=int(settings.access_token_expire_minutes) * 60,
+        user=_user_response(user),
     )
 
 
@@ -69,10 +91,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    token = create_access_token(
-        subject=user.id, extra={"username": user.username, "email": user.email}
-    )
-    return TokenResponse(access_token=token, user=_user_response(user))
+    return _token_response(user)
 
 
 @router.post(
@@ -84,7 +103,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     username = payload.username.strip().lower()
     user = db.query(User).filter(User.username == username).first()
     if user is None or not verify_password(payload.password, user.hashed_password):
-        # Deliberately vague to avoid leaking which accounts exist.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",
@@ -93,10 +111,43 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled."
         )
-    token = create_access_token(
-        subject=user.id, extra={"username": user.username, "email": user.email}
-    )
-    return TokenResponse(access_token=token, user=_user_response(user))
+    return _token_response(user)
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    dependencies=[Depends(auth_rate_limit())],
+)
+def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
+    claims = decode_refresh_token(payload.refresh_token)
+    if claims is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or revoked refresh token.",
+        )
+    user = db.get(User, claims.get("sub"))
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or revoked refresh token.",
+        )
+    # Rotate: revoke the presented refresh token, issue a new pair.
+    revoke_token(payload.refresh_token)
+    return _token_response(user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(payload: LogoutRequest | None = None):
+    """Revoke presented access/refresh tokens (best-effort). Auth optional so
+    expired access tokens can still kill a refresh token.
+    """
+    body = payload or LogoutRequest()
+    if body.access_token:
+        revoke_token(body.access_token)
+    if body.refresh_token:
+        revoke_token(body.refresh_token)
+    return None
 
 
 @router.get("/me", response_model=UserResponse)

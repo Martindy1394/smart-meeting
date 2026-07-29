@@ -1229,6 +1229,23 @@ button {
   font-weight: 500;
 }
 
+.faithfulness-warn {
+  margin-bottom: 12px;
+}
+.faithfulness-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.faithfulness-section {
+  font-weight: 700;
+  margin-right: 6px;
+  color: var(--warning);
+}
+.summary-text.has-faithfulness-warn {
+  border-left: 3px solid var(--warning);
+  padding-left: 10px;
+}
+
 .card-body {
   padding: 16px;
   overflow-y: auto;

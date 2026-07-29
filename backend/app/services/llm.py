@@ -759,6 +759,61 @@ def _coverage_ratio(source: str, summary: str) -> float:
     return len(_content_words(summary) & src) / len(src)
 
 
+def assess_minutes_faithfulness(
+    summary: str,
+    source_english: str,
+    *,
+    min_overlap: float = 0.12,
+) -> dict:
+    """Flag Decision/Action lines that cannot be traced to the English source.
+
+    Lightweight lexical overlap — not NLI. Soft-warn only; does not rewrite text.
+    """
+    summary = (summary or "").strip()
+    source_english = (source_english or "").strip()
+    if not summary or not source_english:
+        return {"status": "skipped", "untraced": [], "checked": 0}
+
+    src_words = _content_words(source_english)
+    if not src_words:
+        return {"status": "skipped", "untraced": [], "checked": 0}
+
+    section = "Discussion"
+    untraced: list[dict] = []
+    checked = 0
+    for raw in summary.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # Section headers from _format_meeting_minutes / topic blocks.
+        header = line.rstrip(":").strip()
+        if header in {"Discussion", "Decisions", "Action items"} and not line[:1].isdigit():
+            if not line.startswith(("•", "-", "*")) and not re.match(r"^\d+\.", line):
+                section = header
+                continue
+        body = re.sub(r"^([•\-\*]|\d+\.)\s*", "", line).strip()
+        if not body:
+            continue
+        if section not in {"Decisions", "Action items"}:
+            continue
+        checked += 1
+        words = _content_words(body)
+        if not words:
+            continue
+        overlap = len(words & src_words) / len(words)
+        if overlap < min_overlap:
+            untraced.append(
+                {
+                    "section": section,
+                    "line": body,
+                    "overlap": round(overlap, 4),
+                }
+            )
+
+    status = "warn" if untraced else "ok"
+    return {"status": status, "untraced": untraced, "checked": checked}
+
+
 def _idea_preserving_summary(text: str) -> list[str]:
     """Primary path for short meeting speech: keep every distinct point."""
     return _segment_idea_units(text)

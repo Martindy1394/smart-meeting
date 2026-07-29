@@ -15,6 +15,7 @@ from .config import settings
 from .database import init_db
 from .routers import ai, auth, meetings
 from .services import asr, audio, live_metrics, llm, redis_store
+from .services import crypto_at_rest
 from .ws import transcription as ws_transcription
 
 logging.basicConfig(
@@ -63,6 +64,8 @@ def _build_pipeline_status() -> dict:
             "default_language": settings.whisper_default_language,
             "size_hint_live": _whisper_size_hint(settings.whisper_live_model),
             "size_hint_final": _whisper_size_hint(settings.whisper_final_model),
+            "hiligaynon_forced_language": None,
+            "hiligaynon_decode": "auto-detect (never tl)",
             "hardware_hint": (
                 f"device={device}; compute_type={settings.whisper_compute_type}; "
                 "live favors latency (small), final favors accuracy (medium/HF PH)"
@@ -191,6 +194,12 @@ def health():
         "environment": settings.environment,
         "live_metrics": live_metrics.snapshot(),
         "pipeline": _build_pipeline_status(),
+        "encryption_at_rest": crypto_at_rest.status(),
+        "auth": {
+            "access_token_expire_minutes": settings.access_token_expire_minutes,
+            "refresh_token_expire_days": settings.refresh_token_expire_days,
+            "refresh_and_revoke": True,
+        },
     }
     if not detailed:
         return payload

@@ -29,9 +29,14 @@ class Settings(BaseSettings):
         default="dev-insecure-secret-change-me-in-production-please"
     )
     jwt_algorithm: str = "HS256"
-    # 7 day expiry as specified in the requirements.
-    access_token_expire_minutes: int = 60 * 24 * 7
+    # Short-lived access token (minutes). Use refresh tokens for session length.
+    access_token_expire_minutes: int = 30
+    # Refresh token lifetime (days). Revocable via jti denylist / logout.
+    refresh_token_expire_days: int = 7
     bcrypt_rounds: int = 12
+    # Fernet url-safe key for audio encryption-at-rest (optional).
+    # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    data_encryption_key: str = ""
 
     # --- Database --------------------------------------------------------
     # Defaults to a local SQLite file. Point at PostgreSQL in production, e.g.

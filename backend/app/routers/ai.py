@@ -71,12 +71,16 @@ def summarize(
         meeting.translation = english
         meeting.translation_language = "English"
     db.commit()
+    extractive = "extractive" in (summary_engine or "").lower()
+    faith = llm.assess_minutes_faithfulness(summary, english or source)
     return SummarizeResponse(
         summary=summary,
         output_format=payload.output_format,
         engine=engine,
         translation=english or "",
         translation_language="English",
+        extractive_fallback=extractive,
+        faithfulness=faith,
     )
 
 

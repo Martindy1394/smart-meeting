@@ -34,10 +34,11 @@ accuracy or security.
 | Searchable keywords | **Ships** — history search over title, transcript, summary, and translation |
 | Export PDF / DOCX | **Ships** — meeting export API + UI (`txt` / `docx` / `pdf`) |
 | Offline processing | **Partial** — models run locally when installed (`requirements-ml.txt`); no cloud LLM required |
-| End-to-end encryption | **Roadmap** — auth is JWT + bcrypt; deploy with TLS. True E2E (client-side crypto for audio/transcripts) is not built yet |
+| End-to-end encryption | **Roadmap** — auth is short-lived JWT + refresh revocation; audio encryption-at-rest via `DATA_ENCRYPTION_KEY` (see [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md)). True client E2E is not built yet |
 | Confidential sectors | **Goal** — architecture aims at private deployments; sector certifications are out of scope of this codebase |
 
-Model roles (Whisper / BART / mBART): see [`MODELS.md`](MODELS.md).
+Related hardening docs: [`HILIGAYNON_LANGUAGE_FORCING.md`](HILIGAYNON_LANGUAGE_FORCING.md),
+[`MT_TAG_BENCHMARK.md`](MT_TAG_BENCHMARK.md), [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md).
 
 ## Primary outputs
 

@@ -163,8 +163,14 @@ def save_wav(meeting_id: str, pcm_bytes: bytes) -> str:
     """
     wav_bytes = build_wav_bytes(pcm_bytes)
     path = os.path.join(audio_dir(), f"{meeting_id}.wav")
+    try:
+        from . import crypto_at_rest
+
+        disk_bytes = crypto_at_rest.encrypt_bytes(wav_bytes)
+    except Exception:
+        disk_bytes = wav_bytes
     with open(path, "wb") as fh:
-        fh.write(wav_bytes)
+        fh.write(disk_bytes)
 
     # Cap Redis WAV cache (~8 MiB ≈ ~4 min of 16 kHz mono WAV).
     max_redis_wav = 8 * 1024 * 1024
@@ -404,6 +410,12 @@ def load_audio_float32(path: str) -> np.ndarray:
     """Load a stored WAV into float32 mono @ ``audio_sample_rate`` for Whisper."""
     with open(path, "rb") as fh:
         data = fh.read()
+    try:
+        from . import crypto_at_rest
+
+        data = crypto_at_rest.decrypt_bytes(data)
+    except Exception as exc:
+        raise AudioFormatError(f"Could not decrypt stored audio: {exc}") from exc
     if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
         samples, rate = decode_wav_bytes(data)
         return normalize_for_asr(samples, rate)
@@ -413,6 +425,15 @@ def load_audio_float32(path: str) -> np.ndarray:
     raise AudioFormatError(
         "Unsupported audio file. Upload a WAV recording (16-bit PCM recommended)."
     )
+
+
+def read_stored_wav_bytes(path: str) -> bytes:
+    """Read on-disk WAV bytes, decrypting when encryption-at-rest is used."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    from . import crypto_at_rest
+
+    return crypto_at_rest.decrypt_bytes(data)
 
 
 def save_uploaded_audio(meeting_id: str, data: bytes, filename: str = "") -> tuple[str, float]:
