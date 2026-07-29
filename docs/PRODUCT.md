@@ -40,6 +40,8 @@ accuracy or security.
 Related hardening docs: [`HILIGAYNON_LANGUAGE_FORCING.md`](HILIGAYNON_LANGUAGE_FORCING.md),
 [`MT_TAG_BENCHMARK.md`](MT_TAG_BENCHMARK.md), [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md).
 
+Data-flow requirements view: [`DFD.md`](DFD.md).
+
 ## Primary outputs
 
 1. **Original-language transcript** (verbatim, refined after stop)
