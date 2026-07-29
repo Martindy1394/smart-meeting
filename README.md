@@ -26,7 +26,10 @@ Overall, it streamlines meeting documentation, bridges language gaps, and reduce
 manual note-taking efforts without sacrificing accuracy or security.
 
 See [`docs/PRODUCT.md`](docs/PRODUCT.md) for how each claim maps to what ships
-today versus roadmap (diarization and true E2E encryption are not built yet).
+today versus roadmap. Hardening notes:
+[`docs/HILIGAYNON_LANGUAGE_FORCING.md`](docs/HILIGAYNON_LANGUAGE_FORCING.md),
+[`docs/MT_TAG_BENCHMARK.md`](docs/MT_TAG_BENCHMARK.md),
+[`docs/ENCRYPTION_AT_REST.md`](docs/ENCRYPTION_AT_REST.md).
 
 ```
 ┌──────────────┐   PCM/WS    ┌────────────────────────────┐
@@ -63,7 +66,11 @@ performance/cost gap: [`docs/MODELS.md`](docs/MODELS.md).
   (default soft cap 16h): 48h Redis TTL, WebSocket keepalives, chunked final
   Whisper ASR, and caption-merge optimizations so long captions stay fast.
 - **Authentication** — signup with email + strong-password validation, login,
-  JWT (7-day expiry), bcrypt hashing (12 rounds), protected routes, logout.
+  short-lived JWT access tokens + refresh tokens with server-side revocation
+  on logout/rotate, bcrypt hashing (12 rounds), protected routes.
+- **Encryption at rest (optional)** — set `DATA_ENCRYPTION_KEY` to Fernet-encrypt
+  finalized WAV on disk and Redis audio (see [`docs/ENCRYPTION_AT_REST.md`](docs/ENCRYPTION_AT_REST.md)).
+  True client E2E encryption remains roadmap.
 - **Live transcription** — raw 16 kHz mono PCM captured with an `AudioWorklet`
   (no MediaRecorder / WebM decoding), streamed over WebSockets, decoded live
   with a fast Whisper model for word-by-word captions.
