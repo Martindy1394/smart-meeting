@@ -258,6 +258,9 @@ BART owns **readable minutes** from English only.
 
 Runtime: `GET /api/health` → `pipeline`.
 
+See [`PRODUCT.md`](PRODUCT.md) for the full product overview and how each
+claim maps to shipped vs roadmap features.
+
 ---
 
 ## Glossary

@@ -86,6 +86,39 @@ export const api = {
   stopMeetingRecording: (id) =>
     request(`/meetings/${id}/stop`, { method: "POST" }),
   /**
+   * Download meeting package (transcript + English + summary) as txt|docx|pdf.
+   */
+  exportMeeting: async (id, format = "txt") => {
+    const token = getToken();
+    const fmt = encodeURIComponent(format || "txt");
+    let res;
+    try {
+      res = await fetch(`/api/meetings/${id}/export?format=${fmt}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      throw new ApiError(
+        "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
+        0
+      );
+    }
+    if (!res.ok) {
+      let detail = "Could not export meeting.";
+      try {
+        const data = await res.json();
+        if (data?.detail) detail = data.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(detail, res.status);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = /filename=\"([^\"]+)\"/i.exec(disposition);
+    const filename = match?.[1] || `smart_meeting.${format || "txt"}`;
+    return { blob, filename };
+  },
+  /**
    * Fetch meeting audio as a blob URL for <audio> playback.
    * Returns null when no recording exists yet.
    */

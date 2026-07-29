@@ -1,10 +1,32 @@
 # Smart Meeting — Online Minute-Making
 
 A full-stack platform that captures live meeting audio, transcribes it in
-real time with **Whisper** (two-pass pipeline, explicit **Hiligaynon** support),
-condenses it with **BART** summarization (bullet points *or* numbered
-paragraphs), and translates it on demand with **mBART** into 14+ languages — all
-behind a secure JWT authentication system with per-user meeting history.
+real time with **Whisper** (two-pass pipeline, explicit **Hiligaynon** and
+**Tagalog** support), condenses it with **BART** summarization (bullet points
+*or* numbered paragraphs), and translates it with **mBART/NLLB** into fluent
+English (and 14+ other languages) — all behind JWT authentication with
+per-user meeting history.
+
+## Product overview
+
+The system is a speech-to-text platform that transcribes in-person meetings from
+audio recordings, with specialized speech recognition engines for Tagalog and
+Hiligaynon, including support for regional dialects, colloquialisms, and common
+code-switching patterns. It incorporates noise filtering and speaker diarization
+to enhance transcript clarity, and features an integrated translation module that
+converts the transcribed text into fluent English for broader accessibility. The
+final output includes both the full verbatim transcript in the original language
+and its English equivalent, along with a structured summary presented in bulleted
+or numbered format to highlight key decisions, action items, and discussion
+points. Additional functionalities include timestamped text, searchable keywords,
+and multi-format export options (PDF, DOCX), while privacy is ensured through
+optional offline processing and end-to-end encryption, making the system suitable
+for confidential business, legal, medical, academic, and government settings.
+Overall, it streamlines meeting documentation, bridges language gaps, and reduces
+manual note-taking efforts without sacrificing accuracy or security.
+
+See [`docs/PRODUCT.md`](docs/PRODUCT.md) for how each claim maps to what ships
+today versus roadmap (diarization and true E2E encryption are not built yet).
 
 ```
 ┌──────────────┐   PCM/WS    ┌────────────────────────────┐
@@ -14,6 +36,7 @@ behind a secure JWT authentication system with per-user meeting history.
 │  transcript/ │  live +     │  • Whisper 2-pass           │
 │  summary/    │  final      │  • InvokeLLM: BART / mBART  │
 │  translate   │             │  • Meetings CRUD (SQLite/PG)│
+│  export      │             │  • Export TXT / DOCX / PDF  │
 └──────────────┘             │  • Redis audio memory store │
                              └─────────────┬──────────────┘
                                            │
@@ -29,6 +52,10 @@ performance/cost gap: [`docs/MODELS.md`](docs/MODELS.md).
 
 ## Features
 
+- **Product outputs** — original-language transcript, English translation, and
+  structured minutes (bullets or numbered), exportable as **TXT / DOCX / PDF**.
+- **Keyword search** — meeting history searches title, venue, attendees,
+  transcript, summary, and translation text.
 - **Redis audio memory** — every recorded PCM chunk is appended to Redis during
   capture; finalized WAV is cached in Redis too (disk archive kept for playback).
   Live caption offsets resume from Redis on reconnect.

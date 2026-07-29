@@ -24,3 +24,7 @@ numpy==2.2.1
 
 # In-memory audio / session storage
 redis==5.2.1
+
+# Meeting export (PDF / DOCX)
+fpdf2==2.8.2
+python-docx==1.1.2

@@ -53,6 +53,7 @@ export default function MeetingRoom({
   const [summaryFormat, setSummaryFormat] = useState(meeting.summary_format || "bullets");
   const [summary, setSummary] = useState(meeting.summary || "");
   const [summaryEngine, setSummaryEngine] = useState("");
+  const [exportFormat, setExportFormat] = useState("pdf");
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState("");
 
@@ -394,23 +395,28 @@ export default function MeetingRoom({
     }
   }
 
-  function downloadTranscript() {
-    const text = (finalTranscript || "").trim();
-    if (!text) {
-      setAsrError("No transcript is available to download.");
+  async function downloadTranscript(format = "txt") {
+    const hasAny =
+      Boolean((finalTranscript || "").trim()) ||
+      Boolean((summary || "").trim()) ||
+      Boolean((translation || "").trim());
+    if (!hasAny) {
+      setAsrError("Nothing to export yet — finalize a transcript first.");
       return;
     }
-    const base = (meeting.title || "transcript").trim() || "transcript";
-    const filename = `${base.replace(/[^\w\-]+/g, "_").replace(/_+/g, "_").slice(0, 80)}_transcript.txt`;
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    try {
+      const { blob, filename } = await api.exportMeeting(meeting.id, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setAsrError(err.message || "Export failed.");
+    }
   }
 
   return (
@@ -455,20 +461,36 @@ export default function MeetingRoom({
                 </MiniIcon>
               )}
             </button>
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={downloadTranscript}
-              disabled={!hasTranscript}
-              title="Download transcript"
-              aria-label="Download transcript"
-            >
-              <MiniIcon>
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </MiniIcon>
-            </button>
+            <div className="export-controls">
+              <label className="sr-only" htmlFor="export-format-toolbar">
+                Export format
+              </label>
+              <select
+                id="export-format-toolbar"
+                className="export-format-select"
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value)}
+                aria-label="Export format"
+              >
+                <option value="pdf">PDF</option>
+                <option value="docx">DOCX</option>
+                <option value="txt">TXT</option>
+              </select>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => downloadTranscript(exportFormat)}
+                disabled={!hasTranscript && !hasMinutes && !hasEnglish}
+                title={`Export as ${exportFormat.toUpperCase()}`}
+                aria-label={`Export as ${exportFormat.toUpperCase()}`}
+              >
+                <MiniIcon>
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </MiniIcon>
+              </button>
+            </div>
             {hasAudio && (
               <button
                 type="button"
@@ -541,20 +563,36 @@ export default function MeetingRoom({
                       </MiniIcon>
                     )}
                   </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={downloadTranscript}
-                    disabled={!hasTranscript}
-                    title="Download transcript"
-                    aria-label="Download transcript"
-                  >
-                    <MiniIcon>
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </MiniIcon>
-                  </button>
+                  <div className="export-controls">
+                    <label className="sr-only" htmlFor="export-format-card">
+                      Export format
+                    </label>
+                    <select
+                      id="export-format-card"
+                      className="export-format-select"
+                      value={exportFormat}
+                      onChange={(e) => setExportFormat(e.target.value)}
+                      aria-label="Export format"
+                    >
+                      <option value="pdf">PDF</option>
+                      <option value="docx">DOCX</option>
+                      <option value="txt">TXT</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => downloadTranscript(exportFormat)}
+                      disabled={!hasTranscript && !hasMinutes && !hasEnglish}
+                      title={`Export as ${exportFormat.toUpperCase()}`}
+                      aria-label={`Export as ${exportFormat.toUpperCase()}`}
+                    >
+                      <MiniIcon>
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </MiniIcon>
+                    </button>
+                  </div>
                   {hasAudio && !recorder.recording && (
                     <button
                       type="button"

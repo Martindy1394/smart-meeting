@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -22,7 +22,7 @@ from ..schemas import (
     MeetingSummary,
     MeetingUpdate,
 )
-from ..services import asr, audio, finalize, redis_store
+from ..services import asr, audio, export as export_svc, finalize, redis_store
 
 logger = logging.getLogger("smart_meeting.meetings")
 
@@ -293,7 +293,16 @@ def list_meetings(
     query = db.query(Meeting).filter(Meeting.owner_id == current_user.id)
     if search:
         pattern = f"%{search.strip()}%"
-        query = query.filter(or_(Meeting.title.ilike(pattern)))
+        query = query.filter(
+            or_(
+                Meeting.title.ilike(pattern),
+                Meeting.final_transcript.ilike(pattern),
+                Meeting.summary.ilike(pattern),
+                Meeting.translation.ilike(pattern),
+                Meeting.venue.ilike(pattern),
+                Meeting.attendees.ilike(pattern),
+            )
+        )
     meetings = query.order_by(Meeting.created_at.desc()).all()
     summaries = [_to_summary(m) for m in meetings]
     if has_audio is True:
@@ -322,6 +331,36 @@ def create_meeting(
     db.commit()
     db.refresh(meeting)
     return _to_detail(meeting)
+
+
+@router.get("/{meeting_id}/export")
+def export_meeting(
+    meeting_id: str,
+    format: str = Query(
+        default="txt",
+        pattern="^(txt|docx|pdf)$",
+        description="Export format: txt, docx, or pdf",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Download transcript + English + summary as TXT, DOCX, or PDF."""
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    # Eager-load timed segments for timestamped export section.
+    _ = list(meeting.segments or [])
+    try:
+        payload, media_type, filename = export_svc.export_meeting(meeting, format)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return Response(
+        content=payload,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetail)
