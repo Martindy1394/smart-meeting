@@ -30,7 +30,8 @@ today versus roadmap. Hardening notes:
 [`docs/HILIGAYNON_LANGUAGE_FORCING.md`](docs/HILIGAYNON_LANGUAGE_FORCING.md),
 [`docs/MT_TAG_BENCHMARK.md`](docs/MT_TAG_BENCHMARK.md),
 [`docs/ENCRYPTION_AT_REST.md`](docs/ENCRYPTION_AT_REST.md).
-Requirements / DFD: [`docs/DFD.md`](docs/DFD.md).
+Requirements / DFD: [`docs/DFD.md`](docs/DFD.md).  
+E2E trace & test plans: [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md).
 
 ```
 ┌──────────────┐   PCM/WS    ┌────────────────────────────┐

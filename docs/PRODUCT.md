@@ -40,7 +40,8 @@ accuracy or security.
 Related hardening docs: [`HILIGAYNON_LANGUAGE_FORCING.md`](HILIGAYNON_LANGUAGE_FORCING.md),
 [`MT_TAG_BENCHMARK.md`](MT_TAG_BENCHMARK.md), [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md).
 
-Data-flow requirements view: [`DFD.md`](DFD.md).
+Data-flow requirements view: [`DFD.md`](DFD.md).  
+End-to-end traces, edge cases, and test plans: [`TEST_PLAN.md`](TEST_PLAN.md).
 
 ## Primary outputs
 
