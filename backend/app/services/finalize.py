@@ -14,6 +14,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models import Meeting
 from . import asr, audio, live_metrics, redis_store
+from .segment_times import segment_wire_dict, segments_from_asr
 
 logger = logging.getLogger("smart_meeting.finalize")
 
@@ -111,7 +112,13 @@ def finalize_meeting_recording(
                 "ok": True,
                 "text": fallback,
                 "segments": (
-                    [{"text": fallback, "start": 0.0, "end": 0.0}] if fallback else []
+                    [
+                        segment_wire_dict(
+                            text=fallback, start=0.0, end=0.0, seq=0, kind="final"
+                        )
+                    ]
+                    if fallback
+                    else []
                 ),
                 "engine": "empty-recording",
             }
@@ -254,10 +261,7 @@ def finalize_meeting_recording(
         return {
             "ok": True,
             "text": result.text,
-            "segments": [
-                {"text": s.text, "start": s.start, "end": s.end}
-                for s in result.segments
-            ],
+            "segments": segments_from_asr(result.segments),
             "engine": result.engine,
             "status": meeting.status,
             "language": meeting.language,

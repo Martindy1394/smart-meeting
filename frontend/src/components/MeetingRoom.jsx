@@ -194,6 +194,8 @@ export default function MeetingRoom({
       setTranslation("");
       setSummaryError("");
       setTranslateError("");
+      setExtractiveFallback(false);
+      setFaithfulness(null);
       autoTranslateRef.current = "";
       autoSummaryRef.current = "";
       if (persistDetails) {
@@ -279,6 +281,8 @@ export default function MeetingRoom({
     setAsrError("");
     setAudioError("");
     setSummaryEngine("");
+    setExtractiveFallback(Boolean(meeting.extractive_fallback));
+    setFaithfulness(meeting.faithfulness || null);
     setHasAudio(Boolean(meeting.has_audio));
     autoTranslateRef.current = meeting.translation ? meeting.final_transcript || "" : "";
     autoSummaryRef.current = meeting.summary

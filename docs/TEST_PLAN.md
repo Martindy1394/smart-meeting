@@ -107,7 +107,7 @@ Prioritized for test design and future fixes:
 | E9 | No UI for audio upload | Feature discoverability / E2E gap | Frontend vs `POST .../audio` |
 | E10 | Auto-summarize race after retranscribe clears summary | Flicker / stale summarize | `persist_transcript` + `MeetingRoom` effects |
 | E11 | Translate has no extractive fallback | Hard fail without ML | `ai.translate` |
-| E12 | Live segment timestamps often 0 | Weak timestamped export for live-only | `_persist_live_segment` |
+| E12 | Live segment timestamps often 0 | **Fixed (M1)** — absolute times from byte_offset + window | `_persist_live_segment`, `segment_times` |
 | E13 | Create meeting allows empty title via API | Incomplete meetings | `MeetingCreate` |
 | E14 | Stuck `processing` until stale lease (~45m) | Poor UX if worker dies | `janitor` / `is_processing_stale` |
 | E15 | Concurrent stop (WS + REST + janitor) | `lease-lost` / empty client expectation | `finalize` claim |

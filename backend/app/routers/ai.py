@@ -70,9 +70,13 @@ def summarize(
     if english:
         meeting.translation = english
         meeting.translation_language = "English"
-    db.commit()
     extractive = "extractive" in (summary_engine or "").lower()
     faith = llm.assess_minutes_faithfulness(summary, english or source)
+    from ..services.ai_quality import dump_faithfulness
+
+    meeting.extractive_fallback = bool(extractive)
+    meeting.faithfulness_json = dump_faithfulness(faith)
+    db.commit()
     return SummarizeResponse(
         summary=summary,
         output_format=payload.output_format,

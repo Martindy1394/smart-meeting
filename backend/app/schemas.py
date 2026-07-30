@@ -1,11 +1,10 @@
 """Pydantic request/response schemas + validation rules."""
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, computed_field, field_validator
 
 # At least 8 chars, one number and one special character (per requirements).
 _PASSWORD_RE = re.compile(r"^(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$")
@@ -148,6 +147,13 @@ class MeetingCreate(BaseModel):
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)
 
+    @field_validator("attendees", mode="before")
+    @classmethod
+    def _normalize_attendees(cls, v):
+        from .services.attendees import load_attendees
+
+        return load_attendees(v)
+
 
 class MeetingUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=255)
@@ -157,8 +163,22 @@ class MeetingUpdate(BaseModel):
     # Kept for API compatibility; product UI always sends ``auto``.
     language: str | None = Field(default=None, max_length=16)
 
+    @field_validator("attendees", mode="before")
+    @classmethod
+    def _normalize_attendees(cls, v):
+        if v is None:
+            return None
+        from .services.attendees import load_attendees
+
+        return load_attendees(v)
+
 
 class TranscriptSegmentResponse(BaseModel):
+    """REST segment shape. DB columns are ``start_time``/``end_time``.
+
+    Also exposes ``start``/``end`` aliases so WS/finalize clients stay aligned.
+    """
+
     id: str
     kind: str
     text: str
@@ -168,6 +188,24 @@ class TranscriptSegmentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def _coerce_time(cls, v):
+        try:
+            return float(v if v is not None else 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def start(self) -> float:
+        return self.start_time
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def end(self) -> float:
+        return self.end_time
 
 
 class LanguageDetectionInfo(BaseModel):
@@ -196,6 +234,7 @@ class MeetingSummary(BaseModel):
     summary_format: str = ""
     translation: str = ""
     translation_language: str = ""
+    extractive_fallback: bool = False
     has_summary: bool = False
     has_translation: bool = False
     has_audio: bool = False
@@ -213,17 +252,19 @@ class MeetingDetail(BaseModel):
     language_detection: LanguageDetectionInfo | None = None
     venue: str = ""
     meeting_date: datetime | None = None
-    attendees: list[str] = []
+    attendees: list[str] = Field(default_factory=list)
     final_transcript: str
     summary: str
     summary_format: str
     translation: str
     translation_language: str
+    extractive_fallback: bool = False
+    faithfulness: FaithfulnessReport | None = None
     duration_seconds: float
     created_at: datetime
     updated_at: datetime
     has_audio: bool = False
-    segments: list[TranscriptSegmentResponse] = []
+    segments: list[TranscriptSegmentResponse] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -231,14 +272,23 @@ class MeetingDetail(BaseModel):
     @field_validator("attendees", mode="before")
     @classmethod
     def _parse_attendees(cls, v):
-        # The ORM stores attendees as a JSON-encoded string.
-        if isinstance(v, str):
-            try:
-                parsed = json.loads(v or "[]")
-                return parsed if isinstance(parsed, list) else []
-            except (json.JSONDecodeError, TypeError):
-                return []
-        return v or []
+        from .services.attendees import load_attendees
+
+        return load_attendees(v)
+
+    @field_validator("faithfulness", mode="before")
+    @classmethod
+    def _parse_faithfulness(cls, v):
+        # ORM stores JSON text in ``faithfulness_json``; detail builder may
+        # already pass a dict. Accept both.
+        from .services.ai_quality import load_faithfulness
+
+        if v is None or v == "":
+            return None
+        if isinstance(v, FaithfulnessReport):
+            return v
+        parsed = load_faithfulness(v)
+        return parsed
 
 
 # ------------------------------ AI -----------------------------------------

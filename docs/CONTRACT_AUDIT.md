@@ -21,7 +21,7 @@ UI components
 | Meeting body | ISO dates, `attendees: string[]` | `MeetingDetail.attendees: list[str]` | `meetings.attendees` **JSON Text** |
 | Transcript | `final_transcript` string | same | `Text` |
 | Segments | mostly unused in UI | `start_time` / `end_time` | same columns; WS finalize uses `start`/`end` |
-| AI outputs | `summary`, `translation`, `engine`, `extractive_fallback`, `faithfulness` | `SummarizeResponse` | summary/translation columns; flags **not persisted** |
+| AI outputs | `summary`, `translation`, `engine`, `extractive_fallback`, `faithfulness` | `MeetingDetail` + `SummarizeResponse` | summary/translation + `extractive_fallback` + `faithfulness_json` |
 | Audio | blob URL from `/audio` | file/bytes | `audio_path` + D5 files (not a BLOB column) |
 
 ---
@@ -62,11 +62,10 @@ UI components
 
 ## Medium — types, validation, exceptions
 
-### M1 — Segment timestamp field names disagree
-- Finalize/WS payload: `start` / `end`
-- ORM + REST: `start_time` / `end_time`
-- Live persist often leaves times at `0.0`
-- **Impact:** Contract confusion; weak timestamped export for live-only data.
+### M1 — Segment timestamp field names disagree — **FIXED**
+- Wire/finalize/WS emit both ``start``/``end`` **and** ``start_time``/``end_time`` via `segment_times`.
+- ORM + REST keep ``start_time``/``end_time``; `TranscriptSegmentResponse` exposes computed ``start``/``end`` aliases.
+- Live persist now stores absolute window times (byte_offset + relative Whisper times), not always `0.0`.
 
 ### M2 — Meeting details required in UI, optional in API/DB
 - FE blocks Start without title/venue/datetime/≥1 attendee.
@@ -74,9 +73,9 @@ UI components
 - ORM default `"Untitled meeting"` bypassed when create writes `""`.
 - **Impact:** API clients can create incomplete meetings.
 
-### M3 — Attendees: `list[str]` in API, JSON `Text` in DB
-- Handled by `_clean_attendees` / `_parse_attendees`, but raw ORM is a string; search uses `ilike` on JSON text.
-- **Impact:** Fragile if any path skips the helper; odd search matches on quotes/brackets.
+### M3 — Attendees: `list[str]` in API, JSON `Text` in DB — **FIXED**
+- `AttendeesJSON` TypeDecorator + `attendees.normalize/load/dump` bridge API `list[str]` ↔ DB JSON text.
+- Create/Update validators and ORM column share the same helpers (dedupe, strip, legacy CSV).
 
 ### M4 — Upload ASR language hard-coded `"auto"`
 - Retranscribe uses `effective_asr_language(meeting.language)`; upload background task always `"auto"`.
@@ -137,12 +136,12 @@ UI components
 | Password (signup) | Regex-ish UX | `_PASSWORD_RE` | hash | Aligned |
 | Username | Client checks | Regex + unique | unique index | Aligned |
 | Meeting title | Required before Start | Optional `""` | default unused | **Asymmetric** |
-| Attendees | `string[]`, ≥1 before Start | `list[str]`, may be `[]` | JSON text | Shape OK; rules asymmetric |
+| Attendees | `string[]`, ≥1 before Start | `list[str]`, may be `[]` | JSON text via `AttendeesJSON` | Shape aligned; rules asymmetric |
 | `meeting_date` | `toISOString()` | `datetime` | tz DateTime | Aligned |
 | `output_format` | bullets/numbered toggle | enum validator | `summary_format` string | Aligned |
 | Export format | pdf/docx/txt select | regex query | n/a | Aligned; PDF charset weak |
-| `extractive_fallback` / `faithfulness` | UI state | response fields | **not stored** | OK for session; lost on reload |
-| Segment times | unused in UI | `start_time`/`end_time` | same | WS finalize uses different names |
+| `extractive_fallback` / `faithfulness` | UI + reload from detail | `MeetingDetail` fields | `extractive_fallback` bool + `faithfulness_json` | **Persisted** |
+| Segment times | TS interfaces | `start_time`/`end_time` (+ `start`/`end` aliases) | `start_time`/`end_time` | Aligned |
 
 ---
 
@@ -162,9 +161,9 @@ UI components
 2. ~~Finalize watchdog → REST `/stop` (C2, M6).~~ done (M6 residual unload-only).
 3. ~~Decrypt/audio error surfacing (C3, M7).~~ done (M7 partial).
 4. Align `MeetingCreate` validation with FE details gate (M2).
-5. Unify segment timestamp names; persist live times (M1).
+5. ~~Unify segment timestamp names; persist live times (M1).~~ done.
 6. Upload language = meeting language (M4).
 7. PDF Unicode or default export to DOCX (M10).
-8. Persist or re-fetch `extractive_fallback` / faithfulness if needed after reload.
+8. ~~Persist or re-fetch `extractive_fallback` / faithfulness if needed after reload.~~ done.
 
 Related: [`TEST_PLAN.md`](TEST_PLAN.md) gaps E1–E17, [`DFD.md`](DFD.md).

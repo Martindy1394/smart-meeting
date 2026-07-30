@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -17,6 +16,7 @@ from ..database import SessionLocal, get_db
 from ..deps import get_current_user
 from ..models import Meeting, User
 from ..schemas import (
+    FaithfulnessReport,
     MeetingCreate,
     MeetingDetail,
     MeetingSummary,
@@ -184,14 +184,6 @@ async def _read_upload_capped(file: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
-def _clean_attendees(names: list[str]) -> str:
-    cleaned = [n.strip() for n in names if isinstance(n, str) and n.strip()]
-    # De-duplicate while preserving order.
-    seen: set[str] = set()
-    unique = [n for n in cleaned if not (n in seen or seen.add(n))]
-    return json.dumps(unique)
-
-
 def _language_detection_info(m: Meeting):
     """Build the nested language_detection payload from ORM columns."""
     from ..schemas import LanguageDetectionInfo
@@ -226,6 +218,7 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         summary_format=(m.summary_format or "").strip(),
         translation=translation_text,
         translation_language=(m.translation_language or "").strip(),
+        extractive_fallback=bool(getattr(m, "extractive_fallback", False)),
         has_summary=bool(summary_text),
         has_translation=bool(translation_text),
         has_audio=_has_audio(m),
@@ -234,11 +227,26 @@ def _to_summary(m: Meeting) -> MeetingSummary:
 
 
 def _to_detail(m: Meeting) -> MeetingDetail:
+    from ..services.ai_quality import load_faithfulness
+
     detail = MeetingDetail.model_validate(m)
     detail.has_audio = _has_audio(m)
     detail.language_detection = _language_detection_info(m)
+    detail.extractive_fallback = bool(getattr(m, "extractive_fallback", False))
+    # Map ORM ``faithfulness_json`` → API ``faithfulness``.
+    if detail.faithfulness is None:
+        detail.faithfulness = None
+        parsed = load_faithfulness(getattr(m, "faithfulness_json", None))
+        if parsed is not None:
+            detail.faithfulness = FaithfulnessReport.model_validate(parsed)
     return detail
 
+
+def _clean_attendees(names: list[str]) -> list[str]:
+    """Normalize attendees for ORM assignment (AttendeesJSON serializes to DB)."""
+    from ..services.attendees import normalize_attendees
+
+    return normalize_attendees(names)
 
 def _persist_whisper_result(
     meeting: Meeting, db: Session, result: asr.ASRResult

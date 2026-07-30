@@ -16,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .services.attendees import AttendeesJSON
 
 
 def _uuid() -> str:
@@ -24,6 +25,10 @@ def _uuid() -> str:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _empty_attendees() -> list[str]:
+    return []
 
 
 class User(Base):
@@ -67,8 +72,10 @@ class Meeting(Base):
     meeting_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # JSON-encoded list of attendee names.
-    attendees: Mapped[str] = mapped_column(Text, default="[]")
+    # API list[str] ↔ JSON text via AttendeesJSON TypeDecorator.
+    attendees: Mapped[list[str]] = mapped_column(
+        AttendeesJSON, default=_empty_attendees
+    )
 
     # Transcript status: recording | processing | finalized | failed
     status: Mapped[str] = mapped_column(String(32), default="recording")
@@ -85,6 +92,10 @@ class Meeting(Base):
     summary_format: Mapped[str] = mapped_column(String(32), default="")
     translation: Mapped[str] = mapped_column(Text, default="")
     translation_language: Mapped[str] = mapped_column(String(64), default="")
+    # Survives reload — set by /ai/summarize, cleared on retranscribe.
+    extractive_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    # JSON text for FaithfulnessReport (status/untraced/checked).
+    faithfulness_json: Mapped[str] = mapped_column(Text, default="")
 
     audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
@@ -107,6 +118,9 @@ class TranscriptSegment(Base):
 
     ``kind`` distinguishes low-latency live captions ("live") from the
     full-accuracy finalized segments ("final") produced by the second pass.
+
+    Timestamps are always stored as ``start_time`` / ``end_time`` (seconds).
+    Wire payloads may also expose ``start`` / ``end`` aliases via schemas.
     """
 
     __tablename__ = "transcript_segments"

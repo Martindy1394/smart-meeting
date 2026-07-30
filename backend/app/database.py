@@ -77,6 +77,8 @@ def _apply_lightweight_migrations() -> None:
         "attendees": "TEXT DEFAULT '[]'",
         "language_confidence": "FLOAT NULL",
         "language_detected_by": "VARCHAR(32) DEFAULT ''",
+        "extractive_fallback": "BOOLEAN DEFAULT 0",
+        "faithfulness_json": "TEXT DEFAULT ''",
     }
     user_columns = {
         "username": "VARCHAR(64) DEFAULT ''",

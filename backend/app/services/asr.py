@@ -136,13 +136,16 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
         TranscriptSegment.meeting_id == meeting.id
     ).delete()
     for i, seg in enumerate(result.segments):
+        from .segment_times import coerce_times
+
+        start_time, end_time = coerce_times(seg)
         db.add(
             TranscriptSegment(
                 meeting_id=meeting.id,
                 kind="final",
                 text=seg.text,
-                start_time=seg.start,
-                end_time=seg.end,
+                start_time=start_time,
+                end_time=end_time,
                 seq=i,
             )
         )
@@ -158,6 +161,8 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     meeting.summary_format = ""
     meeting.translation = ""
     meeting.translation_language = ""
+    meeting.extractive_fallback = False
+    meeting.faithfulness_json = ""
     # Spoken language is not user-selected. Always keep ``auto`` so every pass
     # uses Hiligaynon-biased automatic detection (``effective_asr_language``).
     # Whisper's guessed code lives in language_confidence / language_detected_by.

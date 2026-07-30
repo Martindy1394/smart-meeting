@@ -118,21 +118,38 @@ async def _emit_live_window(
         )
         # Also keep legacy live_segment for older clients / persistence.
         segs = result.segments
+        rel_start = segs[0].start if segs else 0.0
+        rel_end = segs[-1].end if segs else dur_s
+        from ..services.segment_times import absolute_window_times, segment_wire_dict
+
+        abs_start, abs_end = absolute_window_times(
+            byte_offset=byte_offset,
+            sample_rate=settings.audio_sample_rate,
+            relative_start=rel_start,
+            relative_end=rel_end,
+            window_duration=dur_s,
+        )
+        wire_seg = segment_wire_dict(
+            text=window_text, start=abs_start, end=abs_end, seq=seq
+        )
         await _send(
             websocket,
             {
                 "type": "live_segment",
-                "seq": seq,
-                "text": window_text,
-                "start": segs[0].start if segs else 0.0,
-                "end": segs[-1].end if segs else 0.0,
                 "engine": "whisper",
+                **wire_seg,
             },
         )
         # Throttle SQLite writes during multi-hour board meetings.
         every = max(1, int(settings.live_segment_persist_every))
         if seq == 1 or seq % every == 0:
-            _persist_live_segment(meeting_id, seq, window_text)
+            _persist_live_segment(
+                meeting_id,
+                seq,
+                window_text,
+                start_time=abs_start,
+                end_time=abs_end,
+            )
     return merged, window_text
 
 
@@ -728,12 +745,24 @@ async def transcribe_ws(websocket: WebSocket):
         pass
 
 
-def _persist_live_segment(meeting_id: str, seq: int, text: str) -> None:
+def _persist_live_segment(
+    meeting_id: str,
+    seq: int,
+    text: str,
+    *,
+    start_time: float = 0.0,
+    end_time: float = 0.0,
+) -> None:
     db = SessionLocal()
     try:
         db.add(
             TranscriptSegment(
-                meeting_id=meeting_id, kind="live", text=text, seq=seq
+                meeting_id=meeting_id,
+                kind="live",
+                text=text,
+                seq=seq,
+                start_time=float(start_time or 0.0),
+                end_time=float(end_time or 0.0),
             )
         )
         db.commit()
