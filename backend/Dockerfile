@@ -12,8 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt requirements-ml.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-# Uncomment to bake in the full Whisper/BART/mBART stack (large image):
-# RUN pip install --no-cache-dir -r requirements-ml.txt
+# Full Whisper / BART / mBART stack (multi-GB). Disable with: --build-arg INSTALL_ML=0
+ARG INSTALL_ML=1
+RUN if [ "$INSTALL_ML" = "1" ]; then pip install --no-cache-dir -r requirements-ml.txt; fi
 
 COPY app ./app
 
