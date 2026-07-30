@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, getToken } from "../api/client";
+import { api, ensureFreshAccessToken, getToken } from "../api/client";
+
+// How long to wait for WS final_transcript after sending {type:stop}
+// before falling back to REST POST /meetings/{id}/stop.
+const FINALIZE_WATCHDOG_MS = 90_000;
+// Poll interval when REST reports finalize already in progress.
+const FINALIZE_POLL_MS = 2_500;
+const FINALIZE_POLL_MAX_MS = 45 * 60_000;
 
 // Manages microphone capture (AudioWorklet -> 16 kHz PCM) and streams the audio
 // to the backend over a WebSocket, exposing live caption + finalization state.
@@ -27,6 +34,12 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const meetingIdRef = useRef(null);
   const reconnectRef = useRef({ attempts: 0, timer: null, active: false });
   const stoppingRef = useRef(false);
+  const stopSentOverWsRef = useRef(false);
+  const finalizeDoneRef = useRef(false);
+  const finalizeWatchdogRef = useRef(null);
+  const finalizeInFlightRef = useRef(false);
+  const tokenRefreshRef = useRef(null);
+  const authRetryRef = useRef(0);
   const keepaliveRef = useRef(null);
   const audioWatchRef = useRef(null);
   const onFinalRef = useRef(onFinalTranscript);
@@ -112,16 +125,149 @@ export function useRecorder({ onFinalTranscript } = {}) {
     });
   }, [cleanupAudio]);
 
-  const buildWsUrl = useCallback((meetingId) => {
-    const token = getToken();
+  const clearFinalizeWatchdog = useCallback(() => {
+    if (finalizeWatchdogRef.current) {
+      clearTimeout(finalizeWatchdogRef.current);
+      finalizeWatchdogRef.current = null;
+    }
+  }, []);
+
+  const clearTokenRefreshLoop = useCallback(() => {
+    if (tokenRefreshRef.current) {
+      clearInterval(tokenRefreshRef.current);
+      tokenRefreshRef.current = null;
+    }
+  }, []);
+
+  const markFinalized = useCallback(
+    (payload) => {
+      if (finalizeDoneRef.current) return;
+      finalizeDoneRef.current = true;
+      clearFinalizeWatchdog();
+      clearTokenRefreshLoop();
+      stoppingRef.current = true;
+      reconnectRef.current.active = false;
+      if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
+      liveSegmentsRef.current = {};
+      setLiveText("");
+      setRecording(false);
+      setStatus("idle");
+      if (onFinalRef.current) {
+        onFinalRef.current(
+          payload?.type
+            ? payload
+            : {
+                type: "final_transcript",
+                text: payload?.text || "",
+                segments: payload?.segments || [],
+              }
+        );
+      }
+    },
+    [clearFinalizeWatchdog, clearTokenRefreshLoop]
+  );
+
+  /** REST finalize (+ poll when Whisper is already running). */
+  const finalizeViaRest = useCallback(
+    async (meetingId, { reason = "fallback" } = {}) => {
+      if (!meetingId || finalizeDoneRef.current || finalizeInFlightRef.current) {
+        return false;
+      }
+      finalizeInFlightRef.current = true;
+      clearFinalizeWatchdog();
+      setStatus("finalizing");
+      setMessage(
+        reason === "watchdog"
+          ? "Socket stalled — finishing transcription via server…"
+          : "Finishing transcription…"
+      );
+      try {
+        await ensureFreshAccessToken({ minValiditySeconds: 60 });
+        let result = await api.stopMeetingRecording(meetingId);
+        const started = Date.now();
+        while (
+          result?.in_progress &&
+          !finalizeDoneRef.current &&
+          Date.now() - started < FINALIZE_POLL_MAX_MS
+        ) {
+          setMessage("Transcription in progress…");
+          await new Promise((r) => setTimeout(r, FINALIZE_POLL_MS));
+          const detail = await api.getMeeting(meetingId);
+          if (detail?.status === "finalized") {
+            markFinalized({
+              text: detail.final_transcript || "",
+              segments: detail.segments || [],
+            });
+            return true;
+          }
+          if (detail?.status === "failed") {
+            setStatus("error");
+            setMessage("Transcription failed. You can retry from History.");
+            return false;
+          }
+          // Nudge again in case the first stop only observed in_progress.
+          try {
+            result = await api.stopMeetingRecording(meetingId);
+          } catch {
+            /* keep polling */
+          }
+        }
+        if (finalizeDoneRef.current) return true;
+        if (result?.ok) {
+          markFinalized({
+            text: result.text || result.meeting?.final_transcript || "",
+            segments: result.segments || result.meeting?.segments || [],
+          });
+          return true;
+        }
+        setStatus("error");
+        setMessage(result?.message || "Could not finalize recording.");
+        return false;
+      } catch (err) {
+        if (!finalizeDoneRef.current) {
+          setStatus("error");
+          setMessage(err.message || "Could not finalize recording.");
+        }
+        return false;
+      } finally {
+        finalizeInFlightRef.current = false;
+      }
+    },
+    [clearFinalizeWatchdog, markFinalized]
+  );
+
+  const armFinalizeWatchdog = useCallback(
+    (meetingId) => {
+      clearFinalizeWatchdog();
+      finalizeWatchdogRef.current = setTimeout(() => {
+        if (!finalizeDoneRef.current && meetingId) {
+          finalizeViaRest(meetingId, { reason: "watchdog" });
+        }
+      }, FINALIZE_WATCHDOG_MS);
+    },
+    [clearFinalizeWatchdog, finalizeViaRest]
+  );
+
+  const startTokenRefreshLoop = useCallback(() => {
+    clearTokenRefreshLoop();
+    // Proactively refresh well before the ~30m access JWT expires so reconnects
+    // and REST /stop always have a usable Bearer token. The live WS itself only
+    // validates JWT at handshake — we refresh storage, not the open socket.
+    tokenRefreshRef.current = setInterval(() => {
+      if (!reconnectRef.current.active && !stoppingRef.current) return;
+      ensureFreshAccessToken({ minValiditySeconds: 180 }).catch(() => {});
+    }, 60_000);
+  }, [clearTokenRefreshLoop]);
+
+  const buildWsUrl = useCallback((meetingId, token) => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.host}/ws/transcribe?token=${encodeURIComponent(
-      token
+      token || ""
     )}&meeting_id=${encodeURIComponent(meetingId)}`;
   }, []);
 
   const openSocket = useCallback(
-    (meetingId) => {
+    async (meetingId) => {
       // Close a prior socket without triggering reconnect storms.
       const prev = wsRef.current;
       if (prev) {
@@ -135,7 +281,16 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       }
 
-      const ws = new WebSocket(buildWsUrl(meetingId));
+      // Fresh JWT before every connect/reconnect (long meetings > access TTL).
+      const token = await ensureFreshAccessToken({ minValiditySeconds: 120 });
+      if (!token) {
+        setStatus("error");
+        setMessage("Session expired — sign in again to continue recording.");
+        reconnectRef.current.active = false;
+        return;
+      }
+
+      const ws = new WebSocket(buildWsUrl(meetingId, token));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
       setConnectionState("connecting");
@@ -143,6 +298,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
       ws.onopen = () => {
         setConnectionState("connected");
         reconnectRef.current.attempts = 0;
+        authRetryRef.current = 0;
         ws.send(JSON.stringify({ type: "start" }));
         // Flush any PCM buffered while the socket was down.
         const pending = pendingPcmRef.current;
@@ -246,30 +402,38 @@ export function useRecorder({ onFinalTranscript } = {}) {
           if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
           setRecording(false);
           setStatus("finalizing");
+          // Keep the watchdog armed until final_transcript arrives.
+          if (!finalizeWatchdogRef.current && meetingIdRef.current) {
+            armFinalizeWatchdog(meetingIdRef.current);
+          }
         } else if (data.type === "final_transcript") {
-          // Two-pass: clear live fragments, surface the finalized transcript.
-          stoppingRef.current = true;
-          reconnectRef.current.active = false;
-          if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
-          liveSegmentsRef.current = {};
-          setLiveText("");
-          setRecording(false);
-          setStatus("idle");
-          if (onFinalRef.current) onFinalRef.current(data);
+          markFinalized(data);
         } else if (data.type === "error") {
           // Finished / fatal errors should not keep reconnecting.
-          if (/already (finalized|processing|failed)/i.test(data.message || "")) {
+          const msg = data.message || "";
+          if (
+            /already (finalized|processing|failed)/i.test(msg) ||
+            /already being recorded/i.test(msg)
+          ) {
             stoppingRef.current = true;
             reconnectRef.current.active = false;
             if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
             setRecording(false);
+            if (/already finalized/i.test(msg) && meetingIdRef.current) {
+              finalizeViaRest(meetingIdRef.current, { reason: "already-finalized" });
+              return;
+            }
+            if (/already processing/i.test(msg) && meetingIdRef.current) {
+              finalizeViaRest(meetingIdRef.current, { reason: "in-progress" });
+              return;
+            }
           }
           setStatus("error");
-          setMessage(data.message || "Transcription error.");
+          setMessage(msg || "Transcription error.");
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (evt) => {
         // Ignore close events from superseded sockets.
         if (wsRef.current && wsRef.current !== ws) return;
         setConnectionState("disconnected");
@@ -277,6 +441,45 @@ export function useRecorder({ onFinalTranscript } = {}) {
           clearInterval(keepaliveRef.current);
           keepaliveRef.current = null;
         }
+
+        const code = evt?.code || 0;
+
+        // After stop: socket drop / timeout → REST finalize (prevents stuck Finalizing…).
+        if (
+          stoppingRef.current &&
+          !finalizeDoneRef.current &&
+          (stopSentOverWsRef.current || code === 1000 || code === 1001 || code === 1006)
+        ) {
+          finalizeViaRest(meetingId, { reason: "ws-closed-after-stop" });
+          return;
+        }
+
+        // Auth failure: refresh once, then reconnect with a new token.
+        if (code === 4401 && reconnectRef.current.active && !stoppingRef.current) {
+          if (authRetryRef.current < 2) {
+            authRetryRef.current += 1;
+            setMessage("Session renewing — reconnecting live captions…");
+            reconnectRef.current.timer = setTimeout(() => {
+              openSocket(meetingId).catch(() => {});
+            }, 400);
+            return;
+          }
+          setStatus("error");
+          setMessage("Session expired — sign in again to continue recording.");
+          reconnectRef.current.active = false;
+          return;
+        }
+
+        // Another tab holds the live lock — do not reconnect-loop.
+        if (code === 4409) {
+          reconnectRef.current.active = false;
+          setStatus("error");
+          setMessage(
+            "This meeting is already being recorded in another tab or window."
+          );
+          return;
+        }
+
         // Reconnect only if we are actively recording (unexpected drop).
         // Allow many retries — board meetings can run 8h+ and proxies flap.
         // Server keeps Redis PCM on drop (does not finalize) so captions resume.
@@ -286,7 +489,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
             const delay = Math.min(1000 * 2 ** Math.min(attempts - 1, 4), 15000);
             setMessage(`Connection lost — reconnecting (attempt ${attempts})…`);
             reconnectRef.current.timer = setTimeout(
-              () => openSocket(meetingId),
+              () => openSocket(meetingId).catch(() => {}),
               delay
             );
           } else {
@@ -300,7 +503,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         // onclose handles reconnection logic.
       };
     },
-    [buildWsUrl, composeLive]
+    [armFinalizeWatchdog, buildWsUrl, composeLive, finalizeViaRest, markFinalized]
   );
 
   const start = useCallback(
@@ -309,7 +512,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
       liveSegmentsRef.current = {};
       meetingIdRef.current = meetingId;
       stoppingRef.current = false;
+      stopSentOverWsRef.current = false;
+      finalizeDoneRef.current = false;
+      finalizeInFlightRef.current = false;
+      authRetryRef.current = 0;
+      clearFinalizeWatchdog();
       reconnectRef.current = { attempts: 0, timer: null, active: true };
+      // Keep access JWT fresh for the whole live session (reconnects + REST stop).
+      startTokenRefreshLoop();
       // Immediate UI feedback — do not wait for mic/worklet/WS to finish.
       setStatus("starting");
       setMessage("Starting meeting and microphone…");
@@ -330,7 +540,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
       }, 250);
 
       // Open the WebSocket in parallel with mic setup (biggest perceived win).
-      openSocket(meetingId);
+      // Access JWT is refreshed before connect and kept fresh during long meetings.
+      openSocket(meetingId).catch(() => {});
 
       let stream;
       try {
@@ -476,7 +687,13 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       }, 1000);
     },
-    [cleanupAudio, computeElapsedSec, openSocket]
+    [
+      cleanupAudio,
+      clearFinalizeWatchdog,
+      computeElapsedSec,
+      openSocket,
+      startTokenRefreshLoop,
+    ]
   );
 
   const pause = useCallback(() => {
@@ -541,6 +758,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
     stoppingRef.current = true;
     reconnectRef.current.active = false;
     if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
+    // Stop proactive JWT refresh; finalize uses ensureFreshAccessToken on demand.
+    clearTokenRefreshLoop();
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -563,60 +782,57 @@ export function useRecorder({ onFinalTranscript } = {}) {
     }
     setRecording(false);
     setStatus("finalizing");
+    setMessage("Finishing transcription…");
     // Flush trailing PCM (~up to 0.25s) before tearing down the mic graph.
     await flushAndCleanupAudio();
     const meetingId = meetingIdRef.current;
     const ws = wsRef.current;
-    let stopSentOverWs = false;
+    stopSentOverWsRef.current = false;
     if (ws && ws.readyState === WebSocket.OPEN) {
       try {
+        // Primary stop path: server finalizes from live PCM and replies
+        // with {type:"final_transcript"} (or {type:"finalizing"} first).
         ws.send(JSON.stringify({ type: "stop" }));
-        stopSentOverWs = true;
+        stopSentOverWsRef.current = true;
+        // If the socket drops, times out, or never delivers final_transcript,
+        // armFinalizeWatchdog / onclose → REST POST /meetings/{id}/stop.
+        if (meetingId) armFinalizeWatchdog(meetingId);
       } catch {
-        stopSentOverWs = false;
+        stopSentOverWsRef.current = false;
       }
     }
-    // REST fallback: if the socket is down (or stop send failed), still run the
-    // full-accuracy finalize pass from disk PCM.
-    if (!stopSentOverWs && meetingId) {
-      try {
-        const result = await api.stopMeetingRecording(meetingId);
-        if (result?.ok && onFinalRef.current) {
-          onFinalRef.current({
-            type: "final_transcript",
-            text: result.text || "",
-            segments: result.segments || [],
-          });
-        }
-        setStatus("idle");
-        setLiveText("");
-      } catch (err) {
-        setStatus("error");
-        setMessage(err.message || "Could not finalize recording.");
-      }
+    // Immediate REST fallback when WS is already down or stop send failed.
+    if (!stopSentOverWsRef.current && meetingId) {
+      await finalizeViaRest(meetingId, { reason: "ws-unavailable" });
     }
-  }, [computeElapsedSec, flushAndCleanupAudio]);
+  }, [
+    armFinalizeWatchdog,
+    clearTokenRefreshLoop,
+    computeElapsedSec,
+    finalizeViaRest,
+    flushAndCleanupAudio,
+  ]);
 
   useEffect(() => {
     // Best-effort finalize if the tab closes mid-recording (WS stop may be lost).
+    // Proactive refresh during live keeps the access JWT usable for keepalive.
     const onUnload = () => {
       const meetingId = meetingIdRef.current;
-      if (!meetingId || !reconnectRef.current.active) return;
+      if (!meetingId) return;
+      // Skip if we already finished; still fire if actively recording OR stopping
+      // (stop may have been in-flight when the tab closed).
+      if (!reconnectRef.current.active && !stoppingRef.current) return;
+      if (finalizeDoneRef.current) return;
       try {
         const token = getToken();
-        // keepalive:false + sendBeacon-style fetch may be cancelled; use sync XHR fallback.
         const url = `/api/meetings/${meetingId}/stop`;
-        const body = "";
-        if (navigator.sendBeacon && token) {
-          // sendBeacon cannot set Authorization easily — fall through to fetch keepalive.
-        }
         fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body,
+          body: "",
           keepalive: true,
         }).catch(() => {});
       } catch {
@@ -632,6 +848,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
       if (timerRef.current) clearInterval(timerRef.current);
       if (keepaliveRef.current) clearInterval(keepaliveRef.current);
       if (audioWatchRef.current) clearInterval(audioWatchRef.current);
+      if (tokenRefreshRef.current) {
+        clearInterval(tokenRefreshRef.current);
+        tokenRefreshRef.current = null;
+      }
+      if (finalizeWatchdogRef.current) {
+        clearTimeout(finalizeWatchdogRef.current);
+        finalizeWatchdogRef.current = null;
+      }
       cleanupAudio();
       if (wsRef.current) wsRef.current.close();
     };

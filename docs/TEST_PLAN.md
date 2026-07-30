@@ -101,7 +101,7 @@ Prioritized for test design and future fixes:
 | E3 | WS token in query string | Token leakage via logs/proxies | `useRecorder.js`, `ws/transcription.py` |
 | E4 | Upload background ASR always `"auto"` vs meeting language on retranscribe | Inconsistent language path | `meetings.upload_meeting_audio` |
 | E5 | Pause is client-only; no pause markers; ASR may drain backlog | Confusing timeline | `useRecorder.js`, WS `pause` handler |
-| E6 | `pagehide` keepalive stop can fail if access JWT expired | Orphan `recording` until janitor | `useRecorder.js` |
+| E6 | `pagehide` keepalive stop can fail if access JWT expired | Mitigated by live proactive refresh; residual if refresh down at unload | `useRecorder.js` |
 | E7 | Full WAV loaded into memory for playback | OOM / slow on multi-hour files | `get_meeting_audio` |
 | E8 | PDF export Latin-1 lossy for PH text | Bad PDF for Hiligaynon/Tagalog | `export._pdf_safe` |
 | E9 | No UI for audio upload | Feature discoverability / E2E gap | Frontend vs `POST .../audio` |
@@ -159,6 +159,10 @@ Existing automated coverage (baseline):
 | B5 Two tabs same meeting | Start in tab A and B with Redis up | Second gets lock conflict (4409) |
 | B6 Two tabs Redis down* | Same without Redis | **Known risk (E1)** — interleaved PCM |
 | B7 Stop via REST | Kill WS mid-recording; `POST /stop` | Finalize still runs |
+| B7b Stop after WS drop | Record → Stop → kill WS before `final_transcript` | FE arms watchdog / onclose → REST `/stop`; leaves Finalizing…; meeting finalized |
+| B7c Long-meeting JWT | Record > access TTL (~30m) or force near-expiry token | Proactive refresh; reconnect uses fresh JWT; no 4401 reconnect storm |
+| B7d Auth close 4401 | Connect WS with expired access (valid refresh) | FE refreshes, reconnects ≤2; captions resume |
+| B7e Lock close 4409 | Second tab starts same meeting | Error message; no reconnect loop |
 | B8 Max duration soft-cap | Approach `MAX_MEETING_HOURS` | Warning / stop behavior per config |
 | B9 Silence-only | Record mute room | Little/no junk transcript; not catastrophic loops |
 | B10 Code-switch | Hiligaynon + English sentences | Transcript retains both; EN translation usable |

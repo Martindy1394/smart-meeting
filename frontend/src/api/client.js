@@ -2,6 +2,7 @@
 
 const TOKEN_KEY = "sm_token";
 const REFRESH_KEY = "sm_refresh";
+const ACCESS_EXPIRES_AT_KEY = "sm_access_expires_at";
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -21,14 +22,42 @@ export function setRefreshToken(token) {
   else localStorage.removeItem(REFRESH_KEY);
 }
 
-export function setSessionTokens({ access_token, refresh_token } = {}) {
+/** Seconds until JWT ``exp`` (0 if missing/unreadable). */
+export function accessTokenSecondsRemaining(token = getToken()) {
+  if (!token) return 0;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const exp = Number(payload.exp) || 0;
+    return Math.max(0, exp - Math.floor(Date.now() / 1000));
+  } catch {
+    const stored = Number(localStorage.getItem(ACCESS_EXPIRES_AT_KEY) || 0);
+    if (stored > 0) return Math.max(0, Math.floor((stored - Date.now()) / 1000));
+    return 0;
+  }
+}
+
+export function setSessionTokens({ access_token, refresh_token, expires_in } = {}) {
   setToken(access_token || null);
   setRefreshToken(refresh_token || null);
+  if (access_token && Number(expires_in) > 0) {
+    localStorage.setItem(
+      ACCESS_EXPIRES_AT_KEY,
+      String(Date.now() + Number(expires_in) * 1000)
+    );
+  } else if (access_token) {
+    const secs = accessTokenSecondsRemaining(access_token);
+    if (secs > 0) {
+      localStorage.setItem(ACCESS_EXPIRES_AT_KEY, String(Date.now() + secs * 1000));
+    }
+  } else {
+    localStorage.removeItem(ACCESS_EXPIRES_AT_KEY);
+  }
 }
 
 export function clearSessionTokens() {
   setToken(null);
   setRefreshToken(null);
+  localStorage.removeItem(ACCESS_EXPIRES_AT_KEY);
 }
 
 class ApiError extends Error {
@@ -40,7 +69,7 @@ class ApiError extends Error {
 
 let refreshInFlight = null;
 
-async function refreshAccessToken() {
+export async function refreshAccessToken() {
   const refresh = getRefreshToken();
   if (!refresh) return null;
   if (refreshInFlight) return refreshInFlight;
@@ -66,6 +95,23 @@ async function refreshAccessToken() {
     }
   })();
   return refreshInFlight;
+}
+
+/**
+ * Return a usable access token, refreshing proactively when near expiry.
+ * Used by REST retries and long-lived WebSocket reconnects.
+ */
+export async function ensureFreshAccessToken({ minValiditySeconds = 120 } = {}) {
+  const current = getToken();
+  const remaining = accessTokenSecondsRemaining(current);
+  if (current && remaining > minValiditySeconds) {
+    return current;
+  }
+  if (!getRefreshToken()) {
+    return current;
+  }
+  const next = await refreshAccessToken();
+  return next || getToken();
 }
 
 async function request(path, { method = "GET", body, auth = true, _retry = true } = {}) {

@@ -28,17 +28,24 @@ UI components
 
 ## Critical
 
-### C1 — WebSocket auth does not refresh the access JWT
-- **Mismatch:** REST client refreshes on 401; `useRecorder` builds WS URL with `getToken()` only.
-- **Impact:** Access TTL ≈ 30 minutes; multi-hour meetings lose the socket after expiry → reconnect storm / dead captions.
-- **Evidence:** `frontend/src/hooks/useRecorder.js` (`buildWsUrl`); `backend/app/ws/transcription.py` close `4401`.
-- **Fix:** Refresh access before `openSocket`; stop reconnect-loop on persistent 4401.
+### C1 — WebSocket auth does not refresh the access JWT — **FIXED**
+- **Was:** REST client refreshed on 401; `useRecorder` built WS URL with raw `getToken()` only.
+- **Impact:** Access TTL ≈ 30 minutes; multi-hour meetings lost the socket after expiry → reconnect storm / dead captions.
+- **Fix shipped:**
+  - `ensureFreshAccessToken()` / `accessTokenSecondsRemaining()` in `frontend/src/api/client.js`
+  - Refresh before every WS connect/reconnect (`minValiditySeconds: 120`)
+  - Proactive 60s refresh loop while live (`minValiditySeconds: 180`)
+  - Close `4401` → refresh + retry (≤2); persistent auth failure stops reconnect
+  - Close `4409` (live lock) → stop reconnect, surface error (also M5)
 
-### C2 — Finalize can hang if WS dies after `stop` was sent
-- **Mismatch:** REST `/meetings/{id}/stop` is only used when stop was *not* sent over WS.
+### C2 — Finalize can hang if WS dies after `stop` was sent — **FIXED**
+- **Was:** REST `/meetings/{id}/stop` only when stop was *not* sent over WS.
 - **Impact:** UI stuck on “Finalizing…”; meeting left `recording`/`processing` until janitor.
-- **Evidence:** `useRecorder.stop` / `stoppingRef`.
-- **Fix:** Timeout → call `stopMeetingRecording`; treat WS close during finalize as REST finalize.
+- **Fix shipped:**
+  - Primary stop still sends WS `{type:"stop"}` (see `useRecorder.stop`)
+  - 90s finalize watchdog → `api.stopMeetingRecording` if no `final_transcript`
+  - WS close after stop → immediate REST finalize (+ poll when `in_progress`)
+  - Immediate REST path when socket already down / stop send fails
 
 ### C3 — Decrypt failures look like “no audio”
 - **Mismatch:** Redis/crypto errors return `b""`; FE maps 404 audio to empty state.
@@ -70,12 +77,14 @@ UI components
 - Retranscribe uses `effective_asr_language(meeting.language)`; upload background task always `"auto"`.
 - **Impact:** Inconsistent language path for API upload clients.
 
-### M5 — WS close codes / lock errors under-handled on FE
+### M5 — WS close codes / lock errors under-handled on FE — **FIXED** (with C1)
 - Server: `4401` auth, `4409` lock.
-- FE reconnect logic does not special-case them → possible reconnect loops on second tab.
+- FE now refreshes+retries on `4401` (bounded) and stops reconnect on `4409`.
 
-### M6 — `pagehide` stop may send expired Bearer
-- Keepalive `/stop` uses access token only (no refresh) → orphan `recording` until janitor.
+### M6 — `pagehide` stop may send expired Bearer — **MITIGATED**
+- Keepalive `/stop` still cannot await async refresh during unload.
+- Live proactive JWT refresh keeps a usable access token for `pagehide` in normal long meetings.
+- Residual risk only if refresh is unreachable at the moment of tab close.
 
 ### M7 — FE swallows errors as empty state
 - `loadMeetings` → `[]` on any failure; audio errors look like no file; create/delete often silent.
@@ -106,7 +115,7 @@ UI components
 | Item | Notes |
 |---|---|
 | `engine` vs internal `summary_engine` | Wire field is combined `engine` — FE aligned |
-| `expires_in` unused on FE | No proactive refresh scheduling |
+| `expires_in` + JWT `exp` | FE stores/reads expiry for proactive refresh (C1) |
 | Logout `204` | Handled correctly |
 | Hidden ORM fields | `hashed_password`, `audio_path`, `is_active` not exposed — OK |
 | `has_audio` / `has_transcript` | Computed in router, not DB columns — OK if documented |
@@ -138,14 +147,14 @@ UI components
 2. Background retranscribe → `failed` only visible if UI is polling.
 3. Live `_persist_live_segment` rollback with no client signal.
 4. Workspace list/create/delete catch without user-visible error (M7).
-5. WS finalize without REST fallback timeout (C2).
+5. ~~WS finalize without REST fallback timeout (C2).~~ fixed via watchdog + close fallback.
 
 ---
 
 ## Recommended fix order
 
-1. WS token refresh + 4401/4409 handling (C1, M5).
-2. Finalize watchdog → REST `/stop` (C2, M6).
+1. ~~WS token refresh + 4401/4409 handling (C1, M5).~~ done.
+2. ~~Finalize watchdog → REST `/stop` (C2, M6).~~ done (M6 residual unload-only).
 3. Decrypt/audio error surfacing (C3, M7).
 4. Align `MeetingCreate` validation with FE details gate (M2).
 5. Unify segment timestamp names; persist live times (M1).
