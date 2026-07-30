@@ -378,6 +378,9 @@ def set_session_meta(
     live_offset: Optional[int] = None,
     seq: Optional[int] = None,
     last_active: Optional[float] = None,
+    language_locked: Optional[bool] = None,
+    locked_language: Optional[str] = None,
+    locked_confidence: Optional[float] = None,
 ) -> None:
     """Persist live-session fields so reconnects can resume cleanly."""
     client = get_client()
@@ -392,6 +395,12 @@ def set_session_meta(
         mapping[b"live_offset"] = str(int(live_offset)).encode("utf-8")
     if seq is not None:
         mapping[b"seq"] = str(int(seq)).encode("utf-8")
+    if language_locked is not None:
+        mapping[b"language_locked"] = b"1" if language_locked else b"0"
+    if locked_language is not None:
+        mapping[b"locked_language"] = str(locked_language).encode("utf-8")
+    if locked_confidence is not None:
+        mapping[b"locked_confidence"] = str(float(locked_confidence)).encode("utf-8")
     # Always refresh activity when meta is written so the janitor can age sessions.
     ts = time.time() if last_active is None else float(last_active)
     mapping[b"last_active"] = str(ts).encode("utf-8")
@@ -441,6 +450,9 @@ def get_session_meta(meeting_id: str) -> dict:
         "live_offset": _i(b"live_offset"),
         "seq": _i(b"seq"),
         "last_active": _f(b"last_active"),
+        "language_locked": _s(b"language_locked") == "1",
+        "locked_language": _s(b"locked_language"),
+        "locked_confidence": _f(b"locked_confidence", 0.0),
     }
 
 

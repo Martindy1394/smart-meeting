@@ -38,3 +38,6 @@ stored as `SMENC1` + Fernet ciphertext.
   `Decryption failed / Data corrupted` — they must never look like “no audio”.
   Meeting list `has_audio` uses Redis key existence (no decrypt) so a bad key
   does not blank the history list.
+- **Audio retention:** set `AUDIO_RETENTION_DAYS` (default 30; `0` = keep forever).
+  The janitor deletes finalized WAV/PCM after that window while keeping
+  transcript, translation, and minutes.

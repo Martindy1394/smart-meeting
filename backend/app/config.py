@@ -202,6 +202,30 @@ class Settings(BaseSettings):
     # Minimum discourse units in a topic before a similarity drop can split.
     bart_topic_min_units: int = 2
 
+    # --- VAD / confidence filtering --------------------------------------
+    vad_enabled: bool = True
+    # auto | webrtcvad | energy
+    vad_backend: str = "auto"
+    vad_aggressiveness: int = 2  # webrtcvad 0–3
+    vad_min_speech_ratio: float = 0.15
+    vad_live_min_rms: float = 0.006
+    vad_final_min_rms: float = 0.004
+    # Drop / flag Whisper segments below these thresholds.
+    asr_min_avg_logprob: float = -1.0
+    asr_max_no_speech_prob: float = 0.6
+    asr_flag_avg_logprob: float = -0.6
+    asr_flag_no_speech_prob: float = 0.45
+    # Session language lock: detect on first N seconds, then reuse.
+    asr_language_lock_seconds: float = 8.0
+    asr_language_relock_no_speech_prob: float = 0.85
+    asr_language_min_confidence: float = 0.45
+
+    # --- Background jobs / retention -------------------------------------
+    jobs_use_redis_queue: bool = True
+    jobs_inline_worker: bool = True
+    # Purge finalized WAV/PCM after N days (0 = keep forever). Transcripts stay.
+    audio_retention_days: int = 30
+
     # --- Rate limiting ---------------------------------------------------
     rate_limit_auth: str = "20/minute"
     rate_limit_ai: str = "30/minute"

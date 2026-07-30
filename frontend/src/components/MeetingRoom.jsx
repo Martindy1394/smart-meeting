@@ -648,7 +648,43 @@ export default function MeetingRoom({
           <div className="card-body">
             {asrError && <div className="error-banner">{asrError}</div>}
             {showLive && recorder.liveText ? (
-              <span className="transcript-live">{recorder.liveText}</span>
+              <span className="transcript-live">
+                <span
+                  className={
+                    recorder.liveLowConfidence ? "caption-low-confidence" : undefined
+                  }
+                >
+                  {recorder.liveText}
+                </span>
+                {recorder.liveLowConfidence && (
+                  <span className="caption-low-confidence-badge" title="ASR low confidence">
+                    Low confidence
+                  </span>
+                )}
+              </span>
+            ) : hasTranscript &&
+              Array.isArray(meeting.segments) &&
+              meeting.segments.some((s) => s.low_confidence) ? (
+              <span className="transcript-final-segs">
+                {meeting.segments.map((seg, i) => (
+                  <span
+                    key={seg.id || seg.seq || i}
+                    className={seg.low_confidence ? "transcript-seg-low" : undefined}
+                    title={
+                      seg.low_confidence
+                        ? `Low confidence${
+                            seg.avg_logprob != null
+                              ? ` (avg_logprob ${Number(seg.avg_logprob).toFixed(2)})`
+                              : ""
+                          }`
+                        : undefined
+                    }
+                  >
+                    {seg.text}
+                    {i < meeting.segments.length - 1 ? " " : ""}
+                  </span>
+                ))}
+              </span>
             ) : hasTranscript ? (
               finalTranscript
             ) : showLive ? (

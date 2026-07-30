@@ -228,17 +228,34 @@ def _to_summary(m: Meeting) -> MeetingSummary:
 
 def _to_detail(m: Meeting) -> MeetingDetail:
     from ..services.ai_quality import load_faithfulness
+    import json
 
     detail = MeetingDetail.model_validate(m)
     detail.has_audio = _has_audio(m)
     detail.language_detection = _language_detection_info(m)
     detail.extractive_fallback = bool(getattr(m, "extractive_fallback", False))
-    # Map ORM ``faithfulness_json`` → API ``faithfulness``.
+    detail.language_locked = bool(getattr(m, "language_locked", False))
+    detail.custom_vocab = getattr(m, "custom_vocab", "") or ""
+    detail.translation_glossary_json = (
+        getattr(m, "translation_glossary_json", None) or "[]"
+    )
+    # Map ORM JSON columns → API fields.
     if detail.faithfulness is None:
-        detail.faithfulness = None
         parsed = load_faithfulness(getattr(m, "faithfulness_json", None))
         if parsed is not None:
             detail.faithfulness = FaithfulnessReport.model_validate(parsed)
+    if detail.translation_faithfulness is None:
+        parsed = load_faithfulness(getattr(m, "translation_faithfulness_json", None))
+        if parsed is not None:
+            detail.translation_faithfulness = FaithfulnessReport.model_validate(parsed)
+    if not detail.action_items:
+        raw = getattr(m, "action_items_json", None) or "[]"
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                detail.action_items = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
     return detail
 
 
@@ -388,6 +405,11 @@ def create_meeting(
         venue=payload.venue.strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
+        custom_vocab=(payload.custom_vocab or "").strip(),
+        translation_glossary_json=(
+            payload.translation_glossary_json or "[]"
+        ).strip()
+        or "[]",
         status="recording",
     )
     db.add(meeting)
@@ -619,6 +641,12 @@ def update_meeting(
         meeting.meeting_date = payload.meeting_date
     if payload.attendees is not None:
         meeting.attendees = _clean_attendees(payload.attendees)
+    if payload.custom_vocab is not None:
+        meeting.custom_vocab = (payload.custom_vocab or "").strip()
+    if payload.translation_glossary_json is not None:
+        meeting.translation_glossary_json = (
+            (payload.translation_glossary_json or "").strip() or "[]"
+        )
     if payload.language is not None:
         lang = (payload.language or "").strip().lower()
         if lang in {

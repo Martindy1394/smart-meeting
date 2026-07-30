@@ -96,6 +96,16 @@ class Meeting(Base):
     extractive_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
     # JSON text for FaithfulnessReport (status/untraced/checked).
     faithfulness_json: Mapped[str] = mapped_column(Text, default="")
+    # Transcript↔translation faithfulness (Tier 2).
+    translation_faithfulness_json: Mapped[str] = mapped_column(Text, default="")
+    # Optional proper nouns injected into Whisper initial_prompt (newline/JSON).
+    custom_vocab: Mapped[str] = mapped_column(Text, default="")
+    # Do-not-translate terms for NLLB/mBART (JSON list).
+    translation_glossary_json: Mapped[str] = mapped_column(Text, default="[]")
+    # Structured action items extracted from BART Action Items section.
+    action_items_json: Mapped[str] = mapped_column(Text, default="[]")
+    # Session-level ASR language lock (detect once, reuse).
+    language_locked: Mapped[bool] = mapped_column(Boolean, default=False)
 
     audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
@@ -134,6 +144,10 @@ class TranscriptSegment(Base):
     start_time: Mapped[float] = mapped_column(Float, default=0.0)
     end_time: Mapped[float] = mapped_column(Float, default=0.0)
     seq: Mapped[int] = mapped_column(Integer, default=0)
+    # Whisper segment confidence (Tier 1). Nullable when HF/RNN-T lacks probs.
+    avg_logprob: Mapped[float | None] = mapped_column(Float, nullable=True)
+    no_speech_prob: Mapped[float | None] = mapped_column(Float, nullable=True)
+    low_confidence: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     meeting: Mapped["Meeting"] = relationship(back_populates="segments")

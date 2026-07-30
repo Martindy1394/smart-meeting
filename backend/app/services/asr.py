@@ -63,7 +63,13 @@ def engine_name() -> str:
     return "whisper" if transcription.is_available() else "unavailable"
 
 
-def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool = False) -> ASRResult:
+def transcribe_pcm(
+    pcm: np.ndarray,
+    language: str | None = None,
+    *,
+    live: bool = False,
+    extra_terms: list[str] | None = None,
+) -> ASRResult:
     """Run Whisper ASR on a float32 PCM buffer.
 
     ``live=True`` uses the low-latency live model; otherwise the full-accuracy
@@ -78,9 +84,13 @@ def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool =
         return ASRResult(text="", segments=[], engine="whisper", language=language)
 
     if live:
-        segments, detection = transcription.transcribe_live(pcm, language)
+        segments, detection = transcription.transcribe_live(
+            pcm, language, extra_terms=extra_terms
+        )
     else:
-        segments, detection = transcription.transcribe_final(pcm, language)
+        segments, detection = transcription.transcribe_final(
+            pcm, language, extra_terms=extra_terms
+        )
 
     text = " ".join(s.text for s in segments).strip()
     resolved = (detection.language if detection else None) or language
@@ -96,7 +106,12 @@ def transcribe_pcm(pcm: np.ndarray, language: str | None = None, *, live: bool =
     )
 
 
-def transcribe_file(path: str, language: str | None = None) -> ASRResult:
+def transcribe_file(
+    path: str,
+    language: str | None = None,
+    *,
+    extra_terms: list[str] | None = None,
+) -> ASRResult:
     """Run full-accuracy Whisper ASR on a stored audio file (WAV path)."""
     if not is_available():
         raise ASRUnavailable(
@@ -104,13 +119,19 @@ def transcribe_file(path: str, language: str | None = None) -> ASRResult:
             "pip install -r requirements-ml.txt"
         )
     samples = audio.load_audio_float32(path)
-    return transcribe_pcm(samples, language, live=False)
+    return transcribe_pcm(samples, language, live=False, extra_terms=extra_terms)
 
 
-def transcribe_pcm_bytes(pcm_bytes: bytes, language: str | None = None, *, live: bool = False) -> ASRResult:
+def transcribe_pcm_bytes(
+    pcm_bytes: bytes,
+    language: str | None = None,
+    *,
+    live: bool = False,
+    extra_terms: list[str] | None = None,
+) -> ASRResult:
     """Convenience: int16 LE PCM bytes → Whisper ASR."""
     samples = audio.pcm16_to_float32(pcm_bytes)
-    return transcribe_pcm(samples, language, live=live)
+    return transcribe_pcm(samples, language, live=live, extra_terms=extra_terms)
 
 
 def merge_live_caption(
@@ -147,6 +168,9 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
                 start_time=start_time,
                 end_time=end_time,
                 seq=i,
+                avg_logprob=getattr(seg, "avg_logprob", None),
+                no_speech_prob=getattr(seg, "no_speech_prob", None),
+                low_confidence=bool(getattr(seg, "low_confidence", False)),
             )
         )
     meeting.final_transcript = result.text
@@ -163,10 +187,12 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     meeting.translation_language = ""
     meeting.extractive_fallback = False
     meeting.faithfulness_json = ""
-    # Spoken language is not user-selected. Always keep ``auto`` so every pass
-    # uses Hiligaynon-biased automatic detection (``effective_asr_language``).
-    # Whisper's guessed code lives in language_confidence / language_detected_by.
-    meeting.language = "auto"
+    meeting.translation_faithfulness_json = ""
+    meeting.action_items_json = "[]"
+    # Keep language_locked + detected language when session lock set them;
+    # otherwise preserve product default of auto + Hiligaynon bias.
+    if not bool(getattr(meeting, "language_locked", False)):
+        meeting.language = "auto"
     meeting.language_confidence = result.language_confidence
     meeting.language_detected_by = (result.language_detected_by or "").strip()
     meeting.status = "finalized"

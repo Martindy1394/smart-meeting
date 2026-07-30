@@ -8,6 +8,113 @@ const FINALIZE_WATCHDOG_MS = 90_000;
 const FINALIZE_POLL_MS = 2_500;
 const FINALIZE_POLL_MAX_MS = 45 * 60_000;
 
+// Tier 4: persist pending PCM to IndexedDB while WS is disconnected.
+const PCM_IDB_NAME = "smart-meeting";
+const PCM_IDB_VERSION = 1;
+const PCM_STORE = "sm-pcm-buffer";
+
+function openPcmDb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB unavailable"));
+      return;
+    }
+    const req = indexedDB.open(PCM_IDB_NAME, PCM_IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(PCM_STORE)) {
+        const store = db.createObjectStore(PCM_STORE, { keyPath: "id", autoIncrement: true });
+        store.createIndex("meetingId", "meetingId", { unique: false });
+        store.createIndex("meetingSeq", ["meetingId", "seq"], { unique: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB open failed"));
+  });
+}
+
+/** Append one PCM ArrayBuffer chunk for a meeting (best-effort). */
+async function idbPutPcmChunk(meetingId, seq, chunk) {
+  if (!meetingId || !chunk) return;
+  try {
+    const db = await openPcmDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PCM_STORE, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      const buf =
+        chunk instanceof ArrayBuffer
+          ? chunk
+          : chunk.buffer
+            ? chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength)
+            : chunk;
+      tx.objectStore(PCM_STORE).put({ meetingId, seq, data: buf });
+    });
+    db.close();
+  } catch {
+    /* ignore — in-memory pendingPcmRef remains the primary buffer */
+  }
+}
+
+/** Read all PCM chunks for a meeting ordered by seq, then clear them. */
+async function idbTakePcmChunks(meetingId) {
+  if (!meetingId) return [];
+  try {
+    const db = await openPcmDb();
+    const rows = await new Promise((resolve, reject) => {
+      const tx = db.transaction(PCM_STORE, "readonly");
+      const idx = tx.objectStore(PCM_STORE).index("meetingId");
+      const req = idx.getAll(IDBKeyRange.only(meetingId));
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    rows.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    const chunks = rows.map((r) => r.data).filter(Boolean);
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PCM_STORE, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      const store = tx.objectStore(PCM_STORE);
+      const idx = store.index("meetingId");
+      const req = idx.openKeyCursor(IDBKeyRange.only(meetingId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return;
+        store.delete(cursor.primaryKey);
+        cursor.continue();
+      };
+    });
+    db.close();
+    return chunks;
+  } catch {
+    return [];
+  }
+}
+
+async function idbClearPcm(meetingId) {
+  if (!meetingId) return;
+  try {
+    const db = await openPcmDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PCM_STORE, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      const store = tx.objectStore(PCM_STORE);
+      const idx = store.index("meetingId");
+      const req = idx.openKeyCursor(IDBKeyRange.only(meetingId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return;
+        store.delete(cursor.primaryKey);
+        cursor.continue();
+      };
+    });
+    db.close();
+  } catch {
+    /* ignore */
+  }
+}
+
 // Manages microphone capture (AudioWorklet -> 16 kHz PCM) and streams the audio
 // to the backend over a WebSocket, exposing live caption + finalization state.
 export function useRecorder({ onFinalTranscript } = {}) {
@@ -15,6 +122,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState("idle"); // idle|starting|recording|paused|finalizing|error
   const [liveText, setLiveText] = useState("");
+  const [liveLowConfidence, setLiveLowConfidence] = useState(false);
   const [message, setMessage] = useState("");
   const [transcriptionAvailable, setTranscriptionAvailable] = useState(true);
   const [elapsed, setElapsed] = useState(0);
@@ -44,6 +152,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const audioWatchRef = useRef(null);
   const onFinalRef = useRef(onFinalTranscript);
   const pendingPcmRef = useRef([]);
+  const pcmSeqRef = useRef(0);
   const bytesSentRef = useRef(0);
 
   const computeElapsedSec = useCallback(() => {
@@ -150,8 +259,12 @@ export function useRecorder({ onFinalTranscript } = {}) {
       if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
       liveSegmentsRef.current = {};
       setLiveText("");
+      setLiveLowConfidence(false);
       setRecording(false);
       setStatus("idle");
+      if (meetingIdRef.current) {
+        idbClearPcm(meetingIdRef.current).catch(() => {});
+      }
       if (onFinalRef.current) {
         onFinalRef.current(
           payload?.type
@@ -300,13 +413,32 @@ export function useRecorder({ onFinalTranscript } = {}) {
         reconnectRef.current.attempts = 0;
         authRetryRef.current = 0;
         ws.send(JSON.stringify({ type: "start" }));
-        // Flush any PCM buffered while the socket was down.
-        const pending = pendingPcmRef.current;
-        while (pending.length && ws.readyState === WebSocket.OPEN) {
-          const chunk = pending.shift();
-          ws.send(chunk);
-          bytesSentRef.current += chunk.byteLength || chunk.length || 0;
-        }
+        // Flush durable IndexedDB PCM first, then any in-memory pending.
+        // If IDB had chunks, drop the in-memory copy (same seqs) to avoid dupes.
+        const flushPending = () => {
+          const pending = pendingPcmRef.current;
+          while (pending.length && ws.readyState === WebSocket.OPEN) {
+            const chunk = pending.shift();
+            ws.send(chunk);
+            bytesSentRef.current += chunk.byteLength || chunk.length || 0;
+          }
+        };
+        idbTakePcmChunks(meetingId)
+          .then((idbChunks) => {
+            if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) return;
+            if (idbChunks.length) {
+              pendingPcmRef.current = [];
+              for (const chunk of idbChunks) {
+                ws.send(chunk);
+                bytesSentRef.current += chunk.byteLength || chunk.length || 0;
+              }
+            } else {
+              flushPending();
+            }
+          })
+          .catch(() => {
+            flushPending();
+          });
         // Client keepalive — keeps proxies from idling out 8h+ board meetings.
         if (keepaliveRef.current) clearInterval(keepaliveRef.current);
         keepaliveRef.current = setInterval(() => {
@@ -365,6 +497,9 @@ export function useRecorder({ onFinalTranscript } = {}) {
           // (protects against aggressive overlap dedupe or WS reconnect resets).
           const incoming = (data.text || "").trim();
           if (!incoming) return;
+          if (typeof data.low_confidence === "boolean") {
+            setLiveLowConfidence(data.low_confidence);
+          }
           setLiveText((prev) => {
             const current = (prev || "").trim();
             if (!current) return incoming;
@@ -393,6 +528,9 @@ export function useRecorder({ onFinalTranscript } = {}) {
         } else if (data.type === "live_segment") {
           // Legacy per-chunk segments (kept for compatibility / persistence).
           liveSegmentsRef.current[data.seq] = data.text;
+          if (data.low_confidence) {
+            setLiveLowConfidence(true);
+          }
           // Only fall back to composed chunks if we have not received live_caption yet.
           setLiveText((prev) => prev || composeLive());
         } else if (data.type === "finalizing") {
@@ -525,13 +663,16 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setMessage("Starting meeting and microphone…");
       setRecording(true);
       setPaused(false);
+      setLiveLowConfidence(false);
       pausedRef.current = false;
       pausedTotalMsRef.current = 0;
       pauseStartedAtRef.current = null;
       startedAtRef.current = Date.now();
       setElapsed(0);
       pendingPcmRef.current = [];
+      pcmSeqRef.current = 0;
       bytesSentRef.current = 0;
+      idbClearPcm(meetingId).catch(() => {});
       if (timerRef.current) clearInterval(timerRef.current);
       // Wall-clock based so long board meetings stay accurate if the tab throttles.
       // Pause time is excluded from the displayed duration.
@@ -656,9 +797,15 @@ export function useRecorder({ onFinalTranscript } = {}) {
           }
           ws.send(chunk);
           bytesSentRef.current += chunk.byteLength || chunk.length || 0;
-        } else if (pendingPcmRef.current.length < 120) {
-          // ~30s at 0.25s/chunk — covers reconnect backoff without dropping audio.
-          pendingPcmRef.current.push(chunk);
+        } else {
+          // In-memory ring (~30s at 0.25s/chunk) + IndexedDB durable backup.
+          if (pendingPcmRef.current.length < 120) {
+            pendingPcmRef.current.push(chunk);
+          }
+          if (reconnectRef.current.active && !stoppingRef.current && meetingIdRef.current) {
+            const seq = ++pcmSeqRef.current;
+            idbPutPcmChunk(meetingIdRef.current, seq, chunk);
+          }
         }
       };
       source.connect(node);
@@ -866,6 +1013,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
     paused,
     status,
     liveText,
+    liveLowConfidence,
     message,
     transcriptionAvailable,
     elapsed,

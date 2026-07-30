@@ -171,9 +171,23 @@ def finalize_meeting_recording(
         meeting = db.get(Meeting, meeting_id)
         assert meeting is not None
 
+        from ..services import transcription as transcription_svc
+
+        extra_terms = transcription_svc.parse_custom_vocab(
+            getattr(meeting, "custom_vocab", "") or ""
+        )
+        try:
+            from .attendees import load_attendees
+
+            extra_terms = transcription_svc.parse_custom_vocab(
+                list(extra_terms) + load_attendees(meeting.attendees)
+            )
+        except Exception:
+            pass
+
         try:
             # Prefer file path so we do not keep a second full PCM copy in RAM.
-            result = asr.transcribe_file(audio_path, lang)
+            result = asr.transcribe_file(audio_path, lang, extra_terms=extra_terms)
         except asr.ASRUnavailable as exc:
             live = (live_caption or "").strip()
             if live:

@@ -79,6 +79,11 @@ def _apply_lightweight_migrations() -> None:
         "language_detected_by": "VARCHAR(32) DEFAULT ''",
         "extractive_fallback": "BOOLEAN DEFAULT 0",
         "faithfulness_json": "TEXT DEFAULT ''",
+        "custom_vocab": "TEXT DEFAULT ''",
+        "translation_glossary_json": "TEXT DEFAULT '[]'",
+        "action_items_json": "TEXT DEFAULT '[]'",
+        "language_locked": "BOOLEAN DEFAULT 0",
+        "translation_faithfulness_json": "TEXT DEFAULT ''",
     }
     user_columns = {
         "username": "VARCHAR(64) DEFAULT ''",
@@ -97,6 +102,21 @@ def _apply_lightweight_migrations() -> None:
             for name, ddl in meeting_columns.items():
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE meetings ADD COLUMN {name} {ddl}"))
+
+    # Segment confidence columns (Tier 1).
+    segment_columns = {
+        "avg_logprob": "FLOAT NULL",
+        "no_speech_prob": "FLOAT NULL",
+        "low_confidence": "BOOLEAN DEFAULT 0",
+    }
+    if "transcript_segments" in tables:
+        existing = {col["name"] for col in inspector.get_columns("transcript_segments")}
+        with engine.begin() as conn:
+            for name, ddl in segment_columns.items():
+                if name not in existing:
+                    conn.execute(
+                        text(f"ALTER TABLE transcript_segments ADD COLUMN {name} {ddl}")
+                    )
 
     if "users" in tables:
         existing = {col["name"] for col in inspector.get_columns("users")}

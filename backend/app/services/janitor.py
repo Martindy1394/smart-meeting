@@ -117,7 +117,63 @@ def sweep_abandoned_sessions() -> dict:
         "finalized": finalized,
         "cleared": cleared,
         "reclaimed": reclaimed,
+        "audio_purged": purge_expired_audio(),
     }
+
+
+def purge_expired_audio() -> int:
+    """Delete finalized meeting WAV/PCM older than ``audio_retention_days``.
+
+    Transcripts, summaries, and translations are retained.
+    """
+    days = int(getattr(settings, "audio_retention_days", 0) or 0)
+    if days <= 0:
+        return 0
+    cutoff = time.time() - (days * 86400)
+    purged = 0
+    db = SessionLocal()
+    try:
+        for meeting in (
+            db.query(Meeting)
+            .filter(Meeting.status.in_(("finalized", "failed")))
+            .all()
+        ):
+            stamp = meeting.updated_at or meeting.created_at
+            if stamp is None:
+                continue
+            try:
+                ts = stamp.timestamp() if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc).timestamp()
+            except Exception:
+                continue
+            if ts > cutoff:
+                continue
+            path = meeting.audio_path
+            removed = False
+            if path:
+                try:
+                    import os
+
+                    abs_path = os.path.abspath(path)
+                    if os.path.exists(abs_path):
+                        os.remove(abs_path)
+                        removed = True
+                except OSError:
+                    pass
+                meeting.audio_path = None
+            try:
+                audio.delete_raw_pcm(meeting.id)
+                redis_store.clear_meeting_audio(meeting.id, keep_wav=False)
+                removed = True
+            except Exception:
+                pass
+            if removed:
+                purged += 1
+        if purged:
+            db.commit()
+            logger.info("Audio retention purged %d meeting file(s) (>%d days)", purged, days)
+    finally:
+        db.close()
+    return purged
 
 
 async def janitor_loop(stop_event) -> None:

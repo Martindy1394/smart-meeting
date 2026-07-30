@@ -108,6 +108,9 @@ class Segment:
     text: str
     start: float
     end: float
+    avg_logprob: float | None = None
+    no_speech_prob: float | None = None
+    low_confidence: bool = False
 
 
 @dataclass
@@ -435,19 +438,116 @@ def hiligaynon_model_id() -> str:
     return (settings.whisper_final_model or "medium").strip()
 
 
-def initial_prompt(language: str | None = None) -> str | None:
-    """Language-aware short prompt (avoid long prompts — Whisper may echo them)."""
+def initial_prompt(
+    language: str | None = None,
+    *,
+    extra_terms: list[str] | None = None,
+) -> str | None:
+    """Language-aware short prompt (avoid long prompts — Whisper may echo them).
+
+    ``extra_terms`` are optional meeting proper nouns (attendees / org terms)
+    appended as a short custom vocabulary hint.
+    """
     lang = effective_asr_language(language)
     if is_hiligaynon_language(lang):
         prompt = (settings.whisper_hiligaynon_initial_prompt or "").strip()
-        if prompt:
-            return prompt
-    if is_tagalog_language(lang):
+        if not prompt:
+            prompt = (settings.whisper_initial_prompt or "").strip()
+    elif is_tagalog_language(lang):
         prompt = (settings.whisper_tagalog_initial_prompt or "").strip()
-        if prompt:
-            return prompt
-    prompt = (settings.whisper_initial_prompt or "").strip()
+        if not prompt:
+            prompt = (settings.whisper_initial_prompt or "").strip()
+    else:
+        prompt = (settings.whisper_initial_prompt or "").strip()
+    terms = [t.strip() for t in (extra_terms or []) if isinstance(t, str) and t.strip()]
+    # Keep short — Whisper echoes long prompts.
+    terms = terms[:24]
+    if terms:
+        vocab = ", ".join(terms)
+        hint = f" Vocabulary: {vocab}."
+        prompt = f"{prompt}{hint}".strip() if prompt else f"Vocabulary: {vocab}."
     return prompt or None
+
+
+def parse_custom_vocab(raw) -> list[str]:
+    """Parse meeting custom_vocab (JSON list, newlines, or commas)."""
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            import json
+
+            parsed = json.loads(text)
+            items = parsed if isinstance(parsed, list) else text.splitlines()
+        except Exception:
+            items = text.splitlines() if "\n" in text else [p for p in text.split(",")]
+    else:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        term = item.strip()
+        if not term:
+            continue
+        key = term.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+    return out[:24]
+
+
+def _segment_from_whisper(s, *, text: str) -> Segment | None:
+    """Build a Segment from a faster-whisper segment, applying confidence gates."""
+    if not text or not any(ch.isalnum() for ch in text):
+        return None
+    if _is_junk_transcript(text):
+        return None
+    avg_lp = getattr(s, "avg_logprob", None)
+    no_sp = getattr(s, "no_speech_prob", None)
+    try:
+        avg_lp_f = float(avg_lp) if avg_lp is not None else None
+    except (TypeError, ValueError):
+        avg_lp_f = None
+    try:
+        no_sp_f = float(no_sp) if no_sp is not None else None
+    except (TypeError, ValueError):
+        no_sp_f = None
+
+    # Hard drop: almost certainly silence hallucination.
+    if no_sp_f is not None and no_sp_f >= float(settings.asr_max_no_speech_prob):
+        logger.info(
+            "asr.drop_segment no_speech_prob=%.3f text=%r",
+            no_sp_f,
+            text[:80],
+        )
+        return None
+    if avg_lp_f is not None and avg_lp_f <= float(settings.asr_min_avg_logprob) - 0.5:
+        # Far below threshold — drop.
+        logger.info("asr.drop_segment avg_logprob=%.3f text=%r", avg_lp_f, text[:80])
+        return None
+
+    low = False
+    if avg_lp_f is not None and avg_lp_f < float(settings.asr_flag_avg_logprob):
+        low = True
+    if no_sp_f is not None and no_sp_f >= float(settings.asr_flag_no_speech_prob):
+        low = True
+
+    return Segment(
+        text=text,
+        start=float(getattr(s, "start", 0.0) or 0.0),
+        end=float(getattr(s, "end", 0.0) or 0.0),
+        avg_logprob=avg_lp_f,
+        no_speech_prob=no_sp_f,
+        low_confidence=low,
+    )
 
 
 def live_model_id(language: str | None) -> str:
@@ -798,7 +898,10 @@ def _energy_ok(pcm: np.ndarray, *, min_rms: float = 0.008) -> bool:
 
 
 def transcribe_live(
-    pcm: np.ndarray, language: str | None
+    pcm: np.ndarray,
+    language: str | None,
+    *,
+    extra_terms: list[str] | None = None,
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Low-latency transcription of a live audio window.
 
@@ -812,9 +915,20 @@ def transcribe_live(
     if pcm is None or len(pcm) == 0:
         return [], None
     from . import audio as audio_svc
+    from . import pipeline_metrics, vad as vad_svc
 
     raw = pcm.astype(np.float32, copy=False)
     sr = int(settings.audio_sample_rate or 16000)
+    # Tier 1: VAD gate before Whisper (biggest hallucination source = silence).
+    vad_result = vad_svc.detect_speech(raw, sample_rate=sr, live=True)
+    if not vad_result.has_speech:
+        logger.info(
+            "asr.live vad_skip backend=%s %s samples=%d",
+            vad_result.backend,
+            vad_result.reason,
+            len(raw),
+        )
+        return [], None
     # Gate on *raw* PCM before AGC — amplifying silence first made every
     # quiet tail look like speech and Whisper re-looped the last phrase.
     if not _energy_ok(raw, min_rms=0.006):
@@ -849,13 +963,26 @@ def transcribe_live(
                 cleaned: list[Segment] = []
                 for s in segs:
                     text = _collapse_hallucinations((s.text or "").strip())
-                    text = _strip_initial_prompt_echo(text, initial_prompt(language))
+                    text = _strip_initial_prompt_echo(
+                        text, initial_prompt(language, extra_terms=extra_terms)
+                    )
                     if (
                         text
                         and any(ch.isalnum() for ch in text)
                         and not _is_junk_transcript(text)
                     ):
-                        cleaned.append(Segment(text=text, start=s.start, end=s.end))
+                        cleaned.append(
+                            Segment(
+                                text=text,
+                                start=s.start,
+                                end=s.end,
+                                avg_logprob=getattr(s, "avg_logprob", None),
+                                no_speech_prob=getattr(s, "no_speech_prob", None),
+                                low_confidence=bool(
+                                    getattr(s, "low_confidence", False)
+                                ),
+                            )
+                        )
                 if cleaned:
                     return cleaned, detection
                 logger.info("RNNT live returned empty/junk; falling back to Whisper")
@@ -869,23 +996,27 @@ def transcribe_live(
     model = cache.get_faster_whisper(model_id)
     # Hiligaynon / auto→hil: Whisper auto-detect (never force Tagalog ``tl``).
     # Explicit Tagalog still uses native ``tl``; English uses ``en``.
+    # When language is already locked to a concrete code (session lock), prefer it.
     raw_label = (language or "").strip().lower()
     effective = effective_asr_language(language)
-    if (
-        is_auto_language(raw_label)
-        or is_hiligaynon_language(raw_label)
-        or is_hiligaynon_language(effective)
+    if raw_label in {"en", "english"}:
+        primary_lang: str | None = "en"
+    elif is_tagalog_language(raw_label) or (
+        is_tagalog_language(effective) and not is_auto_language(raw_label)
     ):
-        primary_lang: str | None = None
-    elif raw_label in {"en", "english"}:
-        primary_lang = "en"
-    elif is_tagalog_language(raw_label) or is_tagalog_language(effective):
         primary_lang = "tl"
+    elif is_auto_language(raw_label) or is_hiligaynon_language(raw_label) or is_hiligaynon_language(effective):
+        # Hiligaynon-biased auto: never force tl. Locked concrete non-tl/en codes
+        # still use auto-detect (Whisper has no hil token).
+        primary_lang = None
+    elif raw_label and raw_label not in {"auto", "detect", "none", "hil", "hiligaynon", "ilonggo"}:
+        # Session lock may pass a Whisper ISO code (e.g. "en", "tl").
+        primary_lang = raw_label if len(raw_label) <= 3 else None
     else:
         primary_lang = None
 
-    # Always bias live PH/Hiligaynon decode with the short language prompt.
-    live_prompt = initial_prompt(language)
+    # Always bias live PH/Hiligaynon decode with the short language prompt + vocab.
+    live_prompt = initial_prompt(language, extra_terms=extra_terms)
     t0 = time.perf_counter()
     winning_decode: str | None = primary_lang
     winning_info: object | None = None
@@ -910,16 +1041,16 @@ def transcribe_live(
                 initial_prompt=live_prompt,
             )
 
-    segments, info = _run(primary_lang)
+    with pipeline_metrics.track("asr.live"):
+        segments, info = _run(primary_lang)
     winning_info = info
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
-        if not text or not any(ch.isalnum() for ch in text):
-            continue
-        if _is_junk_transcript(text):
-            continue
-        out.append(Segment(text=text, start=s.start, end=s.end))
+        text = _strip_initial_prompt_echo(text, live_prompt)
+        seg = _segment_from_whisper(s, text=text)
+        if seg:
+            out.append(seg)
 
     # Empty/junk: Tagalog can retry auto↔tl. Hiligaynon stays on auto only.
     if not out and is_tagalog_language(effective):
@@ -931,12 +1062,10 @@ def transcribe_live(
                 winning_info = info
                 for s in segments:
                     text = _collapse_hallucinations((s.text or "").strip())
-                    if (
-                        text
-                        and any(ch.isalnum() for ch in text)
-                        and not _is_junk_transcript(text)
-                    ):
-                        out.append(Segment(text=text, start=s.start, end=s.end))
+                    text = _strip_initial_prompt_echo(text, live_prompt)
+                    seg = _segment_from_whisper(s, text=text)
+                    if seg:
+                        out.append(seg)
             except Exception as exc:
                 logger.debug("Live decode retry failed: %s", exc)
 
@@ -946,7 +1075,7 @@ def transcribe_live(
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     logger.info(
         "asr.live duration_ms=%d segments=%d pcm_samples=%d model=%s "
-        "detected=%s confidence=%s by=%s",
+        "detected=%s confidence=%s by=%s low_conf=%d",
         elapsed_ms,
         len(out),
         int(len(pcm)),
@@ -954,6 +1083,7 @@ def transcribe_live(
         detection.language,
         detection.confidence,
         detection.detected_by,
+        sum(1 for s in out if s.low_confidence),
     )
     return out, detection
 
@@ -1171,8 +1301,9 @@ def _segments_to_list(segments) -> list[Segment]:
     out: list[Segment] = []
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
-        if text and not _is_junk_transcript(text):
-            out.append(Segment(text=text, start=s.start, end=s.end))
+        seg = _segment_from_whisper(s, text=text)
+        if seg:
+            out.append(seg)
     return out
 
 
@@ -1455,7 +1586,7 @@ def _transcribe_final_hf(
         or "hiligaynon" in (model_id or "").lower()
     )
     prompt_ids = (
-        _hf_prompt_ids(pipe, initial_prompt(language)) if use_prompt else None
+        _hf_prompt_ids(pipe, initial_prompt(language, extra_terms=_EXTRA_TERMS_CTX)) if use_prompt else None
     )
     best: list[Segment] = []
     best_score = -1.0
@@ -1560,7 +1691,9 @@ def _run_faster_whisper_final(
             # recover dropped clauses.
             condition_on_previous_text=False,
             without_timestamps=False,
-            initial_prompt=initial_prompt(meeting_language),
+            initial_prompt=initial_prompt(
+                meeting_language, extra_terms=_EXTRA_TERMS_CTX
+            ),
             # Quiet laptop/board mics need a lower gate or speech is dropped.
             no_speech_threshold=0.25,
             compression_ratio_threshold=2.6,
@@ -1867,7 +2000,10 @@ def _merge_chunk_segments(
 
 
 def transcribe_final(
-    audio_source, language: str | None
+    audio_source,
+    language: str | None,
+    *,
+    extra_terms: list[str] | None = None,
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Full-accuracy transcription for Stop Recording / re-transcribe / upload.
 
@@ -1880,19 +2016,64 @@ def transcribe_final(
 
     Returns ``(segments, language_detection)``.
     """
+    from . import pipeline_metrics, vad as vad_svc
+
     samples = _prepare_asr_audio(audio_source)
     if samples.size == 0:
         return [], None
 
+    # Soft VAD: if the *entire* recording looks silent, skip Whisper (no
+    # hallucinated transcript). Partial silence is left to Whisper's own VAD
+    # so we do not crop real speech mid-meeting.
+    vad_result = vad_svc.detect_speech(samples, live=False)
+    if not vad_result.has_speech:
+        logger.info(
+            "asr.final vad_skip_all backend=%s %s samples=%d",
+            vad_result.backend,
+            vad_result.reason,
+            int(samples.size),
+        )
+        return [], None
+
+    # Stash vocab for nested helpers via thread-local-ish attribute on settings
+    # is awkward — pass through _transcribe_final_once via closure by setting
+    # a module-level context var.
+    global _EXTRA_TERMS_CTX
+    prev_terms = _EXTRA_TERMS_CTX
+    _EXTRA_TERMS_CTX = list(extra_terms or [])
+    try:
+        with pipeline_metrics.track("asr.final"):
+            sr = int(settings.audio_sample_rate)
+            duration = float(samples.size) / float(sr)
+            chunk_s = max(60.0, float(settings.whisper_final_chunk_seconds))
+            overlap_s = max(
+                0.0, min(float(settings.whisper_final_chunk_overlap_seconds), chunk_s / 2)
+            )
+
+            # Short recordings: single pass.
+            if duration <= chunk_s * 1.25:
+                return _transcribe_final_once(samples, language)
+            # Long recordings: chunked (existing logic below continues...)
+            return _transcribe_final_chunked(
+                samples, language, duration=duration, chunk_s=chunk_s, overlap_s=overlap_s
+            )
+    finally:
+        _EXTRA_TERMS_CTX = prev_terms
+
+
+_EXTRA_TERMS_CTX: list[str] = []
+
+
+def _transcribe_final_chunked(
+    samples,
+    language: str | None,
+    *,
+    duration: float,
+    chunk_s: float,
+    overlap_s: float,
+) -> tuple[list[Segment], LanguageDetection | None]:
+    """Overlap-chunked final ASR for long board meetings."""
     sr = int(settings.audio_sample_rate)
-    duration = float(samples.size) / float(sr)
-    chunk_s = max(60.0, float(settings.whisper_final_chunk_seconds))
-    overlap_s = max(0.0, min(float(settings.whisper_final_chunk_overlap_seconds), chunk_s / 2))
-
-    # Short recordings: single pass.
-    if duration <= chunk_s * 1.25:
-        return _transcribe_final_once(samples, language)
-
     hop_s = max(1.0, chunk_s - overlap_s)
     chunk_samples = int(chunk_s * sr)
     hop_samples = int(hop_s * sr)

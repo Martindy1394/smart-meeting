@@ -814,6 +814,70 @@ def assess_minutes_faithfulness(
     return {"status": status, "untraced": untraced, "checked": checked}
 
 
+def assess_translation_faithfulness(
+    source: str,
+    translation: str,
+    *,
+    min_overlap: float = 0.08,
+    glossary: list[str] | None = None,
+) -> dict:
+    """Flag likely MT errors between source transcript and English translation.
+
+    Lexical / glossary checks — not NLI. Soft-warn before BART so bad English
+    does not silently poison minutes.
+    """
+    source = (source or "").strip()
+    translation = (translation or "").strip()
+    if not source or not translation:
+        return {"status": "skipped", "untraced": [], "checked": 0}
+
+    untraced: list[dict] = []
+    checked = 0
+
+    # Glossary terms in the source should survive unchanged in the translation.
+    for term in glossary or []:
+        if not term or term.casefold() not in source.casefold():
+            continue
+        checked += 1
+        if term not in translation and term.casefold() not in translation.casefold():
+            untraced.append(
+                {
+                    "section": "Glossary",
+                    "line": term,
+                    "overlap": 0.0,
+                }
+            )
+
+    # Sentence-level content overlap for longer units.
+    src_sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", source) if s.strip()]
+    eng_words = _content_words(translation)
+    if not eng_words:
+        return {"status": "warn" if untraced else "skipped", "untraced": untraced, "checked": checked}
+
+    for sent in src_sents[:40]:
+        words = _content_words(sent)
+        # Skip PH-only short fragments that won't overlap English lexically.
+        if len(words) < 4:
+            continue
+        checked += 1
+        # Proper-noun-ish tokens (capitalized) should often appear in EN.
+        proper = {w for w in words if w[:1].isupper() and len(w) > 2}
+        if proper:
+            hit = len({p.casefold() for p in proper} & {e.casefold() for e in eng_words})
+            overlap = hit / max(1, len(proper))
+            if overlap < min_overlap and hit == 0:
+                untraced.append(
+                    {
+                        "section": "Translation",
+                        "line": sent[:180],
+                        "overlap": round(overlap, 4),
+                    }
+                )
+
+    status = "warn" if untraced else "ok"
+    return {"status": status, "untraced": untraced, "checked": checked}
+
+
 def _idea_preserving_summary(text: str) -> list[str]:
     """Primary path for short meeting speech: keep every distinct point."""
     return _segment_idea_units(text)

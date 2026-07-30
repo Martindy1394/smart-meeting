@@ -146,6 +146,9 @@ class MeetingCreate(BaseModel):
     venue: str = Field(default="", max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)
+    # Proper nouns for Whisper initial_prompt (JSON list or newline text).
+    custom_vocab: str = ""
+    translation_glossary_json: str = "[]"
 
     @field_validator("attendees", mode="before")
     @classmethod
@@ -162,6 +165,8 @@ class MeetingUpdate(BaseModel):
     attendees: list[str] | None = None
     # Kept for API compatibility; product UI always sends ``auto``.
     language: str | None = Field(default=None, max_length=16)
+    custom_vocab: str | None = None
+    translation_glossary_json: str | None = None
 
     @field_validator("attendees", mode="before")
     @classmethod
@@ -185,6 +190,9 @@ class TranscriptSegmentResponse(BaseModel):
     start_time: float
     end_time: float
     seq: int
+    avg_logprob: float | None = None
+    no_speech_prob: float | None = None
+    low_confidence: bool = False
 
     class Config:
         from_attributes = True
@@ -244,6 +252,14 @@ class MeetingSummary(BaseModel):
         from_attributes = True
 
 
+class ActionItem(BaseModel):
+    text: str
+    owner: str | None = None
+    action: str | None = None
+    due_date: str | None = None
+    extracted_at: str | None = None
+
+
 class MeetingDetail(BaseModel):
     id: str
     title: str
@@ -260,6 +276,11 @@ class MeetingDetail(BaseModel):
     translation_language: str
     extractive_fallback: bool = False
     faithfulness: FaithfulnessReport | None = None
+    translation_faithfulness: FaithfulnessReport | None = None
+    custom_vocab: str = ""
+    translation_glossary_json: str = "[]"
+    action_items: list[ActionItem] = Field(default_factory=list)
+    language_locked: bool = False
     duration_seconds: float
     created_at: datetime
     updated_at: datetime
@@ -276,11 +297,9 @@ class MeetingDetail(BaseModel):
 
         return load_attendees(v)
 
-    @field_validator("faithfulness", mode="before")
+    @field_validator("faithfulness", "translation_faithfulness", mode="before")
     @classmethod
     def _parse_faithfulness(cls, v):
-        # ORM stores JSON text in ``faithfulness_json``; detail builder may
-        # already pass a dict. Accept both.
         from .services.ai_quality import load_faithfulness
 
         if v is None or v == "":
@@ -289,6 +308,23 @@ class MeetingDetail(BaseModel):
             return v
         parsed = load_faithfulness(v)
         return parsed
+
+    @field_validator("action_items", mode="before")
+    @classmethod
+    def _parse_action_items(cls, v):
+        import json
+
+        if v is None or v == "":
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v or "[]")
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return []
 
 
 # ------------------------------ AI -----------------------------------------
@@ -316,6 +352,8 @@ class SummarizeResponse(BaseModel):
     # True when engine is extractive / non-BART degraded path.
     extractive_fallback: bool = False
     faithfulness: FaithfulnessReport | None = None
+    translation_faithfulness: FaithfulnessReport | None = None
+    action_items: list[ActionItem] = Field(default_factory=list)
 
 
 class TranslateRequest(BaseModel):

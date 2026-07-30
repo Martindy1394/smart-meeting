@@ -73,6 +73,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   );
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
+  const [customVocab, setCustomVocab] = useState(meeting.custom_vocab || "");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   const [error, setError] = useState("");
@@ -92,6 +93,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     );
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
+    setCustomVocab(meeting.custom_vocab || "");
     setError("");
     setSavedAt(0);
     // Allow the next edit cycle to autosave after state settles.
@@ -120,7 +122,8 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       title.trim() !== (meeting.title || "").trim() ||
       venue.trim() !== (meeting.venue || "").trim() ||
       dateTime !== savedDateTime ||
-      !sameAttendees(currentAttendees, savedAttendees)
+      !sameAttendees(currentAttendees, savedAttendees) ||
+      customVocab.trim() !== (meeting.custom_vocab || "").trim()
     );
   };
 
@@ -161,6 +164,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
         language: "auto",
+        custom_vocab: customVocab.trim(),
       });
       if (seq !== saveSeq.current) return false;
       setAttendees(finalAttendees);
@@ -174,6 +178,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
           language: "auto",
+          custom_vocab: customVocab.trim(),
         });
       }
       return true;
@@ -190,7 +195,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, meeting]);
+  }, [title, venue, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   // Debounced autosave whenever required fields are complete and dirty.
   useEffect(() => {
@@ -206,7 +211,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, meeting, saving]);
+  }, [title, venue, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
 
   useEffect(() => {
     if (!onAutosaveStatus) return;
@@ -218,7 +223,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ready: isComplete(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, savedAt, error, title, venue, dateTime, attendees, attendeeInput, meeting]);
+  }, [saving, savedAt, error, title, venue, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   useEffect(() => {
     return () => {
@@ -329,46 +334,60 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           </div>
         </div>
 
-        <div className="field attendees-field">
-          <label>
-            Attendees <span className="req">*</span>
-          </label>
-          <div className="chips">
-            {attendees.map((name) => (
-              <span className="chip" key={name}>
-                {name}
-                <button
-                  type="button"
-                  className="chip-x"
-                  onClick={() => removeAttendee(name)}
-                  aria-label={`Remove ${name}`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
+          <div className="field attendees-field">
+            <label>
+              Attendees <span className="req">*</span>
+            </label>
+            <div className="chips">
+              {attendees.map((name) => (
+                <span className="chip" key={name}>
+                  {name}
+                  <button
+                    type="button"
+                    className="chip-x"
+                    onClick={() => removeAttendee(name)}
+                    aria-label={`Remove ${name}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="attendee-input-row">
+              <input
+                type="text"
+                placeholder="Type an attendee's name"
+                value={attendeeInput}
+                onChange={(e) => setAttendeeInput(e.target.value)}
+                onKeyDown={onAttendeeKeyDown}
+              />
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={addAttendee}
+                disabled={!attendeeInput.trim()}
+              >
+                + Add
+              </button>
+            </div>
           </div>
-          <div className="attendee-input-row">
-            <input
-              type="text"
-              placeholder="Type an attendee's name"
-              value={attendeeInput}
-              onChange={(e) => setAttendeeInput(e.target.value)}
-              onKeyDown={onAttendeeKeyDown}
+
+          <div className="field custom-vocab-field">
+            <label htmlFor="custom-vocab">
+              Custom vocabulary{" "}
+              <span className="optional-hint">(optional)</span>
+            </label>
+            <textarea
+              id="custom-vocab"
+              rows={3}
+              placeholder="Proper nouns, one per line (e.g. company or place names)"
+              value={customVocab}
+              onChange={(e) => setCustomVocab(e.target.value)}
             />
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={addAttendee}
-              disabled={!attendeeInput.trim()}
-            >
-              + Add
-            </button>
           </div>
         </div>
       </div>
-    </div>
-  );
-});
+    );
+  });
 
 export default MeetingDetails;

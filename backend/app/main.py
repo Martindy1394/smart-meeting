@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .config import settings
 from .database import init_db
-from .routers import ai, auth, meetings
+from .routers import ai, auth, jobs, meetings
 from .services import asr, audio, live_metrics, llm, redis_store
 from .services import crypto_at_rest
 from .ws import transcription as ws_transcription
@@ -194,7 +194,18 @@ def health():
         "environment": settings.environment,
         "live_metrics": live_metrics.snapshot(),
         "pipeline": _build_pipeline_status(),
+        "stage_metrics": __import__(
+            "app.services.pipeline_metrics", fromlist=["snapshot"]
+        ).snapshot(),
+        "job_queue_depth": __import__(
+            "app.services.jobs", fromlist=["queue_depth"]
+        ).queue_depth(),
         "encryption_at_rest": crypto_at_rest.status(),
+        "vad": {
+            "enabled": settings.vad_enabled,
+            "backend": settings.vad_backend,
+        },
+        "audio_retention_days": settings.audio_retention_days,
         "auth": {
             "access_token_expire_minutes": settings.access_token_expire_minutes,
             "refresh_token_expire_days": settings.refresh_token_expire_days,
@@ -307,6 +318,7 @@ def health_transcription():
 app.include_router(auth.router)
 app.include_router(meetings.router)
 app.include_router(ai.router)
+app.include_router(jobs.router)
 app.include_router(ws_transcription.router)
 
 

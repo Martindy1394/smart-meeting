@@ -41,10 +41,11 @@ async def _emit_live_window(
     previous_window: str = "",
     byte_offset: int | None = None,
     replace_caption: bool = False,
-) -> tuple[str, str]:
+    extra_terms: list[str] | None = None,
+) -> tuple[str, str, object | None]:
     """Transcribe one live window and merge into the cumulative caption.
 
-    Returns ``(live_caption, window_text_used_as_previous)``.
+    Returns ``(live_caption, window_text_used_as_previous, language_detection)``.
 
     ``replace_caption=True`` supersedes a short warmup caption with the first
     full window (avoids duplicated openings like ``Mic test! Mic test!``).
@@ -75,9 +76,15 @@ async def _emit_live_window(
             byte_offset,
         )
         # Keep previous_window so the next speech hop still merges cleanly.
-        return live_caption, previous_window
+        return live_caption, previous_window, None
 
-    result = await asyncio.to_thread(asr.transcribe_pcm, samples, language, live=True)
+    result = await asyncio.to_thread(
+        asr.transcribe_pcm,
+        samples,
+        language,
+        live=True,
+        extra_terms=extra_terms,
+    )
     window_text = result.text
     logger.info(
         "live.window meeting=%s seq=%d bytes=%d dur=%.2fs rms_i16=%.1f "
@@ -93,7 +100,7 @@ async def _emit_live_window(
         (window_text or "")[:160],
     )
     if not window_text:
-        return live_caption, previous_window
+        return live_caption, previous_window, getattr(result, "language_detection", None) or None
 
     if replace_caption:
         merged = window_text.strip()
@@ -129,8 +136,15 @@ async def _emit_live_window(
             relative_end=rel_end,
             window_duration=dur_s,
         )
+        first = segs[0] if segs else None
         wire_seg = segment_wire_dict(
-            text=window_text, start=abs_start, end=abs_end, seq=seq
+            text=window_text,
+            start=abs_start,
+            end=abs_end,
+            seq=seq,
+            avg_logprob=getattr(first, "avg_logprob", None) if first else None,
+            no_speech_prob=getattr(first, "no_speech_prob", None) if first else None,
+            low_confidence=bool(getattr(first, "low_confidence", False)) if first else False,
         )
         await _send(
             websocket,
@@ -149,8 +163,19 @@ async def _emit_live_window(
                 window_text,
                 start_time=abs_start,
                 end_time=abs_end,
+                avg_logprob=getattr(first, "avg_logprob", None) if first else None,
+                no_speech_prob=getattr(first, "no_speech_prob", None) if first else None,
+                low_confidence=bool(getattr(first, "low_confidence", False)) if first else False,
             )
-    return merged, window_text
+    detection = None
+    if getattr(result, "language_confidence", None) is not None or getattr(result, "language", None):
+        from ..services.transcription import LanguageDetection
+        detection = LanguageDetection(
+            language=result.language,
+            confidence=result.language_confidence,
+            detected_by=result.language_detected_by or "whisper",
+        )
+    return merged, window_text, detection
 
 
 @router.websocket("/ws/transcribe")
@@ -239,6 +264,40 @@ async def transcribe_ws(websocket: WebSocket):
     live_offset = int(meta.get("live_offset") or 0)
     warmup_done = bool(meta.get("seq"))  # skip warmup after reconnect mid-session
     resumed = bool(seq or live_caption or live_offset)
+
+    # Custom vocabulary + session language lock (Tier 1).
+    from ..services import transcription as transcription_svc
+    extra_terms: list[str] = []
+    language_locked = bool(meta.get("language_locked"))
+    locked_language = (meta.get("locked_language") or "").strip() or None
+    lock_started_at = None
+    try:
+        db2 = SessionLocal()
+        try:
+            mrow = db2.get(Meeting, meeting_id)
+            if mrow is not None:
+                extra_terms = transcription_svc.parse_custom_vocab(
+                    getattr(mrow, "custom_vocab", "") or ""
+                )
+                # Also bias with attendee names (proper nouns).
+                try:
+                    from ..services.attendees import load_attendees
+                    extra_terms = transcription_svc.parse_custom_vocab(
+                        list(extra_terms) + load_attendees(mrow.attendees)
+                    )
+                except Exception:
+                    pass
+                if getattr(mrow, "language_locked", False) and (mrow.language or "").strip():
+                    language_locked = True
+                    locked_language = (mrow.language or "").strip()
+        finally:
+            db2.close()
+    except Exception:
+        pass
+    if language_locked and locked_language:
+        # Reuse locked code for the session (never force hil→tl).
+        language = locked_language
+    speech_seconds_seen = 0.0
 
     # Local fallback only used when Redis is down (disk is still authoritative).
     local_pcm = bytearray()
@@ -396,6 +455,7 @@ async def transcribe_ws(websocket: WebSocket):
         by ``hop`` only — the 5s overlap is retained in the buffer (never trimmed).
         """
         nonlocal live_caption, previous_window, seq, live_offset, warmup_done
+        nonlocal language, language_locked, locked_language, speech_seconds_seen
         if not live_available:
             return False
         total = _recording_length()
@@ -412,15 +472,27 @@ async def transcribe_ws(websocket: WebSocket):
             if len(chunk) >= bytes_per_warmup:
                 seq += 1
                 try:
-                    live_caption, previous_window = await _emit_live_window(
+                    live_caption, previous_window, _det = await _emit_live_window(
                         websocket,
                         meeting_id=meeting_id,
                         chunk=chunk,
                         language=language,
                         seq=seq,
+                        extra_terms=extra_terms,
                         live_caption=live_caption,
                         previous_window=previous_window,
                         byte_offset=0,
+                    )
+                    language, language_locked, locked_language, speech_seconds_seen = (
+                        _maybe_lock_language(
+                            language=language,
+                            language_locked=language_locked,
+                            locked_language=locked_language,
+                            detection=_det,
+                            speech_seconds_seen=speech_seconds_seen,
+                            meeting_id=meeting_id,
+                            window_seconds=float(settings.whisper_live_warmup_seconds or 2.5),
+                        )
                     )
                 except Exception as exc:
                     logger.exception("Live warmup transcription error: %s", exc)
@@ -451,16 +523,28 @@ async def transcribe_ws(websocket: WebSocket):
         )
         seq += 1
         try:
-            live_caption, previous_window = await _emit_live_window(
+            live_caption, previous_window, _det = await _emit_live_window(
                 websocket,
                 meeting_id=meeting_id,
                 chunk=chunk,
                 language=language,
                 seq=seq,
+                extra_terms=extra_terms,
                 live_caption=live_caption,
                 previous_window=previous_window,
                 byte_offset=window_offset,
                 replace_caption=supersede_warmup,
+            )
+            language, language_locked, locked_language, speech_seconds_seen = (
+                _maybe_lock_language(
+                    language=language,
+                    language_locked=language_locked,
+                    locked_language=locked_language,
+                    detection=_det,
+                    speech_seconds_seen=speech_seconds_seen,
+                    meeting_id=meeting_id,
+                    window_seconds=float(settings.whisper_live_window_seconds or 10.0),
+                )
             )
         except Exception as exc:
             logger.exception("Live transcription error: %s", exc)
@@ -673,15 +757,27 @@ async def transcribe_ws(websocket: WebSocket):
                 break
             seq += 1
             try:
-                live_caption, previous_window = await _emit_live_window(
+                live_caption, previous_window, _det = await _emit_live_window(
                     websocket,
                     meeting_id=meeting_id,
                     chunk=chunk,
                     language=language,
                     seq=seq,
+                    extra_terms=extra_terms,
                     live_caption=live_caption,
                     previous_window=previous_window,
                     byte_offset=live_offset,
+                )
+                language, language_locked, locked_language, speech_seconds_seen = (
+                    _maybe_lock_language(
+                        language=language,
+                        language_locked=language_locked,
+                        locked_language=locked_language,
+                        detection=_det,
+                        speech_seconds_seen=speech_seconds_seen,
+                        meeting_id=meeting_id,
+                        window_seconds=float(settings.whisper_live_window_seconds or 10.0),
+                    )
                 )
             except Exception as exc:
                 logger.exception("Live flush transcription error: %s", exc)
@@ -693,20 +789,33 @@ async def transcribe_ws(websocket: WebSocket):
             chunk = _read_slice(live_offset, total - 1)
             seq += 1
             try:
-                live_caption, previous_window = await _emit_live_window(
+                live_caption, previous_window, _det = await _emit_live_window(
                     websocket,
                     meeting_id=meeting_id,
                     chunk=chunk,
                     language=language,
                     seq=seq,
+                    extra_terms=extra_terms,
                     live_caption=live_caption,
                     previous_window=previous_window,
                     byte_offset=live_offset,
                 )
-                live_offset = total
-                _persist_meta()
+                language, language_locked, locked_language, speech_seconds_seen = (
+                    _maybe_lock_language(
+                        language=language,
+                        language_locked=language_locked,
+                        locked_language=locked_language,
+                        detection=_det,
+                        speech_seconds_seen=speech_seconds_seen,
+                        meeting_id=meeting_id,
+                        window_seconds=float(leftover)
+                        / float(settings.audio_sample_rate * 2),
+                    )
+                )
             except Exception as exc:
-                logger.exception("Live flush transcription error: %s", exc)
+                logger.exception("Live leftover flush error: %s", exc)
+            live_offset = total
+            _persist_meta()
 
     # ---- Finalization (two-pass) — only after explicit client stop ----------
     try:
@@ -745,6 +854,73 @@ async def transcribe_ws(websocket: WebSocket):
         pass
 
 
+
+def _maybe_lock_language(
+    *,
+    language: str,
+    language_locked: bool,
+    locked_language: str | None,
+    detection,
+    speech_seconds_seen: float,
+    meeting_id: str,
+    window_seconds: float,
+) -> tuple[str, bool, str | None, float]:
+    """Session-level language lock after first ~N seconds of speech."""
+    from ..config import settings as _settings
+    from ..database import SessionLocal
+    from ..models import Meeting
+
+    speech_seconds_seen += max(0.0, float(window_seconds or 0.0))
+    if language_locked and locked_language:
+        return locked_language, True, locked_language, speech_seconds_seen
+    if detection is None:
+        return language, False, None, speech_seconds_seen
+    conf = getattr(detection, "confidence", None)
+    code = (getattr(detection, "language", None) or "").strip().lower() or None
+    # Relock trigger: extreme no-speech is handled per-segment; here we only lock.
+    need = float(getattr(_settings, "asr_language_lock_seconds", 8.0) or 8.0)
+    min_conf = float(getattr(_settings, "asr_language_min_confidence", 0.45) or 0.45)
+    if speech_seconds_seen < need:
+        return language, False, None, speech_seconds_seen
+    if not code:
+        return language, False, None, speech_seconds_seen
+    if conf is not None and float(conf) < min_conf:
+        return language, False, None, speech_seconds_seen
+    # Keep Hiligaynon bias: if Whisper says tl but meeting is hil-biased auto, do not lock to tl.
+    from ..services import transcription as tsvc
+    if tsvc.is_tagalog_language(code) and tsvc.is_hiligaynon_language(
+        tsvc.effective_asr_language("auto")
+    ):
+        # Still lock the *session decode mode* as auto/hil (None→auto path), not tl.
+        code = "hil"
+    language_locked = True
+    locked_language = code
+    language = code
+    redis_store.set_session_meta(
+        meeting_id,
+        language_locked=True,
+        locked_language=code,
+        locked_confidence=float(conf) if conf is not None else None,
+    )
+    try:
+        db = SessionLocal()
+        try:
+            m = db.get(Meeting, meeting_id)
+            if m is not None:
+                m.language_locked = True
+                # Store detected code for operators; product still treats hil as auto-decode.
+                if code and code not in {"auto", "detect", "none"}:
+                    m.language = code
+                m.language_confidence = float(conf) if conf is not None else m.language_confidence
+                m.language_detected_by = getattr(detection, "detected_by", None) or "whisper"
+                db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return language, language_locked, locked_language, speech_seconds_seen
+
+
 def _persist_live_segment(
     meeting_id: str,
     seq: int,
@@ -752,6 +928,9 @@ def _persist_live_segment(
     *,
     start_time: float = 0.0,
     end_time: float = 0.0,
+    avg_logprob: float | None = None,
+    no_speech_prob: float | None = None,
+    low_confidence: bool = False,
 ) -> None:
     db = SessionLocal()
     try:
@@ -763,6 +942,9 @@ def _persist_live_segment(
                 seq=seq,
                 start_time=float(start_time or 0.0),
                 end_time=float(end_time or 0.0),
+                avg_logprob=avg_logprob,
+                no_speech_prob=no_speech_prob,
+                low_confidence=bool(low_confidence),
             )
         )
         db.commit()

@@ -34,6 +34,19 @@ export interface TranscriptSegment {
   /** Wire/WS/finalize alias for end_time */
   end?: number;
   seq: number;
+  /** Whisper avg log-probability for the segment (lower = less confident). */
+  avg_logprob?: number | null;
+  no_speech_prob?: number | null;
+  /** Soft flag — UI may underline / badge low-confidence captions. */
+  low_confidence?: boolean;
+}
+
+/** Structured action item from BART Action Items (or persisted JSON). */
+export interface ActionItem {
+  text: string;
+  owner?: string;
+  action?: string;
+  due_date?: string;
 }
 
 export interface LanguageDetectionInfo {
@@ -85,6 +98,17 @@ export interface MeetingDetail {
   extractive_fallback: boolean;
   /** Persisted faithfulness report — survives reload. */
   faithfulness?: FaithfulnessReport | null;
+  /** Proper nouns / terms for Whisper initial_prompt (JSON list or newlines). */
+  custom_vocab?: string;
+  /** Do-not-translate glossary JSON for NLLB/mBART. */
+  translation_glossary_json?: string;
+  /** Persisted action items JSON (or parsed array below). */
+  action_items_json?: string;
+  action_items?: ActionItem[];
+  /** Session ASR language lock (detect once, reuse). */
+  language_locked?: boolean;
+  /** Transcript↔translation faithfulness (Tier 2). */
+  translation_faithfulness?: FaithfulnessReport | null;
   duration_seconds: number;
   created_at: string;
   updated_at: string;
@@ -98,6 +122,12 @@ export interface MeetingCreate {
   venue?: string;
   meeting_date?: string | null;
   attendees?: string[];
+  custom_vocab?: string;
+  translation_glossary_json?: string;
+  action_items_json?: string;
+  action_items?: ActionItem[];
+  language_locked?: boolean;
+  translation_faithfulness?: FaithfulnessReport | null;
 }
 
 export interface MeetingUpdate {
@@ -106,6 +136,12 @@ export interface MeetingUpdate {
   meeting_date?: string | null;
   attendees?: string[] | null;
   language?: string | null;
+  custom_vocab?: string;
+  translation_glossary_json?: string;
+  action_items_json?: string;
+  action_items?: ActionItem[];
+  language_locked?: boolean;
+  translation_faithfulness?: FaithfulnessReport | null;
 }
 
 export interface SummarizeResponse {
@@ -127,4 +163,7 @@ export interface WireSegment {
   end_time: number;
   seq?: number;
   kind?: string;
+  avg_logprob?: number | null;
+  no_speech_prob?: number | null;
+  low_confidence?: boolean;
 }
