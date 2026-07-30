@@ -95,6 +95,81 @@ class CryptoAtRestTests(unittest.TestCase):
         finally:
             settings.data_encryption_key = original
 
+    def test_wrong_key_raises_decryption_error(self):
+        from cryptography.fernet import Fernet
+
+        from app.config import settings
+        from app.services import crypto_at_rest
+
+        key_a = Fernet.generate_key().decode()
+        key_b = Fernet.generate_key().decode()
+        original = settings.data_encryption_key
+        try:
+            settings.data_encryption_key = key_a
+            enc = crypto_at_rest.encrypt_bytes(b"RIFF....WAVE")
+            settings.data_encryption_key = key_b
+            with self.assertRaises(crypto_at_rest.DecryptionError) as ctx:
+                crypto_at_rest.decrypt_bytes(enc)
+            self.assertIn("Decryption failed / Data corrupted", str(ctx.exception))
+        finally:
+            settings.data_encryption_key = original
+
+    def test_missing_key_raises_on_ciphertext(self):
+        from cryptography.fernet import Fernet
+
+        from app.config import settings
+        from app.services import crypto_at_rest
+
+        key = Fernet.generate_key().decode()
+        original = settings.data_encryption_key
+        try:
+            settings.data_encryption_key = key
+            enc = crypto_at_rest.encrypt_bytes(b"secret-audio")
+            settings.data_encryption_key = ""
+            with self.assertRaises(crypto_at_rest.DecryptionError) as ctx:
+                crypto_at_rest.decrypt_bytes(enc)
+            self.assertIn("DATA_ENCRYPTION_KEY", str(ctx.exception))
+        finally:
+            settings.data_encryption_key = original
+
+    def test_redis_get_wav_raises_on_decrypt_failure(self):
+        from cryptography.fernet import Fernet
+
+        from app.config import settings
+        from app.services import crypto_at_rest, redis_store
+
+        class _FakeClient:
+            def __init__(self, payload: bytes):
+                self._payload = payload
+
+            def get(self, _key):
+                return self._payload
+
+        key = Fernet.generate_key().decode()
+        original = settings.data_encryption_key
+        try:
+            settings.data_encryption_key = key
+            enc = crypto_at_rest.encrypt_bytes(b"RIFFWAVEblob")
+            settings.data_encryption_key = Fernet.generate_key().decode()
+            with patch.object(redis_store, "get_client", return_value=_FakeClient(enc)):
+                with self.assertRaises(crypto_at_rest.DecryptionError):
+                    redis_store.get_wav_bytes("meeting-1")
+        finally:
+            settings.data_encryption_key = original
+
+    def test_redis_get_wav_empty_on_miss(self):
+        from app.services import redis_store
+
+        class _FakeClient:
+            def get(self, _key):
+                return None
+
+        with patch.object(redis_store, "get_client", return_value=_FakeClient()):
+            self.assertEqual(redis_store.get_wav_bytes("missing"), b"")
+
+        with patch.object(redis_store, "get_client", return_value=None):
+            self.assertEqual(redis_store.get_wav_bytes("no-redis"), b"")
+
 
 class HiligaynonForcingTests(unittest.TestCase):
     def test_pipeline_reports_never_tl(self):

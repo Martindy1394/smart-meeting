@@ -410,10 +410,12 @@ def load_audio_float32(path: str) -> np.ndarray:
     """Load a stored WAV into float32 mono @ ``audio_sample_rate`` for Whisper."""
     with open(path, "rb") as fh:
         data = fh.read()
-    try:
-        from . import crypto_at_rest
+    from . import crypto_at_rest
 
+    try:
         data = crypto_at_rest.decrypt_bytes(data)
+    except crypto_at_rest.DecryptionError:
+        raise
     except Exception as exc:
         raise AudioFormatError(f"Could not decrypt stored audio: {exc}") from exc
     if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
@@ -428,7 +430,10 @@ def load_audio_float32(path: str) -> np.ndarray:
 
 
 def read_stored_wav_bytes(path: str) -> bytes:
-    """Read on-disk WAV bytes, decrypting when encryption-at-rest is used."""
+    """Read on-disk WAV bytes, decrypting when encryption-at-rest is used.
+
+    Raises ``crypto_at_rest.DecryptionError`` when ciphertext cannot be opened.
+    """
     with open(path, "rb") as fh:
         data = fh.read()
     from . import crypto_at_rest

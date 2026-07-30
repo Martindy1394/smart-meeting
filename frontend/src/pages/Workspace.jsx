@@ -5,6 +5,7 @@ import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import DashboardPanel from "../components/DashboardPanel.jsx";
 import HistoryPanel from "../components/HistoryPanel.jsx";
 import MeetingRoom from "../components/MeetingRoom.jsx";
+import PanelErrorBoundary from "../components/PanelErrorBoundary.jsx";
 import SettingsPanel from "../components/SettingsPanel.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 
@@ -12,10 +13,12 @@ export default function Workspace() {
   const [section, setSection] = useState("dashboard");
   const [meetings, setMeetings] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState("");
   const [search, setSearch] = useState("");
   const [activeId, setActiveId] = useState(null);
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loadingMeeting, setLoadingMeeting] = useState(false);
+  const [meetingLoadError, setMeetingLoadError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState(null);
   // True when opening an existing meeting from History (review mode).
@@ -27,10 +30,13 @@ export default function Workspace() {
 
   const loadMeetings = useCallback(async (q) => {
     setLoadingList(true);
+    setListError("");
     try {
       const list = await api.listMeetings(q);
-      setMeetings(list);
-    } catch {
+      setMeetings(Array.isArray(list) ? list : []);
+    } catch (err) {
+      // Do not pretend the workspace is empty — surface the failure.
+      setListError(err?.message || "Could not load meetings.");
       setMeetings([]);
     } finally {
       setLoadingList(false);
@@ -59,11 +65,13 @@ export default function Workspace() {
     setAutosaveStatus(null);
     setHistoryView(true);
     setLoadingMeeting(true);
+    setMeetingLoadError("");
     try {
       const detail = await api.getMeeting(id);
       setActiveMeeting(detail);
-    } catch {
+    } catch (err) {
       setActiveMeeting(null);
+      setMeetingLoadError(err?.message || "Could not load this meeting.");
     } finally {
       setLoadingMeeting(false);
     }
@@ -210,47 +218,70 @@ export default function Workspace() {
           )}
         </div>
 
-        {showDashboard ? (
-          <DashboardPanel
-            meetings={meetings}
-            loading={loadingList}
-            onSelect={selectMeeting}
-            onCreate={createMeeting}
-          />
-        ) : showSettings ? (
-          <SettingsPanel />
-        ) : showHistory ? (
-          <HistoryPanel
-            meetings={meetings}
-            loading={loadingList}
-            search={search}
-            onSearch={setSearch}
-            activeId={activeId}
-            onSelect={selectMeeting}
-            onDelete={requestDeleteMeeting}
-            onCreate={createMeeting}
-          />
-        ) : loadingMeeting ? (
-          <div className="center-spin">
-            <span className="spinner" /> Loading meeting…
-          </div>
-        ) : activeMeeting ? (
-          <MeetingRoom
-            key={activeMeeting.id}
-            meeting={activeMeeting}
-            onMeetingUpdated={refreshActive}
-            onAutosaveStatus={setAutosaveStatus}
-            historyView={historyView}
-            onBack={historyView ? backToHistory : undefined}
-          />
-        ) : (
-          <DashboardPanel
-            meetings={meetings}
-            loading={loadingList}
-            onSelect={selectMeeting}
-            onCreate={createMeeting}
-          />
-        )}
+        <PanelErrorBoundary
+          title="This panel failed to render"
+          onRetry={() => loadMeetings(search)}
+        >
+          {showDashboard ? (
+            <DashboardPanel
+              meetings={meetings}
+              loading={loadingList}
+              error={listError}
+              onRetry={() => loadMeetings(search)}
+              onSelect={selectMeeting}
+              onCreate={createMeeting}
+            />
+          ) : showSettings ? (
+            <SettingsPanel />
+          ) : showHistory ? (
+            <HistoryPanel
+              meetings={meetings}
+              loading={loadingList}
+              error={listError}
+              onRetry={() => loadMeetings(search)}
+              search={search}
+              onSearch={setSearch}
+              activeId={activeId}
+              onSelect={selectMeeting}
+              onDelete={requestDeleteMeeting}
+              onCreate={createMeeting}
+            />
+          ) : loadingMeeting ? (
+            <div className="center-spin">
+              <span className="spinner" /> Loading meeting…
+            </div>
+          ) : activeMeeting ? (
+            <MeetingRoom
+              key={activeMeeting.id}
+              meeting={activeMeeting}
+              onMeetingUpdated={refreshActive}
+              onAutosaveStatus={setAutosaveStatus}
+              historyView={historyView}
+              onBack={historyView ? backToHistory : undefined}
+            />
+          ) : meetingLoadError ? (
+            <div className="panel-error-boundary" role="alert">
+              <h3>Could not open meeting</h3>
+              <p>{meetingLoadError}</p>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => (activeId ? selectMeeting(activeId) : backToHistory())}
+              >
+                Try again
+              </button>
+            </div>
+          ) : (
+            <DashboardPanel
+              meetings={meetings}
+              loading={loadingList}
+              error={listError}
+              onRetry={() => loadMeetings(search)}
+              onSelect={selectMeeting}
+              onCreate={createMeeting}
+            />
+          )}
+        </PanelErrorBoundary>
 
         <AppFooter />
       </div>

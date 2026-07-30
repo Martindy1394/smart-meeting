@@ -47,11 +47,16 @@ UI components
   - WS close after stop → immediate REST finalize (+ poll when `in_progress`)
   - Immediate REST path when socket already down / stop send fails
 
-### C3 — Decrypt failures look like “no audio”
-- **Mismatch:** Redis/crypto errors return `b""`; FE maps 404 audio to empty state.
-- **Impact:** After key rotation, playback/retranscribe fail silently while `has_audio` may still be true.
-- **Evidence:** `redis_store.get_wav_bytes` / `get_pcm`; `MeetingRoom.loadAudio`.
-- **Fix:** Return 500 + clear detail; FE show decrypt/config error, not “No recording yet”.
+### C3 — Decrypt failures look like “no audio” — **FIXED**
+- **Was:** Redis/crypto errors returned `b""`; FE mapped audio load failures / 404 to empty “No recording yet”.
+- **Impact:** After key rotation, playback/retranscribe failed silently while `has_audio` could still be true.
+- **Fix shipped:**
+  - `crypto_at_rest.DecryptionError` / `EncryptionError` with stable copy `Decryption failed / Data corrupted`
+  - `redis_store.get_wav_bytes` / `get_pcm` raise on decrypt or Redis read failures (miss/unavailable still `b""`)
+  - `wav_cached` / `pcm_cached` for non-decrypting `has_audio` checks
+  - `GET /meetings/{id}/audio` returns **500** with decrypt/cache detail (404 only when truly missing)
+  - FE `getMeetingAudioUrl` surfaces API detail; MeetingRoom shows decrypt/corrupt player state
+  - Workspace list/open failures show error banners (not empty-list masquerade); `PanelErrorBoundary` wraps panels
 
 ---
 
@@ -86,9 +91,9 @@ UI components
 - Live proactive JWT refresh keeps a usable access token for `pagehide` in normal long meetings.
 - Residual risk only if refresh is unreachable at the moment of tab close.
 
-### M7 — FE swallows errors as empty state
-- `loadMeetings` → `[]` on any failure; audio errors look like no file; create/delete often silent.
-- **Impact:** 401/500 indistinguishable from “no data”.
+### M7 — FE swallows errors as empty state — **PARTIALLY FIXED**
+- Meeting list / open / audio load now surface error banners instead of silent `[]` / empty player.
+- Remaining: some create/delete/settings paths may still soft-fail; track separately.
 
 ### M8 — Profile update validation weaker than signup
 - Signup requires non-empty names/position/workplace; profile PATCH allows clearing them to `""`.
@@ -143,7 +148,7 @@ UI components
 
 ## Unhandled exception hotspots
 
-1. Redis decrypt → empty bytes → FE “no audio” (C3).
+1. ~~Redis decrypt → empty bytes → FE “no audio” (C3).~~ fixed (raise + UI integrity state).
 2. Background retranscribe → `failed` only visible if UI is polling.
 3. Live `_persist_live_segment` rollback with no client signal.
 4. Workspace list/create/delete catch without user-visible error (M7).
@@ -155,7 +160,7 @@ UI components
 
 1. ~~WS token refresh + 4401/4409 handling (C1, M5).~~ done.
 2. ~~Finalize watchdog → REST `/stop` (C2, M6).~~ done (M6 residual unload-only).
-3. Decrypt/audio error surfacing (C3, M7).
+3. ~~Decrypt/audio error surfacing (C3, M7).~~ done (M7 partial).
 4. Align `MeetingCreate` validation with FE details gate (M2).
 5. Unify segment timestamp names; persist live times (M1).
 6. Upload language = meeting language (M4).

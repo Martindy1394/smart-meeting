@@ -33,3 +33,8 @@ stored as `SMENC1` + Fernet ciphertext.
 - Pair with TLS in transit and short-lived JWTs + refresh revocation
   (see auth settings).
 - `/api/health` → `encryption_at_rest` shows enabled status.
+- Decrypt / cache integrity failures raise `DecryptionError` (or
+  `AudioCacheError`) and surface as HTTP **500** with
+  `Decryption failed / Data corrupted` — they must never look like “no audio”.
+  Meeting list `has_audio` uses Redis key existence (no decrypt) so a bad key
+  does not blank the history list.

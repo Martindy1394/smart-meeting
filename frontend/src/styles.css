@@ -1102,8 +1102,58 @@ button {
   color: var(--text-dim);
   font-size: 12px;
 }
+.audio-player-error {
+  height: auto;
+  min-height: 36px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 12px;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--danger, #b42318) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger, #b42318) 8%, var(--surface-2));
+  color: var(--danger, #b42318);
+}
+.audio-player-error-detail {
+  font-size: 11px;
+  opacity: 0.9;
+  color: var(--text-dim);
+  word-break: break-word;
+}
 .audio-player-hint {
   opacity: 0.85;
+}
+.card-tag.is-error {
+  color: var(--danger, #b42318);
+  border-color: color-mix(in srgb, var(--danger, #b42318) 40%, var(--border));
+}
+.list-load-error,
+.panel-error-boundary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius, 10px);
+  border: 1px solid color-mix(in srgb, var(--danger, #b42318) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger, #b42318) 7%, var(--surface));
+  color: var(--text);
+}
+.list-load-error strong,
+.panel-error-boundary h3 {
+  margin: 0;
+  color: var(--danger, #b42318);
+  font-size: 14px;
+}
+.list-load-error p,
+.panel-error-boundary p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.history-list-error {
+  color: var(--danger, #b42318);
 }
 .card {
   background: var(--surface);

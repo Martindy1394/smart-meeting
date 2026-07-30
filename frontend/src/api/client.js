@@ -67,6 +67,26 @@ class ApiError extends Error {
   }
 }
 
+/** Flatten FastAPI ``detail`` (string | list | object) into one message. */
+export function flattenApiDetail(detail) {
+  if (detail == null || detail === "") return "";
+  if (Array.isArray(detail)) {
+    return detail.map((d) => d?.msg || JSON.stringify(d)).join("; ");
+  }
+  if (typeof detail === "object") {
+    return detail.message || detail.detail || JSON.stringify(detail);
+  }
+  return String(detail);
+}
+
+/** True when the error is a decrypt / corrupt / audio-cache integrity failure. */
+export function isDataIntegrityError(err) {
+  const msg = String(err?.message || err || "");
+  return /decrypt|corrupt|encryption key|audio cache failure|data corrupted/i.test(
+    msg
+  );
+}
+
 let refreshInFlight = null;
 
 export async function refreshAccessToken() {
@@ -154,10 +174,7 @@ async function request(path, { method = "GET", body, auth = true, _retry = true 
   }
 
   if (!res.ok) {
-    let detail = data?.detail;
-    if (Array.isArray(detail)) {
-      detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
-    }
+    const detail = flattenApiDetail(data?.detail);
     throw new ApiError(detail || `Request failed (${res.status})`, res.status);
   }
   return data;
@@ -234,7 +251,7 @@ export const api = {
       let detail = "Could not export meeting.";
       try {
         const data = await res.json();
-        if (data?.detail) detail = data.detail;
+        detail = flattenApiDetail(data?.detail) || detail;
       } catch {
         /* ignore */
       }
@@ -248,7 +265,8 @@ export const api = {
   },
   /**
    * Fetch meeting audio as a blob URL for <audio> playback.
-   * Returns null when no recording exists yet.
+   * Returns null when no recording exists yet (404).
+   * Throws ApiError on decrypt/cache/server failures (never silent empty).
    */
   getMeetingAudioUrl: async (id) => {
     const token = getToken();
@@ -271,7 +289,19 @@ export const api = {
     }
     if (res.status === 404) return null;
     if (!res.ok) {
-      throw new ApiError("Could not load meeting audio.", res.status);
+      let detail = "Could not load meeting audio.";
+      try {
+        const data = await res.json();
+        detail = flattenApiDetail(data?.detail) || detail;
+      } catch {
+        /* ignore */
+      }
+      if (isDataIntegrityError({ message: detail })) {
+        detail = detail.includes("Decryption failed")
+          ? detail
+          : `Decryption failed / Data corrupted. ${detail}`;
+      }
+      throw new ApiError(detail, res.status);
     }
     const blob = await res.blob();
     return URL.createObjectURL(blob);

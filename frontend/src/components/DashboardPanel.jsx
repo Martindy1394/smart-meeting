@@ -151,6 +151,8 @@ function TranslationCard({ meeting, onSelect }) {
 export default function DashboardPanel({
   meetings,
   loading,
+  error,
+  onRetry,
   onSelect,
   onCreate,
 }) {
@@ -182,9 +184,29 @@ export default function DashboardPanel({
         </div>
       </div>
 
+      {error ? (
+        <div className="list-load-error" role="alert">
+          <strong>Could not load meetings</strong>
+          <p>{error}</p>
+          {typeof onRetry === "function" && (
+            <button type="button" className="btn" onClick={onRetry}>
+              Try again
+            </button>
+          )}
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="center-spin">
           <span className="spinner" /> Loading dashboard…
+        </div>
+      ) : error ? (
+        <div className="dash-empty" role="alert">
+          <h4>Dashboard unavailable</h4>
+          <p>
+            The meeting list failed to load. This is not an empty workspace —
+            fix the connection or server error, then retry.
+          </p>
         </div>
       ) : (
         <>

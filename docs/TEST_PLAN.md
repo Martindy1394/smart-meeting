@@ -112,7 +112,7 @@ Prioritized for test design and future fixes:
 | E14 | Stuck `processing` until stale lease (~45m) | Poor UX if worker dies | `janitor` / `is_processing_stale` |
 | E15 | Concurrent stop (WS + REST + janitor) | `lease-lost` / empty client expectation | `finalize` claim |
 | E16 | In-memory rate limits not shared across workers | Weak auth/AI throttling in multi-process | `limiter.py` |
-| E17 | Encrypted Redis read errors can look like “no audio” | Ops misdiagnosis after key rotation | `redis_store.get_wav_bytes` |
+| E17 | Encrypted Redis/disk read errors can look like “no audio” | **Fixed (C3)** — raise `DecryptionError` / 500; FE integrity state | `crypto_at_rest`, `redis_store`, `MeetingRoom` |
 
 ---
 

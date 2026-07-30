@@ -70,6 +70,7 @@ export default function MeetingRoom({
   const autoSummaryRef = useRef("");
   const [audioUrl, setAudioUrl] = useState(null);
   const [audioLoading, setAudioLoading] = useState(false);
+  const [audioError, setAudioError] = useState("");
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrError, setAsrError] = useState("");
   const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
@@ -88,6 +89,7 @@ export default function MeetingRoom({
   const loadAudio = useCallback(
     async (meetingId) => {
       setAudioLoading(true);
+      setAudioError("");
       try {
         const url = await api.getMeetingAudioUrl(meetingId);
         if (!url) {
@@ -97,8 +99,11 @@ export default function MeetingRoom({
         if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
         audioUrlRef.current = url;
         setAudioUrl(url);
-      } catch {
+      } catch (err) {
         revokeAudioUrl();
+        setAudioError(
+          err?.message || "Decryption failed / Data corrupted."
+        );
       } finally {
         setAudioLoading(false);
       }
@@ -272,6 +277,7 @@ export default function MeetingRoom({
     setSummaryError("");
     setTranslateError("");
     setAsrError("");
+    setAudioError("");
     setSummaryEngine("");
     setHasAudio(Boolean(meeting.has_audio));
     autoTranslateRef.current = meeting.translation ? meeting.final_transcript || "" : "";
@@ -778,18 +784,27 @@ export default function MeetingRoom({
       <div className="recording-player-bar" aria-label="Meeting recording player">
         <div className="recording-player-meta">
           <span className="recording-player-label">Recording</span>
-          <span className="card-tag">
+          <span className={`card-tag${audioError ? " is-error" : ""}`}>
             {audioLoading
               ? "Loading…"
-              : audioUrl || hasAudio
-                ? "Saved audio"
-                : "No recording yet"}
+              : audioError
+                ? "Decryption failed / Data corrupted"
+                : audioUrl || hasAudio
+                  ? "Saved audio"
+                  : "No recording yet"}
           </span>
         </div>
         <div className="audio-player-wrap">
-          {audioLoading && !audioUrl ? (
+          {audioLoading && !audioUrl && !audioError ? (
             <div className="audio-player-empty">
               <span className="audio-player-hint">Loading recording…</span>
+            </div>
+          ) : audioError ? (
+            <div className="audio-player-empty audio-player-error" role="alert">
+              <span className="audio-player-hint">
+                Decryption failed / Data corrupted
+              </span>
+              <span className="audio-player-error-detail">{audioError}</span>
             </div>
           ) : audioUrl ? (
             <audio

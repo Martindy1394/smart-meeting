@@ -43,13 +43,32 @@ def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
 
 
 def _has_audio(m: Meeting) -> bool:
+    """Presence check only — never decrypts (avoids list-endpoint 500s on bad keys)."""
     if m.audio_path and os.path.exists(os.path.abspath(m.audio_path)):
         return True
-    # Live recording PCM on disk, Redis rolling buffer, or cached WAV.
-    return bool(
-        audio.get_raw_pcm_length(m.id) > 0
-        or redis_store.get_wav_bytes(m.id)
-        or redis_store.get_pcm_length(m.id) > 0
+    if audio.get_raw_pcm_length(m.id) > 0:
+        return True
+    # Redis key existence (no decrypt) — corrupted ciphertext still counts as present.
+    return bool(redis_store.wav_cached(m.id) or redis_store.pcm_cached(m.id))
+
+
+def _audio_http_error(exc: Exception) -> HTTPException:
+    """Map crypto/cache integrity failures to a clear 500 for clients."""
+    from ..services import crypto_at_rest
+
+    if isinstance(exc, crypto_at_rest.DecryptionError):
+        return HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc) or crypto_at_rest.DECRYPTION_FAILED_MESSAGE,
+        )
+    if isinstance(exc, redis_store.AudioCacheError):
+        return HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Audio cache failure: {exc}",
+        )
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Could not read meeting audio: {exc}",
     )
 
 
@@ -60,9 +79,19 @@ def _ensure_meeting_wav(meeting: Meeting, db: Session) -> str:
         if os.path.exists(path):
             return path
 
-    pcm = audio.read_raw_pcm(meeting.id)
-    if not pcm:
-        pcm = redis_store.get_pcm(meeting.id)
+    try:
+        pcm = audio.read_raw_pcm(meeting.id)
+        if not pcm:
+            pcm = redis_store.get_pcm(meeting.id)
+    except Exception as exc:
+        from ..services import crypto_at_rest
+
+        if isinstance(
+            exc, (crypto_at_rest.DecryptionError, redis_store.AudioCacheError)
+        ):
+            raise _audio_http_error(exc) from exc
+        raise
+
     if pcm and len(pcm) >= 2:
         path = audio.save_wav(meeting.id, pcm)
         meeting.audio_path = path
@@ -70,7 +99,17 @@ def _ensure_meeting_wav(meeting: Meeting, db: Session) -> str:
         db.commit()
         return path
 
-    wav_bytes = redis_store.get_wav_bytes(meeting.id)
+    try:
+        wav_bytes = redis_store.get_wav_bytes(meeting.id)
+    except Exception as exc:
+        from ..services import crypto_at_rest
+
+        if isinstance(
+            exc, (crypto_at_rest.DecryptionError, redis_store.AudioCacheError)
+        ):
+            raise _audio_http_error(exc) from exc
+        raise
+
     if wav_bytes:
         path = os.path.join(audio.audio_dir(), f"{meeting.id}.wav")
         try:
@@ -227,18 +266,23 @@ def _run_whisper_on_meeting(meeting: Meeting, db: Session) -> MeetingDetail:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
-    except audio.AudioFormatError as exc:
-        _fail_whisper(meeting, db)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        )
     except Exception as exc:
+        from ..services import crypto_at_rest
+
+        if isinstance(exc, crypto_at_rest.DecryptionError):
+            _fail_whisper(meeting, db)
+            raise _audio_http_error(exc) from exc
+        if isinstance(exc, audio.AudioFormatError):
+            _fail_whisper(meeting, db)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
         logger.exception("Whisper ASR failed for meeting %s", meeting.id)
         _fail_whisper(meeting, db)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Whisper ASR failed: {exc}",
-        )
+        ) from exc
     return _persist_whisper_result(meeting, db, result)
 
 
@@ -254,18 +298,23 @@ async def _run_whisper_on_meeting_async(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
-    except audio.AudioFormatError as exc:
-        _fail_whisper(meeting, db)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        )
     except Exception as exc:
+        from ..services import crypto_at_rest
+
+        if isinstance(exc, crypto_at_rest.DecryptionError):
+            _fail_whisper(meeting, db)
+            raise _audio_http_error(exc) from exc
+        if isinstance(exc, audio.AudioFormatError):
+            _fail_whisper(meeting, db)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
         logger.exception("Whisper ASR failed for meeting %s", meeting.id)
         _fail_whisper(meeting, db)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Whisper ASR failed: {exc}",
-        )
+        ) from exc
     return _persist_whisper_result(meeting, db, result)
 
 
@@ -399,21 +448,13 @@ def get_meeting_audio(
     filename = f"{safe_title}.wav"
     disposition = "attachment" if download else "inline"
 
-    try:
-        path = _ensure_meeting_wav(meeting, db)
-    except HTTPException:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No audio recording is available for this meeting yet.",
-        ) from None
+    # Preserve 404 (no recording) vs 500 (decrypt/cache integrity failure).
+    path = _ensure_meeting_wav(meeting, db)
 
     try:
         wav_bytes = audio.read_stored_wav_bytes(path)
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Could not read meeting audio: {exc}",
-        ) from exc
+        raise _audio_http_error(exc) from exc
     return Response(
         content=wav_bytes,
         media_type="audio/wav",

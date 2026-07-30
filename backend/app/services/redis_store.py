@@ -24,6 +24,10 @@ _client_failed_at = 0.0
 _CLIENT_RETRY_SECONDS = 5.0
 
 
+class AudioCacheError(RuntimeError):
+    """Redis audio cache read/write failed (not merely a cache miss)."""
+
+
 def _pcm_key(meeting_id: str) -> str:
     return f"smartmeeting:audio:{meeting_id}:pcm"
 
@@ -224,24 +228,66 @@ def append_pcm(meeting_id: str, chunk: bytes) -> int:
                 total = len(kept)
         _touch_ttl(client, meeting_id)
         return total
+    except crypto_at_rest.CryptoAtRestError:
+        # Wrong key / corrupt rolling buffer — do not pretend the append succeeded.
+        raise
     except Exception as exc:
         logger.exception("Redis rolling APPEND failed for meeting %s: %s", meeting_id, exc)
         return -1
 
 
+def pcm_cached(meeting_id: str) -> bool:
+    """True when a rolling PCM key exists (no decrypt — safe for ``has_audio``)."""
+    client = get_client()
+    if client is None:
+        return False
+    try:
+        return bool(client.exists(_pcm_key(meeting_id)))
+    except Exception as exc:
+        logger.warning("Redis EXISTS pcm failed for meeting %s: %s", meeting_id, exc)
+        return False
+
+
+def wav_cached(meeting_id: str) -> bool:
+    """True when a WAV cache key exists (no decrypt — safe for ``has_audio``)."""
+    client = get_client()
+    if client is None:
+        return False
+    try:
+        return bool(client.exists(_wav_key(meeting_id)))
+    except Exception as exc:
+        logger.warning("Redis EXISTS wav failed for meeting %s: %s", meeting_id, exc)
+        return False
+
+
 def get_pcm(meeting_id: str) -> bytes:
-    """Return the Redis rolling PCM window (not the full multi-hour recording)."""
+    """Return the Redis rolling PCM window (not the full multi-hour recording).
+
+    Cache miss / Redis unavailable → empty bytes.
+    Decrypt or Redis read failures → raise (never silent empty on integrity errors).
+    """
     client = get_client()
     if client is None:
         return b""
     try:
         data = client.get(_pcm_key(meeting_id)) or b""
-        from . import crypto_at_rest
-
-        return crypto_at_rest.decrypt_bytes(data)
     except Exception as exc:
         logger.exception("Redis GET pcm failed for meeting %s: %s", meeting_id, exc)
+        raise AudioCacheError(
+            f"Redis audio cache read failed for meeting PCM: {exc}"
+        ) from exc
+    if not data:
         return b""
+    from . import crypto_at_rest
+
+    try:
+        return crypto_at_rest.decrypt_bytes(data)
+    except crypto_at_rest.DecryptionError:
+        raise
+    except Exception as exc:
+        raise AudioCacheError(
+            f"Redis PCM cache decode failed for meeting {meeting_id}: {exc}"
+        ) from exc
 
 
 def iter_pcm_chunks(meeting_id: str, chunk_bytes: int):
@@ -259,6 +305,11 @@ def iter_pcm_chunks(meeting_id: str, chunk_bytes: int):
 
 
 def get_pcm_length(meeting_id: str) -> int:
+    """Plaintext byte length of the rolling buffer.
+
+    Prefer ``pcm_cached`` for presence checks — this decrypts when encryption
+    is enabled and will raise on integrity failures.
+    """
     return len(get_pcm(meeting_id))
 
 
@@ -291,16 +342,32 @@ def save_wav_bytes(meeting_id: str, wav_bytes: bytes) -> bool:
 
 
 def get_wav_bytes(meeting_id: str) -> bytes:
+    """Return cached WAV plaintext, or ``b""`` on cache miss / Redis down.
+
+    Decrypt or Redis read failures raise — never return empty bytes for those.
+    """
     client = get_client()
     if client is None:
         return b""
     try:
         data = client.get(_wav_key(meeting_id)) or b""
-        from . import crypto_at_rest
-
-        return crypto_at_rest.decrypt_bytes(data)
-    except Exception:
+    except Exception as exc:
+        logger.exception("Redis GET wav failed for meeting %s: %s", meeting_id, exc)
+        raise AudioCacheError(
+            f"Redis audio cache read failed for meeting WAV: {exc}"
+        ) from exc
+    if not data:
         return b""
+    from . import crypto_at_rest
+
+    try:
+        return crypto_at_rest.decrypt_bytes(data)
+    except crypto_at_rest.DecryptionError:
+        raise
+    except Exception as exc:
+        raise AudioCacheError(
+            f"Redis WAV cache decode failed for meeting {meeting_id}: {exc}"
+        ) from exc
 
 
 def set_session_meta(

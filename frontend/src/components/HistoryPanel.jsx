@@ -133,6 +133,8 @@ function HistoryRow({ meeting, active, onSelect, onDelete }) {
 export default function HistoryPanel({
   meetings,
   loading,
+  error,
+  onRetry,
   search,
   onSearch,
   activeId,
@@ -155,6 +157,18 @@ export default function HistoryPanel({
             play audio, copy or download the transcript, or re-transcribe.
           </p>
 
+          {error ? (
+            <div className="list-load-error" role="alert">
+              <strong>Could not load meetings</strong>
+              <p>{error}</p>
+              {typeof onRetry === "function" && (
+                <button type="button" className="btn" onClick={onRetry}>
+                  Try again
+                </button>
+              )}
+            </div>
+          ) : null}
+
           <div className="history-toolbar">
             <input
               className="history-search"
@@ -176,13 +190,21 @@ export default function HistoryPanel({
                 Saved recorded meetings
               </h4>
               <span className="saved-meetings-container-count">
-                {loading ? "Loading…" : `${count} meeting${count === 1 ? "" : "s"}`}
+                {loading
+                  ? "Loading…"
+                  : error
+                    ? "Unavailable"
+                    : `${count} meeting${count === 1 ? "" : "s"}`}
               </span>
             </div>
             <div className="saved-meetings-container-body">
               {loading ? (
                 <div className="center-spin">
                   <span className="spinner" /> Loading…
+                </div>
+              ) : error ? (
+                <div className="history-list-empty history-list-error" role="alert">
+                  Failed to load the meeting list. This is not an empty workspace.
                 </div>
               ) : count === 0 ? (
                 <div className="history-list-empty">
