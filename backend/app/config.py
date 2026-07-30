@@ -7,10 +7,10 @@ real environment variables for production deployments.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List
+from typing import Annotated, List
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./smart_meeting.db"
 
     # --- CORS ------------------------------------------------------------
-    cors_origins: List[str] = Field(
+    # NoDecode: allow comma-separated CORS_ORIGINS in .env (not only JSON arrays).
+    cors_origins: Annotated[List[str], NoDecode] = Field(
         default_factory=lambda: [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
