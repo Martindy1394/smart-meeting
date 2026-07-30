@@ -133,6 +133,61 @@ def test_tagalog_uses_native_tl_and_prefer_forced():
     assert "Tagalog" in prompt or "Filipino" in prompt
 
 
+def test_whisper_language_arg_never_forwards_fil_or_hil():
+    from app.services.transcription import (
+        normalize_meeting_language,
+        whisper_language_arg,
+    )
+
+    assert whisper_language_arg("tl") == "tl"
+    assert whisper_language_arg("tagalog") == "tl"
+    assert whisper_language_arg("fil") == "tl"
+    assert whisper_language_arg("filipino") == "tl"
+    assert whisper_language_arg("en") == "en"
+    assert whisper_language_arg("hil") is None
+    assert whisper_language_arg("hiligaynon") is None
+    assert whisper_language_arg("ceb") is None
+    assert whisper_language_arg("auto") is None
+    assert normalize_meeting_language("fil") == "tl"
+    assert normalize_meeting_language("tagalog") == "tl"
+    assert normalize_meeting_language("ilonggo") == "hil"
+
+
+def test_language_lock_keeps_explicit_tagalog():
+    """Regression: lock used to remap every detected tl→hil via effective('auto')."""
+    from app.services.transcription import LanguageDetection
+    from app.ws.transcription import _maybe_lock_language
+
+    det = LanguageDetection(language="tl", confidence=0.9, detected_by="whisper")
+    # Explicit Tagalog session must keep tl.
+    lang, locked, locked_lang, seen = _maybe_lock_language(
+        language="tl",
+        language_locked=False,
+        locked_language=None,
+        detection=det,
+        speech_seconds_seen=10.0,
+        meeting_id="test-meeting-tl-lock",
+        window_seconds=5.0,
+    )
+    assert locked is True
+    assert locked_lang == "tl"
+    assert lang == "tl"
+
+    # Hiligaynon-biased auto: detected tl must NOT lock to Tagalog.
+    lang2, locked2, locked_lang2, _ = _maybe_lock_language(
+        language="auto",
+        language_locked=False,
+        locked_language=None,
+        detection=det,
+        speech_seconds_seen=10.0,
+        meeting_id="test-meeting-auto-lock",
+        window_seconds=5.0,
+    )
+    assert locked2 is True
+    assert locked_lang2 == "hil"
+    assert lang2 == "hil"
+
+
 def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
     # Hiligaynon prefers HF PH dialect model (Visayan-aware) then FW fallback.
     from app.config import settings
@@ -460,6 +515,8 @@ if __name__ == "__main__":
     test_auto_language_resolves_to_hiligaynon_default()
     test_auto_language_detects_and_uses_ph_models()
     test_tagalog_uses_native_tl_and_prefer_forced()
+    test_whisper_language_arg_never_forwards_fil_or_hil()
+    test_language_lock_keeps_explicit_tagalog()
     test_auto_final_backend_prefers_hf_for_hiligaynon()
     test_auto_final_backend_prefers_hf_for_tagalog()
     test_auto_meeting_uses_combined_ph_hf_candidates()

@@ -308,7 +308,27 @@ async def transcribe_ws(websocket: WebSocket):
         pass
     if language_locked and locked_language:
         # Reuse locked code for the session (never force hil→tl).
+        # Normalize fil→tl so Whisper never sees an invalid code.
+        from ..services.transcription import normalize_meeting_language
+
+        locked_language = normalize_meeting_language(locked_language)
         language = locked_language
+    elif transcription_svc.is_tagalog_language(language):
+        # Explicit Tagalog: lock immediately so mid-session detection cannot
+        # remap tl→hil (Hiligaynon bias only applies to auto/hil meetings).
+        language = "tl"
+        language_locked = True
+        locked_language = "tl"
+        redis_store.set_session_meta(
+            meeting_id, language_locked=True, locked_language="tl"
+        )
+    elif (language or "").strip().lower() in {"en", "english"}:
+        language = "en"
+        language_locked = True
+        locked_language = "en"
+        redis_store.set_session_meta(
+            meeting_id, language_locked=True, locked_language="en"
+        )
     speech_seconds_seen = 0.0
 
     # Local fallback only used when Redis is down (disk is still authoritative).
@@ -898,13 +918,25 @@ def _maybe_lock_language(
         return language, False, None, speech_seconds_seen
     if conf is not None and float(conf) < min_conf:
         return language, False, None, speech_seconds_seen
-    # Keep Hiligaynon bias: if Whisper says tl but meeting is hil-biased auto, do not lock to tl.
+    # Hiligaynon-biased auto meetings: Whisper often guesses ``tl`` for Ilonggo
+    # speech (no hil token). Do **not** lock those sessions to Tagalog.
+    # Explicit Tagalog meetings must keep ``tl`` — never remap them to hil.
     from ..services import transcription as tsvc
-    if tsvc.is_tagalog_language(code) and tsvc.is_hiligaynon_language(
-        tsvc.effective_asr_language("auto")
-    ):
-        # Still lock the *session decode mode* as auto/hil (None→auto path), not tl.
-        code = "hil"
+
+    session_label = (language or "").strip().lower()
+    if tsvc.is_tagalog_language(code):
+        if tsvc.is_tagalog_language(session_label):
+            code = "tl"
+        elif tsvc.is_auto_language(session_label) or tsvc.is_hiligaynon_language(
+            session_label
+        ):
+            code = "hil"
+        else:
+            # Unknown session label that detected Tagalog — keep Whisper-native tl.
+            code = "tl"
+    elif code == "fil":
+        # Should not happen (Whisper emits tl), but never persist fil.
+        code = "tl"
     language_locked = True
     locked_language = code
     language = code

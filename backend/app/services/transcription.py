@@ -342,6 +342,48 @@ def is_hiligaynon_language(language: str | None) -> bool:
     return lang in _HILIGAYNON_LANGUAGE_LABELS
 
 
+def whisper_language_arg(language: str | None) -> str | None:
+    """Map an app/UI language label to a Whisper-native decode code.
+
+    Whisper understands ``tl`` (Tagalog) and ``en``, but **not** ``fil``, ``hil``,
+    or ``ceb``. Passing ``fil`` silently breaks Tagalog forcing; passing ``hil``
+    is invalid. Hiligaynon / Cebuano / auto → ``None`` (auto-detect + prompt).
+    """
+    raw = (language or "").strip().lower()
+    if not raw or raw in {"auto", "detect", "none"}:
+        return None
+    if raw in {"en", "english"}:
+        return "en"
+    if is_tagalog_language(raw):
+        return "tl"
+    if is_hiligaynon_language(raw) or raw in {
+        "ceb",
+        "cebuano",
+        "bisaya",
+        "war",
+        "waray",
+    }:
+        return None
+    # Already a short Whisper ISO code (e.g. session lock stored ``tl``/``en``).
+    if len(raw) <= 3 and raw.isalpha() and raw not in {"fil", "hil", "ceb"}:
+        return raw
+    return None
+
+
+def normalize_meeting_language(language: str | None) -> str:
+    """Normalize API/UI language aliases to stable meeting labels."""
+    lang = (language or "").strip().lower() or "auto"
+    if lang in {"detect", "none"}:
+        return "auto"
+    if lang in {"hiligaynon", "ilonggo"}:
+        return "hil"
+    if lang in {"tagalog", "fil", "filipino"}:
+        return "tl"
+    if lang == "english":
+        return "en"
+    return lang
+
+
 def effective_asr_language(language: str | None) -> str:
     """Resolve meeting/UI language to the ASR bias used at runtime.
 
@@ -738,14 +780,16 @@ def _forced_language(requested: str | None = None) -> str | None:
     Only English and Tagalog/Filipino have Whisper-native codes we force.
     Hiligaynon is **never** mapped to ``tl`` — callers must use auto-detect
     (``None``) plus the Hiligaynon prompt / PH model instead.
+    Always returns Whisper-native codes (``tl`` / ``en``), never ``fil``.
     """
+    raw = (requested or "").strip().lower()
+    # Honor explicit labels before auto→hil remapping.
+    if raw in {"en", "english"} or is_tagalog_language(raw):
+        return whisper_language_arg(raw)
     app_lang = effective_asr_language(requested)
-    if app_lang in {"en", "english"}:
-        return "en"
-    if is_tagalog_language(app_lang):
-        return "tl"
+    if app_lang in {"en", "english"} or is_tagalog_language(app_lang):
+        return whisper_language_arg(app_lang)
     return None
-
 
 def _final_language_mode(requested: str | None) -> str:
     """Resolve final language mode.
@@ -1045,9 +1089,10 @@ def transcribe_live(
         # Hiligaynon-biased auto: never force tl. Locked concrete non-tl/en codes
         # still use auto-detect (Whisper has no hil token).
         primary_lang = None
-    elif raw_label and raw_label not in {"auto", "detect", "none", "hil", "hiligaynon", "ilonggo"}:
+    elif raw_label:
         # Session lock may pass a Whisper ISO code (e.g. "en", "tl").
-        primary_lang = raw_label if len(raw_label) <= 3 else None
+        # Never forward ``fil`` / ``hil`` — Whisper does not understand them.
+        primary_lang = whisper_language_arg(raw_label)
     else:
         primary_lang = None
 
@@ -1058,10 +1103,12 @@ def transcribe_live(
     winning_info: object | None = None
 
     def _run(decode_language: str | None):
+        # Never forward ``fil`` / ``hil`` — Whisper only accepts native codes.
+        lang_arg = whisper_language_arg(decode_language) if decode_language else None
         with cache.fw_infer_lock(model_id):
             return model.transcribe(
                 pcm,
-                language=decode_language,
+                language=lang_arg,
                 task=_WHISPER_TASK,
                 beam_size=5,
                 best_of=5,
@@ -1695,7 +1742,13 @@ def _transcribe_final_hf(
         )
         gen_kwargs: dict = {"task": _WHISPER_TASK}
         if lang:
-            gen_kwargs["language"] = lang
+            # Whisper-native only (``tl`` / ``en``); never forward ``fil``.
+            native = whisper_language_arg(lang)
+            if native:
+                gen_kwargs["language"] = native
+        # Avoid conflict with checkpoint-baked forced_decoder_ids (transformers
+        # warning: task/language kwargs otherwise get ignored).
+        gen_kwargs["forced_decoder_ids"] = None
         if prompt_ids is not None:
             gen_kwargs["prompt_ids"] = prompt_ids
         try:
@@ -1768,10 +1821,12 @@ def _run_faster_whisper_final(
     vad_filter: bool,
     meeting_language: str | None = None,
 ) -> tuple[list[Segment], object]:
+    # Sanitize: never pass ``fil``/``hil`` into faster-whisper.
+    lang_arg = whisper_language_arg(language) if language else None
     with get_model_cache().fw_infer_lock(model_id):
         segments, info = model.transcribe(
             audio_in,
-            language=language,
+            language=lang_arg,
             task=_WHISPER_TASK,
             beam_size=5,
             best_of=5,

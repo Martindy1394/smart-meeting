@@ -33,6 +33,13 @@ _MAX_UPLOAD_BYTES = 60 * 1024 * 1024
 _UPLOAD_READ_CHUNK = 1024 * 1024
 
 
+def _normalize_meeting_language_label(language: str | None) -> str:
+    """Normalize API aliases; never store ``fil`` (Whisper code is ``tl``)."""
+    from ..services.transcription import normalize_meeting_language
+
+    return normalize_meeting_language(language)
+
+
 def _get_owned_meeting(meeting_id: str, user: User, db: Session) -> Meeting:
     meeting = db.get(Meeting, meeting_id)
     if meeting is None or meeting.owner_id != user.id:
@@ -401,7 +408,7 @@ def create_meeting(
     meeting = Meeting(
         owner_id=current_user.id,
         title=payload.title.strip(),
-        language=(payload.language or "auto").strip().lower() or "auto",
+        language=_normalize_meeting_language_label(payload.language),
         venue=payload.venue.strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
@@ -648,29 +655,13 @@ def update_meeting(
             (payload.translation_glossary_json or "").strip() or "[]"
         )
     if payload.language is not None:
-        lang = (payload.language or "").strip().lower()
+        lang = _normalize_meeting_language_label(payload.language)
         if lang in {
             "auto",
-            "detect",
             "hil",
-            "hiligaynon",
-            "ilonggo",
             "tl",
-            "tagalog",
-            "fil",
-            "filipino",
             "en",
-            "english",
         }:
-            # Normalize aliases to stable meeting labels.
-            if lang in {"detect"}:
-                lang = "auto"
-            elif lang in {"hiligaynon", "ilonggo"}:
-                lang = "hil"
-            elif lang in {"tagalog", "fil", "filipino"}:
-                lang = "tl"
-            elif lang == "english":
-                lang = "en"
             meeting.language = lang
     db.commit()
     db.refresh(meeting)

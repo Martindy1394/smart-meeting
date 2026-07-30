@@ -189,10 +189,19 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     meeting.faithfulness_json = ""
     meeting.translation_faithfulness_json = ""
     meeting.action_items_json = "[]"
-    # Keep language_locked + detected language when session lock set them;
-    # otherwise preserve product default of auto + Hiligaynon bias.
+    # Keep language_locked + explicit user language (tl/en/hil).
+    # Do NOT wipe Tagalog/English back to auto on finalize — that was breaking
+    # forced ``tl`` on the next re-transcribe.
     if not bool(getattr(meeting, "language_locked", False)):
-        meeting.language = "auto"
+        cur = (meeting.language or "").strip().lower()
+        if cur in {"", "auto", "detect", "none"}:
+            meeting.language = "auto"
+        elif cur in {"fil", "filipino", "tagalog"}:
+            meeting.language = "tl"
+        elif cur in {"hiligaynon", "ilonggo"}:
+            meeting.language = "hil"
+        elif cur == "english":
+            meeting.language = "en"
     meeting.language_confidence = result.language_confidence
     meeting.language_detected_by = (result.language_detected_by or "").strip()
     meeting.status = "finalized"
