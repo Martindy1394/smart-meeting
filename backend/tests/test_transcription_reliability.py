@@ -31,6 +31,7 @@ from app.services.transcription import (  # noqa: E402
     is_tagalog_language,
     live_model_id,
     merge_live_caption,
+    philippine_hf_candidates,
     resolve_final_backend,
     set_model_cache,
     tagalog_hf_candidates,
@@ -146,6 +147,7 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
         assert resolve_final_backend("hil") == "huggingface"
         assert resolve_final_backend("en") == "faster-whisper"
+        assert philippine_hf_candidates("en") == []
         assert hiligaynon_hf_candidates() == ["rbcurzon/whisper-medium-ph"]
         assert hiligaynon_model_id() == "rbcurzon/whisper-medium-ph"
 
@@ -219,23 +221,25 @@ def test_visayan_markers_boost_quality_and_strip_prompt_echo():
         Segment(
             text=(
                 "Buwas naman nakapoy na ko mangita sang kostum. "
-                "Wala gid ko kabalo. Wala gid problema."
+                "Indi gid ko kabalo. Dayon subong kita."
             ),
             start=0.0,
             end=20.0,
         )
     ]
-    tl_ish = [
+    # English-heavy board speech without Visayan markers — should score lower
+    # than a Hiligaynon line of similar length when ranking PH candidates.
+    en_ish = [
         Segment(
             text=(
-                "Bukas naman pagod na ako maghanap ng costume. "
-                "Wala akong alam. Wala problema."
+                "Tomorrow I am already tired looking for a costume. "
+                "I really do not know. Then we continue now."
             ),
             start=0.0,
             end=20.0,
         )
     ]
-    assert _candidate_quality_score(hil, 20.0) > _candidate_quality_score(tl_ish, 20.0)
+    assert _candidate_quality_score(hil, 20.0) > _candidate_quality_score(en_ish, 20.0)
 
     echoed = "Sang Nga Mga Kostyo Buwas naman nakapoy na ko"
     # Old long prompt words should not wipe real speech tokens we keep.
@@ -367,6 +371,33 @@ def test_candidate_quality_score_prefers_diverse_coverage():
     assert _candidate_quality_score(strong, 10.0) > _candidate_quality_score(weak, 10.0)
 
 
+def test_garble_penalty_rejects_ph_medium_word_salad():
+    from app.services.transcription import (
+        Segment,
+        _candidate_quality_score,
+        _garble_penalty,
+        _is_junk_transcript,
+    )
+
+    garbled = (
+        "gud mornin world!ang kaysa kaysa kay currenti are dilato "
+        "buffering to live capture if kagamba nila"
+    )
+    clean = (
+        "Good morning world. Today is the day that everybody is going "
+        "to be crazy because everything will be followed as it is."
+    )
+    assert _garble_penalty(garbled) < _garble_penalty(clean)
+    # Two+ glued punctuation marks → junk.
+    assert _is_junk_transcript("hello!world today?is fine.yes really")
+    assert not _is_junk_transcript(clean)
+    garbled_segs = [Segment(text=garbled, start=0.0, end=38.0)]
+    clean_segs = [Segment(text=clean, start=0.0, end=38.0)]
+    assert _candidate_quality_score(clean_segs, 38.0) > _candidate_quality_score(
+        garbled_segs, 38.0
+    )
+
+
 def test_collapse_phrase_and_sentence_loops():
     from app.services.transcription import _collapse_hallucinations, _is_junk_transcript
 
@@ -376,12 +407,11 @@ def test_collapse_phrase_and_sentence_loops():
     )
     collapsed = _collapse_hallucinations(looped)
     assert collapsed.lower().count("kanil") <= 2
+    assert _is_junk_transcript(looped) or len(collapsed.split()) < 8
 
     sentences = "I don't know why I'm so confused. " * 8
     collapsed2 = _collapse_hallucinations(sentences.strip())
     assert collapsed2.lower().count("confused") <= 2
-
-    assert _is_junk_transcript(looped) or len(collapsed.split()) < 8
 
 
 def test_language_detection_from_whisper_auto():
@@ -440,6 +470,7 @@ if __name__ == "__main__":
     test_hiligaynon_initial_prompt_always_available()
     test_ellipsis_spam_is_junk()
     test_candidate_quality_score_prefers_diverse_coverage()
+    test_garble_penalty_rejects_ph_medium_word_salad()
     test_collapse_phrase_and_sentence_loops()
     test_language_detection_from_whisper_auto()
     test_language_detection_forced_fallback()

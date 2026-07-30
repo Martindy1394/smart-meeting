@@ -100,7 +100,19 @@ async def _emit_live_window(
         (window_text or "")[:160],
     )
     if not window_text:
-        return live_caption, previous_window, getattr(result, "language_detection", None) or None
+        # ASRResult has language / language_confidence — not language_detection.
+        detection = None
+        if getattr(result, "language_confidence", None) is not None or getattr(
+            result, "language", None
+        ):
+            from ..services.transcription import LanguageDetection
+
+            detection = LanguageDetection(
+                language=result.language,
+                confidence=result.language_confidence,
+                detected_by=result.language_detected_by or "whisper",
+            )
+        return live_caption, previous_window, detection
 
     if replace_caption:
         merged = window_text.strip()

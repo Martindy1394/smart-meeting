@@ -419,15 +419,23 @@ def auto_hf_candidates() -> list[str]:
 
 
 def philippine_hf_candidates(language: str | None) -> list[str]:
-    """HF candidates for the meeting language (auto / Tagalog / Hiligaynon)."""
+    """HF candidates for the meeting language (auto / Tagalog / Hiligaynon).
+
+    Non-Philippine languages (e.g. English) return ``[]`` so final ASR uses
+    faster-whisper only — PH-medium is a poor fit for English-majority audio.
+    """
+    raw = (language or "").strip().lower()
+    # Honor explicit English before effective_asr_language remaps unknowns.
+    if raw in {"en", "english"}:
+        return []
     lang = effective_asr_language(language)
     if is_tagalog_language(lang):
         return tagalog_hf_candidates()
     if is_hiligaynon_language(lang):
         return hiligaynon_hf_candidates()
-    if is_philippine_language(lang):
+    if is_philippine_language(lang) or is_auto_language(raw):
         return auto_hf_candidates()
-    return hiligaynon_hf_candidates()
+    return []
 
 
 def hiligaynon_model_id() -> str:
@@ -522,19 +530,32 @@ def _segment_from_whisper(s, *, text: str) -> Segment | None:
         no_sp_f = None
 
     # Hard drop: almost certainly silence hallucination.
+    # Whisper often marks quiet-but-real speech with high no_speech_prob; keep
+    # segments that still carry substantial lexical content and flag them instead.
+    low = False
     if no_sp_f is not None and no_sp_f >= float(settings.asr_max_no_speech_prob):
-        logger.info(
-            "asr.drop_segment no_speech_prob=%.3f text=%r",
-            no_sp_f,
-            text[:80],
-        )
-        return None
+        word_count = len(text.split())
+        alpha_chars = sum(1 for ch in text if ch.isalpha())
+        if word_count >= 4 and alpha_chars >= 12:
+            logger.info(
+                "asr.keep_low_conf no_speech_prob=%.3f words=%d text=%r",
+                no_sp_f,
+                word_count,
+                text[:80],
+            )
+            low = True
+        else:
+            logger.info(
+                "asr.drop_segment no_speech_prob=%.3f text=%r",
+                no_sp_f,
+                text[:80],
+            )
+            return None
     if avg_lp_f is not None and avg_lp_f <= float(settings.asr_min_avg_logprob) - 0.5:
         # Far below threshold — drop.
         logger.info("asr.drop_segment avg_logprob=%.3f text=%r", avg_lp_f, text[:80])
         return None
 
-    low = False
     if avg_lp_f is not None and avg_lp_f < float(settings.asr_flag_avg_logprob):
         low = True
     if no_sp_f is not None and no_sp_f >= float(settings.asr_flag_no_speech_prob):
@@ -856,19 +877,34 @@ def _is_junk_transcript(text: str) -> bool:
         if top_n / len(tokens) >= 0.5:
             return True
     # Soft-speech PH hallucinations often pad with "?..." / "......" glue.
-    # Skip this check when the text still looks like real Visayan/Hiligaynon.
+    # Skip this check when the text still looks like real Visayan/Hiligaynon,
+    # unless ellipsis density is extreme (PH-medium quiet-mic spam).
     ellipsis_hits = (
         cleaned.count("?...")
         + cleaned.count("......")
         + cleaned.count("?... ")
         + len(re.findall(r"\.{3,}", cleaned))
     )
-    if (
+    extreme_ellipsis = ellipsis_hits >= 12 and ellipsis_hits >= int(len(tokens) * 0.35)
+    mild_ellipsis = (
         ellipsis_hits >= 6
         and ellipsis_hits >= max(3, int(len(tokens) * 0.06))
         and _visayan_marker_ratio(cleaned) < 0.04
-    ):
+    )
+    if extreme_ellipsis or mild_ellipsis:
         return True
+    # Glued punctuation without spaces ("world!ang") is almost never real speech.
+    glued = len(re.findall(r"[A-Za-zÀ-ÿ][!?.,;:][A-Za-zÀ-ÿ]", cleaned))
+    if glued >= 2 and _visayan_marker_ratio(cleaned) < 0.06:
+        return True
+    if glued >= 1 and len(tokens) >= 6 and _visayan_marker_ratio(cleaned) < 0.06:
+        adj_dups = sum(
+            1
+            for i in range(len(tokens) - 1)
+            if tokens[i].lower() == tokens[i + 1].lower() and len(tokens[i]) >= 3
+        )
+        if adj_dups >= 1:
+            return True
     # Repeated bigram/trigram loops: "hindi ko hindi ko hindi ko…"
     # These freeze live captions after a couple of seconds if left unfiltered.
     if len(tokens) >= 6:
@@ -1486,6 +1522,45 @@ def _visayan_marker_ratio(text: str) -> float:
     return hits / float(len(tokens))
 
 
+def _garble_penalty(text: str) -> float:
+    """Penalty multiplier (≤1) for PH-medium style garble that still passes junk filters.
+
+    Catches glued punctuation (``world!ang``), adjacent duplicate tokens
+    (``kaysa kaysa``), and hyphenated fragment spam (``g-morong``).
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return 0.0
+    penalty = 1.0
+    glued = len(re.findall(r"[A-Za-zÀ-ÿ][!?.,;:][A-Za-zÀ-ÿ]", raw))
+    if glued:
+        # One glued hit is suspicious; two+ usually means broken tokenization.
+        penalty *= max(0.12, 1.0 - 0.45 * glued)
+    tokens = [t.lower() for t in re.findall(r"[A-Za-zÀ-ÿ0-9']+", raw)]
+    if len(tokens) >= 4:
+        adj_dups = sum(
+            1
+            for i in range(len(tokens) - 1)
+            if tokens[i] == tokens[i + 1] and len(tokens[i]) >= 3
+        )
+        if adj_dups:
+            penalty *= max(0.2, 1.0 - 0.28 * adj_dups)
+    # Hyphenated nonsense fragments common in broken HF PH output.
+    hyphen_frags = len(re.findall(r"\b[A-Za-zÀ-ÿ]{1,3}-[A-Za-zÀ-ÿ]{3,}\b", raw))
+    if hyphen_frags >= 1:
+        penalty *= max(0.25, 1.0 - 0.3 * hyphen_frags)
+    # Dense missing-space globs: letters stuck across sentence boundaries.
+    no_space_runs = len(re.findall(r"[a-z]{2,}[A-Z][a-z]{2,}", raw))
+    if no_space_runs:
+        penalty *= max(0.3, 1.0 - 0.25 * no_space_runs)
+    # Phonetic mush: many short rare tokens with almost no function words.
+    if len(tokens) >= 12:
+        short_odd = sum(1 for t in tokens if 4 <= len(t) <= 8 and t.endswith(("i", "o", "a")))
+        if short_odd >= max(6, int(len(tokens) * 0.35)) and _visayan_marker_ratio(raw) < 0.08:
+            penalty *= 0.45
+    return penalty
+
+
 def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
     """Rank ASR candidates by coverage, word mass, and lexical diversity.
 
@@ -1501,6 +1576,10 @@ def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
     collapsed = _collapse_hallucinations(raw)
     collapsed = _strip_initial_prompt_echo(collapsed, initial_prompt("hil"))
     if not collapsed or _is_junk_transcript(collapsed):
+        return -1.0
+    garble = _garble_penalty(collapsed)
+    if garble <= 0.2:
+        # Treat severe garble as non-viable so a cleaner FW candidate can win.
         return -1.0
     raw_tokens = _norm_tokens(raw)
     tokens = _norm_tokens(collapsed)
@@ -1528,6 +1607,7 @@ def _candidate_quality_score(segments: list[Segment], duration: float) -> float:
         * (0.35 + 0.65 * keep_ratio)
         * visayan_boost
         * filler_penalty
+        * garble
     )
 
 
@@ -1548,7 +1628,19 @@ def _sanitize_segments(segments: list[Segment]) -> list[Segment]:
         words = text.split()
         if duration >= 20.0 and len(words) <= 4:
             continue
-        out.append(Segment(text=text, start=s.start, end=s.end))
+        # Severe garble (glued punctuation / fragment spam) should not persist.
+        if _garble_penalty(text) <= 0.2:
+            continue
+        out.append(
+            Segment(
+                text=text,
+                start=s.start,
+                end=s.end,
+                avg_logprob=getattr(s, "avg_logprob", None),
+                no_speech_prob=getattr(s, "no_speech_prob", None),
+                low_confidence=bool(getattr(s, "low_confidence", False)),
+            )
+        )
     return out
 
 
@@ -1924,6 +2016,10 @@ def _transcribe_final_once(
 
     # Compare faster-whisper unless HF-only mode already has a winner.
     run_fw = (not strict_hf) or best_score < 0
+    fw_score = -1.0
+    fw_segs: list[Segment] = []
+    fw_detection: LanguageDetection | None = None
+    fw_mid = ""
     if run_fw:
         try:
             fw_segs, fw_detection = _transcribe_final_faster_whisper(
@@ -1933,6 +2029,7 @@ def _transcribe_final_once(
             fw_joined = " ".join(s.text for s in fw_segs)
             if fw_segs and not _is_junk_transcript(fw_joined):
                 fw_score = _candidate_quality_score(fw_segs, duration)
+                fw_mid = f"faster-whisper:{final_faster_model_id(language)}"
                 logger.info(
                     "FW candidate score=%.1f words=%d detected=%s by=%s",
                     fw_score,
@@ -1944,9 +2041,52 @@ def _transcribe_final_once(
                     best_segs = fw_segs
                     best_detection = fw_detection
                     best_score = fw_score
-                    best_mid = f"faster-whisper:{final_faster_model_id(language)}"
+                    best_mid = fw_mid
         except Exception as exc:
             logger.exception("faster-whisper final fallback failed: %s", exc)
+
+    # HF PH checkpoints often emit high-coverage word salad on English-heavy
+    # board audio and beat FW on raw word count. Prefer FW unless HF clearly
+    # wins — especially when FW detected English or HF looks garbled.
+    hf_selected = bool(best_mid) and not str(best_mid).startswith("faster-whisper:")
+    if hf_selected and fw_score >= 0 and fw_segs:
+        margin = 1.25
+        fw_lang = (
+            (fw_detection.language or "").strip().lower() if fw_detection else ""
+        )
+        fw_conf = float(fw_detection.confidence or 0.0) if fw_detection else 0.0
+        hf_joined = " ".join(s.text for s in best_segs)
+        hf_visayan = _visayan_marker_ratio(hf_joined)
+        hf_garble = _garble_penalty(hf_joined)
+        prefer_fw = best_score < fw_score * margin
+        # Garbled HF output must beat FW by a wide margin.
+        if hf_garble < 0.7:
+            prefer_fw = best_score < fw_score * 2.5 or hf_garble < 0.45
+        # English-majority decode: PH-medium is a poor fit unless it retained
+        # real Visayan content.
+        if fw_lang in {"en", "english"} and fw_conf >= 0.45 and hf_visayan < 0.04:
+            prefer_fw = best_score < fw_score * 2.0 or prefer_fw
+        # FW Tagalog/English with solid lexical mass beats PH word salad.
+        if fw_lang in {"en", "tl", "tagalog", "fil", "filipino"} and fw_score >= 8.0:
+            if hf_garble < 0.75 and best_score < fw_score * 1.8:
+                prefer_fw = True
+        if prefer_fw:
+            logger.info(
+                "Final ASR preferring FW '%s' (fw=%.1f) over HF '%s' (hf=%.1f) "
+                "margin=%.2f fw_lang=%s hf_visayan=%.3f hf_garble=%.2f",
+                fw_mid,
+                fw_score,
+                best_mid,
+                best_score,
+                margin,
+                fw_lang or None,
+                hf_visayan,
+                hf_garble,
+            )
+            best_segs = fw_segs
+            best_detection = fw_detection
+            best_score = fw_score
+            best_mid = fw_mid
 
     if best_score >= 0 and best_segs:
         logger.info(
