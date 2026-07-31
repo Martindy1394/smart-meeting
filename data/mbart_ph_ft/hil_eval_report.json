@@ -1,0 +1,106 @@
+{
+  "generated_at": "2026-07-31T06:58:18.048382+00:00",
+  "checkpoint": "/workspace/models/mbart-hil-en-merged",
+  "lang": "hil",
+  "src_lang_ft": "hil_XX",
+  "has_hil_xx": true,
+  "domain": {
+    "fine_tune": {
+      "n": 7,
+      "token_f1_mean": 0.35408163265306125,
+      "token_f1_median": 0.33333333333333337,
+      "bleu": 18.08028267400025,
+      "chrf": 41.000594326056444
+    },
+    "examples": [
+      {
+        "src": "Maayong aga sa tanan nga nag-atendir sang miting.",
+        "ref": "Good morning to everyone who attended the meeting.",
+        "hyp": "The morning is the end of the evening."
+      },
+      {
+        "src": "Kinahanglan naton aprubahan ang budget para sa masunod nga quarter.",
+        "ref": "We need to approve the budget for the next quarter.",
+        "hyp": "We have just approved a budget for the next quarter."
+      },
+      {
+        "src": "Si Maria ang responsable sa follow-up.",
+        "ref": "Maria will be responsible for the follow-up.",
+        "hyp": "We are responsible for the follow-up."
+      },
+      {
+        "src": "May pamangkot bala parte sa agenda?",
+        "ref": "Are there any questions about the agenda?",
+        "hyp": "Is there a meeting on the agenda?"
+      },
+      {
+        "src": "Salamat sa inyo nga oras. Tapos na ang miting.",
+        "ref": "Thank you for your time. The meeting is over.",
+        "hyp": "Good morning. Good morning."
+      }
+    ]
+  },
+  "baselines": {
+    "tl_XX": {
+      "n": 7,
+      "token_f1_mean": 0.2969371480649676,
+      "token_f1_median": 0.2857142857142857,
+      "bleu": 4.064667746599289,
+      "chrf": 32.964766924091435,
+      "examples": [
+        {
+          "src": "Maayong aga sa tanan nga nag-atendir sang miting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "The earthquake, however, took a sudden and sudden turn. It was the noonday."
+        },
+        {
+          "src": "Kinahanglan naton aprubahan ang budget para sa masunod nga quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "The Chinese government has immediately adopted a budget for the quarterly quarterly financial period."
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Si Maria is responsible for follow-up."
+        }
+      ]
+    },
+    "id_ID": {
+      "n": 7,
+      "token_f1_mean": 0.23462241462241465,
+      "token_f1_median": 0.1818181818181818,
+      "bleu": 4.740110575491347,
+      "chrf": 26.852080901586493,
+      "examples": [
+        {
+          "src": "Maayong aga sa tanan nga nag-atendir sang miting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "Maayong, on the other hand, planted the crop at the center of the dispute."
+        },
+        {
+          "src": "Kinahanglan naton aprubahan ang budget para sa masunod nga quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "There's a little bit of budget cutting going on in the corners."
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria was in charge of the follow-up."
+        }
+      ]
+    }
+  },
+  "generic_eval": {},
+  "recommendation": {
+    "go": false,
+    "decision": "PROVISIONAL",
+    "metric_improvement": true,
+    "quality_floor_met": false,
+    "reason": "domain token-F1=0.354 bleu=18.1; need hil_XX in vocab, > id_ID(0.235)+0.05, and floors F1≥0.40 / BLEU≥12",
+    "wire_MBART_PH_FINE_TUNED_MODEL": false,
+    "notes": [
+      "PROVISIONAL = beats stock tags on domain F1 but below absolute quality floors — retrain on GPU (≥1–3 epochs) before deploy.",
+      "Hiligaynon remains Google-first regardless; mBART is last resort."
+    ]
+  }
+}

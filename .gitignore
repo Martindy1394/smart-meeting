@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Env / secrets
+.env
+backend/.env
+
+# Databases & data
+*.db
+*.sqlite3
+backend/data/
+backend/smart_meeting.db
+
+# Large PH MT / ASR artifacts (train locally or on GPU runners)
+models/
+scripts/ph_mt/data/*_dictionary.json
+scripts/ph_mt/prepared/
+dump.rdb
+*.db-shm
+*.db-wal
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

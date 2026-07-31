@@ -1,0 +1,106 @@
+{
+  "generated_at": "2026-07-31T06:56:17.654748+00:00",
+  "checkpoint": "/workspace/models/mbart-tl-en-merged",
+  "lang": "tl",
+  "src_lang_ft": "tl_XX",
+  "has_hil_xx": false,
+  "domain": {
+    "fine_tune": {
+      "n": 7,
+      "token_f1_mean": 0.4796471315799047,
+      "token_f1_median": 0.5,
+      "bleu": 16.34306913097485,
+      "chrf": 44.0265071488003
+    },
+    "examples": [
+      {
+        "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+        "ref": "Good morning to everyone who attended the meeting.",
+        "hyp": "We missed the meeting due to a missed meeting."
+      },
+      {
+        "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+        "ref": "We need to approve the budget for the next quarter.",
+        "hyp": "I have decided to increase the budget for each quarter."
+      },
+      {
+        "src": "Si Maria ang magiging responsible sa follow-up.",
+        "ref": "Maria will be responsible for the follow-up.",
+        "hyp": "Si Maria is responsible for follow-up."
+      },
+      {
+        "src": "Mayroon bang katanungan tungkol sa agenda?",
+        "ref": "Are there any questions about the agenda?",
+        "hyp": "Are you banging on about the agenda?"
+      },
+      {
+        "src": "Salamat sa inyong oras. Meeting adjourned.",
+        "ref": "Thank you for your time. Meeting adjourned.",
+        "hyp": "Bye, city. Meeting adjourned."
+      }
+    ]
+  },
+  "baselines": {
+    "tl_XX": {
+      "n": 7,
+      "token_f1_mean": 0.3839856161900497,
+      "token_f1_median": 0.31250000000000006,
+      "bleu": 11.81207042502629,
+      "chrf": 39.873946503185465,
+      "examples": [
+        {
+          "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "We were left out of the meeting because of a missed meeting."
+        },
+        {
+          "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "I'm going to make an adjustment to the budget for each quarter."
+        },
+        {
+          "src": "Si Maria ang magiging responsible sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Si Maria is responsible for follow-up."
+        }
+      ]
+    },
+    "id_ID": {
+      "n": 7,
+      "token_f1_mean": 0.31806220095693777,
+      "token_f1_median": 0.36363636363636365,
+      "bleu": 11.983524409529164,
+      "chrf": 33.37799529915726,
+      "examples": [
+        {
+          "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "It's a meeting room full of people."
+        },
+        {
+          "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "It's thanks to the austerity budgets of many countries."
+        },
+        {
+          "src": "Si Maria ang magiging responsible sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria was in charge of the follow-up."
+        }
+      ]
+    }
+  },
+  "generic_eval": {},
+  "recommendation": {
+    "go": false,
+    "decision": "PROVISIONAL",
+    "metric_improvement": true,
+    "quality_floor_met": false,
+    "reason": "domain token-F1=0.480 bleu=16.3 chrf=44.0; need > tl_XX(0.384)+0.02, > id_ID(0.318)+0.02, and floors F1≥0.55 / BLEU≥20",
+    "wire_MBART_PH_FINE_TUNED_MODEL": false,
+    "notes": [
+      "PROVISIONAL = beats stock tags on domain F1 but below absolute quality floors — retrain on GPU (≥1–3 epochs) before deploy.",
+      "Hiligaynon remains Google-first regardless; mBART is last resort."
+    ]
+  }
+}

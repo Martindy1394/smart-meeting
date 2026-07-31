@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-07-31T03:38:06.390487+00:00",
+  "model": "facebook/mbart-large-50-many-to-many-mmt",
+  "fixtures_only": false,
+  "tagalog_n": 5,
+  "hiligaynon_n": 5,
+  "recommendation_pending": false,
+  "notes": [
+    "Stock Smart Meeting uses id_ID for hil/tl without a PH fine-tune.",
+    "NLLB remains the default PH\u2192EN path (tgl_Latn / ceb_Latn).",
+    "This benchmark isolates stock mBART tag choice only."
+  ],
+  "tagalog": {
+    "tl_XX": {
+      "n": 5,
+      "token_f1_mean": 0.4301,
+      "token_f1_median": 0.3077
+    },
+    "id_ID": {
+      "n": 5,
+      "token_f1_mean": 0.3398,
+      "token_f1_median": 0.4
+    }
+  },
+  "tagalog_recommendation": "Prefer tl_XX for stock mBART Tagalog (higher automatic overlap).",
+  "status": "complete"
+}
