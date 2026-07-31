@@ -1163,7 +1163,9 @@ def _nllb_src_code(source_language: str, text: str = "") -> str:
     """Map app/meeting language to an NLLB source code for PH → English."""
     primary = (source_language or "auto").strip().lower()
     if primary in {"hil", "hiligaynon", "ilonggo"}:
-        return "ceb_Latn"  # closest Visayan code in NLLB-200
+        # NLLB has no Hiligaynon code — ceb_Latn is an emergency Visayan proxy
+        # (same structural gap as mBART's missing hil_XX; Google is preferred).
+        return "ceb_Latn"
     if primary in {"tl", "fil", "filipino", "tagalog"}:
         return "tgl_Latn"
     if primary in {"id", "indonesian"}:
@@ -1223,9 +1225,20 @@ def _nllb_translate_to_english(text: str, source_language: str = "auto") -> str:
 
 def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
     model, tokenizer = _pipelines.mbart()
-    src = mbart_code(src_code) or "en_XX"
+    src = mbart_code(src_code)
+    if not src:
+        # Historical bug: ``or "en_XX"`` mistagged unmapped PH codes as English
+        # with no log line — looked like "translation didn't happen".
+        logger.warning(
+            "Unmapped mBART source code %r — refusing silent English mistag; "
+            "using id_ID as emergency typological proxy. Add the code to "
+            "languages.py::LANGUAGES / aliases.",
+            src_code,
+        )
+        src = "id_ID"
     tgt = mbart_code(tgt_code)
     if not tgt:
+        logger.warning("Unmapped mBART target code %r", tgt_code)
         raise LLMUnavailable(f"Unsupported target language: {tgt_code}")
 
     # Identity English→English is unreliable on this checkpoint (emits te_IN etc.).
@@ -1542,30 +1555,44 @@ def _route_attempts_for_line(
     has_ph_mbart: bool,
     use_nllb: bool,
 ) -> list[tuple[str, str]]:
-    """Build ordered (engine, src) attempts for one routed line."""
+    """Build ordered (engine, src) attempts for one routed line.
+
+    Tagalog mBART attempts always pass shorthand ``tl`` (native ``tl_XX``).
+    The old ``id`` substitution for stock mBART was an inherited workaround;
+    fixture benchmark prefers ``tl_XX`` over ``id_ID`` (see docs/MBART_PH_AUDIT.md).
+
+    Hiligaynon has no mBART token — Google first, NLLB ``ceb_Latn`` next, then
+    mBART as a **degraded** last resort (``tl`` when a PH fine-tune exists,
+    else ``id`` typological proxy). ``has_ph_mbart`` only affects that
+    Hiligaynon last-resort tag, not Tagalog.
+    """
     from . import google_translate
 
     attempts: list[tuple[str, str]] = []
     if route_lang == "hil":
+        # Primary: Google ``hil``. mBART is never a peer option here.
         if google_translate.is_configured():
             attempts.append(("google", "hil"))
         fallback = (settings.hil_translate_fallback or "nllb").strip().lower()
         if fallback == "nllb" and use_nllb:
             attempts.append(("nllb", "hil"))
+        # Degraded last resort only — no hil_XX in mBART-50 vocabulary.
         attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
         return attempts
     if route_lang == "tl":
+        # Always native Tagalog token via shorthand ``tl`` → ``tl_XX``.
         if prefer_mbart:
-            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+            attempts.append(("mbart", "tl"))
         if use_nllb:
             attempts.append(("nllb", "tl"))
         if not prefer_mbart:
-            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+            attempts.append(("mbart", "tl"))
         attempts.append(("mbart", "en"))
         return attempts
     if use_nllb:
         attempts.append(("nllb", "auto"))
-    attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+    # Unknown / mixed: try Tagalog-native mBART before English identity.
+    attempts.append(("mbart", "tl"))
     attempts.append(("mbart", "en"))
     return attempts
 

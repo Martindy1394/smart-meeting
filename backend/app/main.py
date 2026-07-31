@@ -122,6 +122,10 @@ async def lifespan(app: FastAPI):
         )
         raise RuntimeError("Insecure JWT_SECRET_KEY for non-development environment")
     init_db()
+    # Fail fast if MT shorthands (en/tl/id/hil + aliases) cannot resolve to mBART tags.
+    from .languages import assert_mbart_codes_resolvable
+
+    assert_mbart_codes_resolvable()
     if redis_store.is_available():
         logger.info(
             "Redis ready (%s) — rolling live buffer %.0fs, TTL %ss",

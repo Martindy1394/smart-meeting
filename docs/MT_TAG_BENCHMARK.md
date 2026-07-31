@@ -4,10 +4,12 @@
 
 Stock mBART-50 has **no** Hiligaynon code. Smart Meeting historically used
 `id_ID` as a stand-in for both Tagalog and Hiligaynon when no PH fine-tune is
-loaded. NLLB is already preferred for PH→EN (`tgl_Latn` / `ceb_Latn`). This
-benchmark isolates whether **stock mBART** should prefer native `tl_XX` over
-`id_ID` for Tagalog, and collects **human** judgments for Hiligaynon-via-`id_ID`
-(the pair with the least safety net).
+loaded. A 2026-07-31 live run preferred **`tl_XX` over `id_ID` for Tagalog**
+(token-F1 0.43 vs 0.34) — stock Tagalog now maps to `tl_XX` (see
+`docs/MBART_PH_AUDIT.md`). NLLB remains preferred for PH→EN by default
+(`tgl_Latn` / `ceb_Latn`). This benchmark still isolates stock mBART tag choice
+and collects **human** judgments for Hiligaynon-via-`id_ID` (degraded last
+resort only).
 
 ## Run
 
@@ -34,10 +36,10 @@ Optional: `pip install sacrebleu` for chrF++ sentence scores.
 
 ## Decision rule (Tagalog)
 
-If `tl_XX` mean token-F1 (or chrF) beats `id_ID` by a clear margin on your
-domain set, change stock mBART Tagalog mapping from `id_ID` → `tl_XX` in
-`languages.py` **for Tagalog only**. Keep Hiligaynon on NLLB-first; only change
-Hiligaynon mBART fallback after human eval.
+**Applied:** stock Tagalog → `tl_XX` in `languages.py` after the fixture
+benchmark win. Re-run on a larger domain (meeting Taglish) set before changing
+again. Keep Hiligaynon on Google → NLLB; only change Hiligaynon mBART fallback
+after human eval — it remains a degraded option with no vocabulary slot.
 
 Do **not** invent Hiligaynon quality scores in CI — leave the worksheet for
 humans.

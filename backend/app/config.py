@@ -184,11 +184,13 @@ class Settings(BaseSettings):
     bart_model: str = "facebook/bart-large-cnn"
     mbart_model: str = "facebook/mbart-large-50-many-to-many-mmt"
     # Optional LoRA-merged mBART checkpoint fine-tuned for Tagalog/Hiligaynon→EN.
-    # When set, Philippine sources use ``tl_XX`` (Hiligaynon has no mBART code).
+    # Train on native ``tl_XX`` (see docs/FINE_TUNE_MBART_PH.md). Hiligaynon has
+    # no mBART token — fine-tune can only proxy it under ``tl_XX``.
     mbart_ph_finetuned_model: str = ""
-    # auto | nllb | mbart — Philippine→English backend preference.
+    # auto | nllb | mbart — Tagalog/mixed backend preference.
     # auto: fine-tuned mBART first when configured, otherwise NLLB.
-    # Hiligaynon lines are routed to Google Translate (see below), not NLLB.
+    # Stock mBART Tagalog uses native ``tl_XX`` (not id_ID) — see docs/MBART_PH_AUDIT.md.
+    # Hiligaynon lines are routed to Google Translate first, not mBART.
     ph_translate_backend: str = "auto"
     # NLLB has a real Tagalog code (tgl_Latn); used for Tagalog → English.
     nllb_model: str = "facebook/nllb-200-distilled-600M"

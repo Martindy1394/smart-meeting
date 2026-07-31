@@ -77,7 +77,7 @@ benchmarks. Where we lack measured numbers, that is called out in
 
 | Choice | Why (project fact) | Alternatives considered / deferred |
 |---|---|---|
-| NLLB-200 distilled first for PH→EN (`PH_TRANSLATE_BACKEND=auto`) | Better Tagalog codes (`tgl_Latn`); Hiligaynon approximated as `ceb_Latn` | Stock mBART `id_ID` alone — kept as **fallback** only (`id_ID` does not understand Tagalog) |
+| NLLB-200 distilled first for PH→EN (`PH_TRANSLATE_BACKEND=auto`) | Better Tagalog codes (`tgl_Latn`); Hiligaynon → Google `hil` then `ceb_Latn` | Stock mBART alone — Tagalog uses native `tl_XX`; Hiligaynon has no token (degraded `id_ID` last) |
 | mBART-50 many-to-many for non-EN targets | Already supports the UI language list | Running NLLB for every target — not wired; mBART owns non-EN |
 | Optional `MBART_PH_FINE_TUNED_MODEL` | Teams that want a local PH→EN mBART LoRA | NLLB fine-tune — documented as the better long-term PH MT path, not the default training script |
 
@@ -216,12 +216,13 @@ separately, translate the transcript into other UI languages on demand.
 ### What it does here
 
 - Stock mBART: `facebook/mbart-large-50-many-to-many-mmt` (`MBART_MODEL`).
-- PH→EN default path (`PH_TRANSLATE_BACKEND=auto`): prefer
-  `facebook/nllb-200-distilled-600M` (Hiligaynon via `ceb_Latn`, Tagalog via
-  `tgl_Latn`), fall back to mBART (`id_ID` for hil/tl when no PH fine-tune).
-- Optional `MBART_PH_FINE_TUNED_MODEL` for better Philippine → English.
-- Non-English targets (es, fr, de, …, hil, tl) use mBART many-to-many.
-- Sliding context windows so long board transcripts stay coherent.
+- Three-way router: EN passthrough / Tagalog→NLLB `tgl_Latn` / Hiligaynon→Google
+  `hil` (NLLB `ceb_Latn` then mBART only as degraded fallback).
+- Stock mBART Tagalog uses native **`tl_XX`** (not `id_ID` — see
+  [`MBART_PH_AUDIT.md`](MBART_PH_AUDIT.md)). Hiligaynon has **no** mBART token.
+- Optional `MBART_PH_FINE_TUNED_MODEL` (LoRA on `tl_XX`) for better Tagalog→EN.
+- Non-English targets (es, fr, de, …) use mBART many-to-many.
+- Sliding context windows with span-extraction safeguards for long transcripts.
 
 ### Inputs / outputs
 
@@ -236,7 +237,8 @@ separately, translate the transcript into other UI languages on demand.
 
 **Key files:** `backend/app/services/llm.py`, `languages.py`, `routers/ai.py`
 
-**Docs:** [`FINE_TUNE_MBART_PH.md`](FINE_TUNE_MBART_PH.md)
+**Docs:** [`FINE_TUNE_MBART_PH.md`](FINE_TUNE_MBART_PH.md),
+[`MBART_PH_AUDIT.md`](MBART_PH_AUDIT.md), [`MT_TAG_BENCHMARK.md`](MT_TAG_BENCHMARK.md)
 
 **Project in one line (mBART’s view):** “I bridge languages — I turn the Whisper
 transcript into English so BART can write minutes, and I translate the same

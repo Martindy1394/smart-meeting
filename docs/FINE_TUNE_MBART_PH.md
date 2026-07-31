@@ -9,11 +9,20 @@ custom Philippine checkpoint.
 | Source | Role |
 |---|---|
 | OPUS Tatoeba `en-tl` | Real Tagalog↔English sentences (~8.7k) |
+| FLORES-200 `tgl_Latn` | Held-out chrF/BLEU (not train-only) |
+| OPUS JW300 / GlobalVoices / CCAligned / WikiMatrix | Broader Tagalog parallel |
+| Domain Taglish + meeting transcripts | Critical — web bitext misses spoken code-switch |
 | `scripts/ph_mt/seed_hiligaynon_en.jsonl` | Curated Hiligaynon meeting phrases |
+| SEACrowd + OPUS Bible/JW300 (Hiligaynon) | Sparse hil↔en; keep Google primary |
 | [pinoy-dictionary-scraper](https://github.com/luisligunas/pinoy-dictionary-scraper) | Optional short word→gloss pairs (capped) |
 
-Hiligaynon has **no mBART language token**, so training uses `tl_XX` → `en_XX`
-as a proxy for both Tagalog and Hiligaynon.
+**Always fine-tune Tagalog on native `tl_XX` → `en_XX`**, not `id_ID`. Stock
+mBART already prefers `tl_XX` (see `docs/MBART_PH_AUDIT.md`); LoRA should close
+the residual gap on that real token.
+
+Hiligaynon has **no mBART language token**. Proxying hil under `tl_XX` during
+LoRA does **not** add vocabulary understanding — treat Google Translate as
+primary until a real `hil_XX` embedding is added and trained.
 
 ## Train
 
@@ -64,8 +73,10 @@ PH_TRANSLATE_BACKEND=mbart
 `PH_TRANSLATE_BACKEND` values:
 
 - `auto` — use fine-tuned mBART first when `MBART_PH_FINE_TUNED_MODEL` is set, else NLLB
-- `mbart` — Philippine path uses mBART (`tl_XX` when fine-tuned)
+- `mbart` — Tagalog path uses mBART (`tl_XX`; fine-tuned checkpoint when set)
 - `nllb` — keep the current NLLB-first behavior
+
+Hiligaynon routing is independent: Google `hil` → NLLB `ceb_Latn` → mBART last.
 
 ## Notes
 

@@ -1,13 +1,36 @@
 """Supported translation languages and helpers.
 
 ``mbart_code`` maps short codes to ``facebook/mbart-large-50-many-to-many-mmt``
-tokens for non-PH targets.
+language tokens.
 
-Philippine → English defaults to **NLLB** (``tgl_Latn`` / ``ceb_Latn``). When a
-fine-tuned mBART checkpoint is configured (``MBART_PH_FINE_TUNED_MODEL``),
-Tagalog/Hiligaynon use ``tl_XX`` (Hiligaynon has no native mBART token).
+Tagalog (``tl``)
+  Stock mBART-50 **includes** native ``tl_XX``. An older inherited workaround
+  tagged Tagalog as Indonesian ``id_ID`` whenever no PH fine-tune was loaded.
+  Live fixture benchmark (``scripts/ph_mt/benchmark_mbart_tags.py``, 2026-07-31)
+  measured higher token-F1 for ``tl_XX`` (0.43) than ``id_ID`` (0.34), so stock
+  Tagalog now uses ``tl_XX``. Optional ``MBART_PH_FINE_TUNED_MODEL`` checkpoints
+  are also trained on ``tl_XX`` → ``en_XX``.
+
+Hiligaynon (``hil``)
+  mBART-50 has **no** ``hil_XX`` (or any Hiligaynon) token — confirmed against
+  ``tokenizer.lang_code_to_id``. Proxying as ``id_ID`` / ``tl_XX`` is a
+  **degraded last resort** only. Production Hiligaynon → English must go through
+  Google Cloud Translation (``hil``) first, then NLLB ``ceb_Latn``, then mBART.
 """
 from __future__ import annotations
+
+import logging
+
+logger = logging.getLogger("smart_meeting.languages")
+
+# Shorthand aliases accepted by routers / ASR language fields.
+_CODE_ALIASES: dict[str, str] = {
+    "fil": "tl",
+    "filipino": "tl",
+    "tagalog": "tl",
+    "hiligaynon": "hil",
+    "ilonggo": "hil",
+}
 
 # code -> (display name, mBART-50 language token, fallback flag)
 LANGUAGES: dict[str, dict] = {
@@ -24,39 +47,70 @@ LANGUAGES: dict[str, dict] = {
     "nl": {"name": "Dutch", "mbart": "nl_XX"},
     "ko": {"name": "Korean", "mbart": "ko_KR"},
     "id": {"name": "Indonesian", "mbart": "id_ID"},
-    # Stock mBART: id_ID fallback. Fine-tuned PH checkpoint: tl_XX via mbart_code().
+    # Native mBART-50 Tagalog token (preferred over historical id_ID workaround).
+    "tl": {"name": "Tagalog", "mbart": "tl_XX"},
+    # No hil_XX in mBART-50 — id_ID is a degraded typological proxy only.
     "hil": {"name": "Hiligaynon", "mbart": "id_ID", "fallback": True},
-    "tl": {"name": "Tagalog", "mbart": "id_ID", "fallback": True},
     # English is always available as a convenience target.
     "en": {"name": "English", "mbart": "en_XX"},
 }
 
+# Codes the MT stack must always resolve (startup + tests).
+REQUIRED_MBART_SHORT_CODES: tuple[str, ...] = ("en", "tl", "id", "hil")
+
+
+def normalize_lang_code(code: str | None) -> str:
+    """Lowercase + alias-normalize a language shorthand."""
+    raw = (code or "").strip().lower()
+    if not raw:
+        return ""
+    return _CODE_ALIASES.get(raw, raw)
+
 
 def language_name(code: str) -> str:
-    entry = LANGUAGES.get(code)
+    entry = LANGUAGES.get(normalize_lang_code(code))
     if entry:
         return entry["name"]
     return code
 
 
 def mbart_code(code: str) -> str | None:
+    """Map a short language code to an mBART-50 ``lang_code_to_id`` key.
+
+    Returns ``None`` for unrecognized codes (callers must not silently treat
+    that as English without logging — see ``_mbart_translate``).
+    """
     from .config import settings
 
-    entry = LANGUAGES.get(code)
+    normalized = normalize_lang_code(code)
+    entry = LANGUAGES.get(normalized)
     if not entry:
         return None
-    # Fine-tuned PH mBART was trained with tl_XX for Tagalog + Hiligaynon.
-    if (settings.mbart_ph_finetuned_model or "").strip() and code in {
+
+    # Fine-tuned PH mBART was trained with tl_XX for Tagalog + Hiligaynon proxy.
+    # For Hiligaynon that still is not a real vocabulary slot — it only helps
+    # when the checkpoint saw Hiligaynon text under the tl_XX tag during LoRA.
+    if (settings.mbart_ph_finetuned_model or "").strip() and normalized in {
         "tl",
         "hil",
-        "fil",
-        "filipino",
-        "tagalog",
-        "hiligaynon",
-        "ilonggo",
     }:
         return "tl_XX"
     return entry.get("mbart")
+
+
+def assert_mbart_codes_resolvable() -> None:
+    """Startup guard: every shorthand the MT router passes must resolve."""
+    missing = [c for c in REQUIRED_MBART_SHORT_CODES if not mbart_code(c)]
+    if missing:
+        raise RuntimeError(
+            f"mBART language map missing required codes: {missing}. "
+            "Check app/languages.py LANGUAGES."
+        )
+    # Aliases used by ASR / meeting.language fields.
+    for alias in ("fil", "tagalog", "hiligaynon", "ilonggo"):
+        if not mbart_code(alias):
+            raise RuntimeError(f"mBART language alias {alias!r} does not resolve")
+
 
 def list_languages() -> list[dict]:
     return [
