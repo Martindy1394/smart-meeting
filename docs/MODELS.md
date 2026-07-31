@@ -41,7 +41,7 @@ Smart Meeting turns board-meeting audio into minutes with three roles:
 |---|---|---|
 | Accuracy of what was said | **Whisper** (+ optional Tagalog RNN-T live) | Audio → transcript |
 | Language access | **NLLB** (PH→EN default) + **mBART** (many-to-many / fallback) | Transcript → English (and other languages) |
-| Readable minutes | **BART** | English → Discussion / Decisions / Action items |
+| Readable minutes | **BART** | Flat pass on English → Discussion / Decisions / Action items (no topic re-segmentation of the translation) |
 
 Pipeline:
 
@@ -174,9 +174,10 @@ pass is what summaries and translations read.”
 
 ## BART — English meeting minutes
 
-**Role in this project:** Condense the **English** transcript into structured
-meeting minutes (Discussion / Decisions / Action items), as bullets or numbered
-items.
+**Role in this project:** Condense the **English** translation into structured
+meeting minutes (Discussion / Decisions / Action items) with a **flat** BART
+pass — not by re-segmenting that translation into topics or carrying
+cross-topic discourse tails.
 
 ### What it does here
 

@@ -5,8 +5,9 @@ so every AI integration in the codebase flows through one consistent surface.
 
 * Meeting summarization (``summarize_to_english``) is a two-step pipeline:
   (1) three-way MT — English passthrough / Tagalog→NLLB / Hiligaynon→Google
-  Translate, (2) BART summarizes that English with topic-aware chunking.
-* ``task="summarize"`` on already-English text uses divide-and-conquer BART.
+  Translate, (2) flat BART on that English (no topic segmentation / discourse
+  overlap tails), then Discussion / Decisions / Action items formatting.
+* ``task="summarize"`` on raw transcripts may still use topic-aware BART.
 * ``task="translate"`` uses the same three-way router for →English.
 """
 from __future__ import annotations
@@ -1055,8 +1056,39 @@ def _bart_summarize_topics(text: str) -> list[tuple[str, str]]:
     return results
 
 
+def _bart_summarize_flat(text: str) -> str:
+    """Character-budget BART without topic breaks or cross-topic context tails.
+
+    Used for ``source_kind="english_translation"`` so minutes come from a
+    straightforward pass over the English text rather than TF-cosine topic
+    capture with discourse overlap.
+    """
+    summarizer = _pipelines.summarizer()
+    # Stay under BART's ~1024-token input; ~3.5 chars/token with headroom.
+    max_chars = min(_MAX_CHUNK_CHARS, max(800, int(settings.bart_max_input_tokens * 3.2)))
+    chunks = _chunk_text(text, size=max_chars)
+    if not chunks:
+        return ""
+    if len(chunks) == 1:
+        return _bart_summarize_chunk(summarizer, chunks[0])
+    partials: list[str] = []
+    for chunk in chunks:
+        try:
+            partials.append(_bart_summarize_chunk(summarizer, chunk))
+        except Exception as exc:
+            logger.warning("Flat BART chunk failed (%s); using extractive.", exc)
+            partials.append(" ".join(_segment_idea_units(chunk)[:5]))
+    combined = " ".join(p for p in partials if p).strip()
+    if len(combined.split()) > 200:
+        try:
+            return _bart_summarize_chunk(summarizer, combined)
+        except Exception:
+            return combined
+    return combined
+
+
 def _bart_summarize(text: str) -> str:
-    """Backward-compatible flat summary string (joined topic summaries)."""
+    """Backward-compatible summary string (joined topic summaries)."""
     parts = [summary for _, summary in _bart_summarize_topics(text)]
     return " ".join(parts)
 
@@ -1122,9 +1154,10 @@ def summarize(
 ) -> tuple[str, str]:
     """Return (formatted_summary, engine_name).
 
-    Prefer ``source_kind="english_translation"`` after mBART so BART sees
-    English and can retain meeting context. Long text uses topic segmentation
-    → per-topic BART → coverage restore → meeting-minutes sections.
+    Prefer ``source_kind="english_translation"`` after MT so BART sees English.
+    That path uses **flat** BART (no topic segmentation / discourse-context
+    tails), then Discussion / Decisions / Action items. Topic-aware
+    divide-and-conquer remains available for raw-transcript callers only.
     """
     text = _normalize_spoken_transcript(text or "")
     if not text:
@@ -1134,24 +1167,25 @@ def summarize(
     word_count = len(text.split())
     from_english = source_kind == "english_translation"
 
-    # English path: run contextual BART whenever there is enough substance so
-    # short mixed meetings still get topic-aware minutes (not only extractive).
+    # English path: flat BART over the translation — do not re-segment into
+    # topics or carry overlap tails from the translated text.
     if from_english:
         units = source_units
         engine = "bart-from-english"
-        if word_count >= 35 and len(source_units) >= 2:
+        if word_count >= 24 and len(source_units) >= 2:
             try:
-                return _contextual_bart_summary(
-                    text,
-                    source_units,
-                    output_format=output_format,
-                    engine_prefix="bart-english",
-                    min_overlap=0.42,
-                    minutes_structure=True,
+                raw = _bart_summarize_flat(text)
+                polished = _summary_sentences_to_units(raw) or source_units
+                units = _merge_missing_units(
+                    source_units, polished, min_overlap=0.42
+                )
+                return (
+                    _format_meeting_minutes(units, output_format),
+                    "bart-english-flat",
                 )
             except Exception as exc:
                 logger.warning(
-                    "BART polish on English translation failed (%s); "
+                    "Flat BART on English translation failed (%s); "
                     "keeping full idea units as minutes.",
                     exc,
                 )

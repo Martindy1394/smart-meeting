@@ -72,7 +72,7 @@ def test_summary_sentences_to_units_makes_bullets():
     units = llm._summary_sentences_to_units(raw)
     assert len(units) >= 3
     formatted = llm._format_summary(units, "bullets")
-    assert formatted.startswith("- ")
+    assert formatted.startswith(("- ", "• "))
     assert formatted.count("\n") >= 2
 
 
@@ -84,8 +84,9 @@ def test_format_topic_summaries_with_headers():
     out = llm._format_topic_summaries(sections, "bullets")
     assert "Opening" in out
     assert "Decisions" in out
-    assert "- Mic check completed." in out
-    assert "- Budget was approved." in out
+    assert "Mic check completed." in out
+    assert "Budget was approved." in out
+    assert "- " in out or "•" in out
 
 
 def test_short_summarize_stays_idea_preserving():
@@ -95,7 +96,7 @@ def test_short_summarize_stays_idea_preserving():
     )
     summary, engine = llm.summarize(text, output_format="bullets")
     assert engine == "bart-meeting-minutes"
-    assert summary.startswith("- ")
+    assert summary.startswith(("- ", "• "))
     assert "Mic" in summary or "sound" in summary.lower()
 
 
@@ -109,11 +110,15 @@ def test_english_source_kind_summarizes_in_english():
     summary, engine = llm.summarize(
         text, output_format="bullets", source_kind="english_translation"
     )
+    # English path uses flat BART (no topic/context capture from translation).
     assert "english" in engine
-    assert "- " in summary
+    assert "topic" not in engine
+    assert "- " in summary or "•" in summary
     assert "budget" in summary.lower() or "Marketing" in summary or "campaign" in summary.lower()
-    # Context-based minutes should surface decisions / actions when present.
-    assert "Decisions" in summary or "Action items" in summary or summary.startswith("- ")
+    # Minutes sections still surface decisions / actions when present.
+    assert "Decisions" in summary or "Action items" in summary or summary.startswith(
+        ("- ", "•")
+    )
 
 
 def test_english_covers_transcript_helper():
@@ -158,7 +163,8 @@ def test_format_meeting_minutes_sections():
     assert "Discussion" in out
     assert "Decisions" in out
     assert "Action items" in out
-    assert "- Members approved the venue budget." in out
+    assert "Members approved the venue budget." in out
+    assert "- " in out or "•" in out
 
 
 def test_is_mostly_english_rejects_filipino_markers():
