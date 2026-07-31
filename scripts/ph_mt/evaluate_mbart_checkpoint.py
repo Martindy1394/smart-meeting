@@ -140,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"transformers required: {exc}", file=sys.stderr)
         return 2
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _hil_xx_tokenizer import load_mbart_tokenizer
+
     domain = _load_jsonl(args.domain_jsonl)
     if not domain:
         print("Domain JSONL empty.", file=sys.stderr)
@@ -147,8 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     generic = _load_jsonl(args.eval_jsonl) if args.eval_jsonl and args.eval_jsonl.exists() else []
 
     print(f"Loading fine-tuned checkpoint {args.checkpoint}")
-    ft_tok = MBart50TokenizerFast.from_pretrained(str(args.checkpoint))
-    ft_model = MBartForConditionalGeneration.from_pretrained(str(args.checkpoint))
+    ckpt = Path(args.checkpoint)
+    ft_tok = load_mbart_tokenizer(ckpt) if ckpt.is_dir() else MBart50TokenizerFast.from_pretrained(str(args.checkpoint))
+    ft_model = MBartForConditionalGeneration.from_pretrained(str(ckpt.resolve() if ckpt.is_dir() else args.checkpoint))
     ft_model.eval()
 
     src_ft = "tl_XX" if args.lang == "tl" else "hil_XX"
@@ -215,32 +219,42 @@ def main(argv: list[str] | None = None) -> int:
     tl_ref = 0.43 if tl_f1 is None else tl_f1
     id_ref = 0.34 if id_f1 is None else id_f1
 
+    ft_bleu = report["domain"]["fine_tune"].get("bleu") or -1
+    ft_chrf = report["domain"]["fine_tune"].get("chrf") or -1
     if args.lang == "tl":
         beats_id = ft_f1 > id_ref + 0.02
         beats_tl = ft_f1 > tl_ref + 0.02
-        go = beats_id and beats_tl
+        metric_ok = beats_id and beats_tl
+        # Absolute floors so tiny smoke runs that barely beat a weak baseline
+        # do not auto-wire into production.
+        quality_ok = ft_f1 >= 0.55 and (ft_bleu < 0 or ft_bleu >= 20.0)
+        go = metric_ok and quality_ok
         reason = (
-            f"domain token-F1={ft_f1:.3f}; need > tl_XX({tl_ref:.3f})+0.02 "
-            f"and > id_ID({id_ref:.3f})+0.02"
+            f"domain token-F1={ft_f1:.3f} bleu={ft_bleu:.1f} chrf={ft_chrf:.1f}; "
+            f"need > tl_XX({tl_ref:.3f})+0.02, > id_ID({id_ref:.3f})+0.02, "
+            f"and floors F1≥0.55 / BLEU≥20"
         )
     else:
-        # Hiligaynon: beat id_ID proxy clearly; tl_XX mistag of hil is also a baseline
         beats_id = ft_f1 > id_ref + 0.05
         beats_tl = tl_f1 is None or ft_f1 > tl_f1 + 0.02
-        go = beats_id and beats_tl and report.get("has_hil_xx", False)
+        metric_ok = beats_id and beats_tl and report.get("has_hil_xx", False)
+        quality_ok = ft_f1 >= 0.40 and (ft_bleu < 0 or ft_bleu >= 12.0)
+        go = metric_ok and quality_ok
         reason = (
-            f"domain token-F1={ft_f1:.3f}; need hil_XX in vocab, "
-            f"> id_ID({id_ref:.3f})+0.05, and ≥ tl_XX mistag baseline"
+            f"domain token-F1={ft_f1:.3f} bleu={ft_bleu:.1f}; need hil_XX in vocab, "
+            f"> id_ID({id_ref:.3f})+0.05, and floors F1≥0.40 / BLEU≥12"
         )
 
     report["recommendation"] = {
         "go": go,
-        "decision": "GO" if go else "NO-GO",
+        "decision": "GO" if go else ("PROVISIONAL" if metric_ok else "NO-GO"),
+        "metric_improvement": metric_ok,
+        "quality_floor_met": quality_ok,
         "reason": reason,
         "wire_MBART_PH_FINE_TUNED_MODEL": go,
         "notes": [
-            "CPU smoke / short LoRA runs are almost always NO-GO — retrain on GPU "
-            "for ≥1–3 epochs before production.",
+            "PROVISIONAL = beats stock tags on domain F1 but below absolute "
+            "quality floors — retrain on GPU (≥1–3 epochs) before deploy.",
             "Hiligaynon remains Google-first regardless; mBART is last resort.",
         ],
     }

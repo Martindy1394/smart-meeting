@@ -135,36 +135,45 @@ def load_opus100(src_lang: str, max_rows: int) -> list[dict]:
 
 
 def load_flores_tgl(src_lang: str, split: str = "devtest") -> list[dict]:
-    """FLORES-200 Tagalog↔English (prefer held-out / eval, not train)."""
+    """FLORES-200 Tagalog↔English (prefer held-out / eval, not train).
+
+    ``facebook/flores`` is gated on the Hub — set ``HF_TOKEN`` / ``huggingface-cli
+    login`` first. Falls back to a local directory of parallel sentence files
+    when ``--flores-dir`` provides ``*.tgl_Latn`` / ``*.eng_Latn`` line-aligned
+    files (see FLORES-200 release layout).
+    """
     try:
         from datasets import load_dataset
     except Exception as exc:
         print(f"datasets unavailable for FLORES: {exc}", file=sys.stderr)
         return []
-    print(f"Loading facebook/flores tgl_Latn ({split}) …")
-    # Try a few known config layouts.
+    print(f"Loading FLORES-200 tgl_Latn ({split}) …")
     attempts = [
         ("facebook/flores", "tgl_Latn", split),
         ("facebook/flores", "eng_Latn-tgl_Latn", split),
-        ("facebook/flores-200", "tgl_Latn", split),
+        ("openlanguagedata/flores_plus", "eng_Latn-tgl_Latn", split),
     ]
     ds = None
     last_err: Exception | None = None
     for name, config, sp in attempts:
         try:
-            ds = load_dataset(name, config, split=sp, trust_remote_code=True)
+            ds = load_dataset(name, config, split=sp)
             print(f"  loaded {name}/{config}")
             break
         except Exception as exc:
             last_err = exc
             continue
     if ds is None:
-        print(f"FLORES load failed: {last_err}", file=sys.stderr)
+        print(
+            f"FLORES load failed ({last_err}). "
+            "Authenticate to Hugging Face for gated FLORES, or pass "
+            "--flores-dir with line-aligned eng_Latn/tgl_Latn files.",
+            file=sys.stderr,
+        )
         return []
 
     out: list[dict] = []
     for ex in ds:
-        # Common key patterns across FLORES HF mirrors.
         src = (
             ex.get("sentence_tgl_Latn")
             or ex.get("tgl_Latn")
@@ -182,6 +191,37 @@ def load_flores_tgl(src_lang: str, split: str = "devtest") -> list[dict]:
             out.append(row)
     print(f"FLORES rows: {len(out)}")
     return out
+
+
+def load_flores_dir(flores_dir: Path, src_lang: str, split: str = "devtest") -> list[dict]:
+    """Load line-aligned FLORES files from a local extract."""
+    if not flores_dir or not flores_dir.exists():
+        return []
+    # Common layouts: flores200_dataset/devtest/devtest.tgl_Latn + .eng_Latn
+    candidates = [
+        (
+            flores_dir / split / f"{split}.tgl_Latn",
+            flores_dir / split / f"{split}.eng_Latn",
+        ),
+        (
+            flores_dir / f"{split}.tgl_Latn",
+            flores_dir / f"{split}.eng_Latn",
+        ),
+    ]
+    for tl_path, en_path in candidates:
+        if not (tl_path.exists() and en_path.exists()):
+            continue
+        tl_lines = tl_path.read_text(encoding="utf-8").splitlines()
+        en_lines = en_path.read_text(encoding="utf-8").splitlines()
+        out: list[dict] = []
+        for src, tgt in zip(tl_lines, en_lines):
+            row = _row(src, tgt, language="tl", src_lang=src_lang, source=f"flores-{split}")
+            if row:
+                out.append(row)
+        print(f"FLORES local ({tl_path.parent}): {len(out)}")
+        return out
+    print(f"No FLORES tgl/eng pair under {flores_dir}", file=sys.stderr)
+    return []
 
 
 def load_domain_seed(path: Path, language: str, src_lang: str) -> list[dict]:
@@ -306,7 +346,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--download-flores",
         action="store_true",
-        help="Fetch FLORES-200 tgl (held out of train by default)",
+        help="Fetch FLORES-200 tgl from HF (gated — needs HF_TOKEN)",
+    )
+    p.add_argument(
+        "--flores-dir",
+        type=Path,
+        default=None,
+        help="Local FLORES-200 extract with line-aligned tgl_Latn/eng_Latn files",
     )
     p.add_argument(
         "--opus100-max",
@@ -375,8 +421,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.opus100_max > 0:
             train_pool.extend(load_opus100(src_lang, args.opus100_max))
 
-        if args.download_flores:
+        flores: list[dict] = []
+        if args.flores_dir:
+            flores = load_flores_dir(args.flores_dir, src_lang, split="devtest")
+        if args.download_flores and not flores:
             flores = load_flores_tgl(src_lang, split="devtest")
+        if flores:
             if args.flores_in_train:
                 train_pool.extend(flores)
             else:

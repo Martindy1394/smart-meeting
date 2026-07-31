@@ -79,6 +79,29 @@ def language_name(code: str) -> str:
     return code
 
 
+def ensure_tokenizer_hil_xx(tokenizer) -> bool:
+    """Re-bind ``hil_XX`` into ``lang_code_to_id`` after loading a PH fine-tune.
+
+    mBART-50's built-in map omits ``hil_XX``; fine-tunes add it as an extra
+    special token, but ``MBart50TokenizerFast`` does not restore the lang-code
+    entry on ``from_pretrained``. Returns True when ``hil_XX`` is available.
+    """
+    try:
+        hil_id = tokenizer.convert_tokens_to_ids("hil_XX")
+    except Exception:
+        return False
+    unk = getattr(tokenizer, "unk_token_id", None)
+    if hil_id is None or hil_id == unk:
+        return False
+    lang_map = getattr(tokenizer, "lang_code_to_id", None)
+    if not isinstance(lang_map, dict):
+        return False
+    lang_map["hil_XX"] = hil_id
+    if hasattr(tokenizer, "id_to_lang_code"):
+        tokenizer.id_to_lang_code[hil_id] = "hil_XX"
+    return True
+
+
 @lru_cache(maxsize=8)
 def ph_finetune_has_hil_xx(model_path: str = "") -> bool:
     """True when ``MBART_PH_FINE_TUNED_MODEL`` advertises a real ``hil_XX`` token."""

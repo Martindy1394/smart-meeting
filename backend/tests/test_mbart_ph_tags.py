@@ -57,6 +57,20 @@ def test_ph_finetune_maps_hil_to_hil_xx_when_meta_set(tmp_path):
         assert languages.ph_finetune_has_hil_xx(str(ckpt)) is True
 
 
+def test_ensure_tokenizer_hil_xx_rebinds_lang_map():
+    class _Tok:
+        unk_token_id = 0
+        lang_code_to_id = {"tl_XX": 1, "en_XX": 2}
+        id_to_lang_code = {1: "tl_XX", 2: "en_XX"}
+
+        def convert_tokens_to_ids(self, t):
+            return 99 if t == "hil_XX" else 0
+
+    tok = _Tok()
+    assert languages.ensure_tokenizer_hil_xx(tok) is True
+    assert tok.lang_code_to_id["hil_XX"] == 99
+
+
 def test_assert_mbart_codes_resolvable():
     languages.assert_mbart_codes_resolvable()
 

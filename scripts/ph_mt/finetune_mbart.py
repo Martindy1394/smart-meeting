@@ -9,7 +9,8 @@ Two modes (do not conflate):
   --lang hil
       Add ``hil_XX`` to the tokenizer, resize embeddings, copy ``tl_XX``'s
       embedding into the new row, keep that embedding **fully trainable**
-      (``modules_to_save``), LoRA the rest, and use a higher embedding LR.
+      (unfreeze ``model.shared`` + save ``shared_embeddings.pt``), LoRA the
+      rest, and use a higher embedding LR.
 
 Requirements:
   pip install "transformers>=4.40" datasets accelerate peft sentencepiece protobuf torch
@@ -32,6 +33,11 @@ import json
 import sys
 from pathlib import Path
 
+# Allow sibling imports when run as a script
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in __import__("sys").path:
+    __import__("sys").path.insert(0, str(_SCRIPT_DIR))
+
 
 def _load_jsonl(path: Path) -> list[dict]:
     rows = []
@@ -45,28 +51,10 @@ def _add_hil_xx(tokenizer, model):
     """Register hil_XX, resize embeddings, init from tl_XX copy."""
     import torch
 
-    if "hil_XX" in getattr(tokenizer, "lang_code_to_id", {}):
-        hil_id = tokenizer.lang_code_to_id["hil_XX"]
-        print(f"hil_XX already present (id={hil_id})")
-    else:
-        # Language codes live in additional_special_tokens for mBART-50.
-        existing = list(tokenizer.additional_special_tokens or [])
-        if "hil_XX" not in existing:
-            tokenizer.add_special_tokens(
-                {"additional_special_tokens": existing + ["hil_XX"]}
-            )
-        hil_id = tokenizer.convert_tokens_to_ids("hil_XX")
-        if hil_id == tokenizer.unk_token_id:
-            raise RuntimeError("Failed to add hil_XX — still UNK")
-        tokenizer.lang_code_to_id["hil_XX"] = hil_id
-        if hasattr(tokenizer, "id_to_lang_code"):
-            tokenizer.id_to_lang_code[hil_id] = "hil_XX"
-        # fairseq maps used by some generate paths
-        if hasattr(tokenizer, "fairseq_tokens_to_ids"):
-            tokenizer.fairseq_tokens_to_ids["hil_XX"] = hil_id
-        if hasattr(tokenizer, "fairseq_ids_to_tokens"):
-            tokenizer.fairseq_ids_to_tokens[hil_id] = "hil_XX"
-        print(f"Added hil_XX token id={hil_id}")
+    from _hil_xx_tokenizer import register_hil_xx_lang_code
+
+    hil_id = register_hil_xx_lang_code(tokenizer)
+    print(f"hil_XX token id={hil_id}")
 
     old_n = model.get_input_embeddings().weight.shape[0]
     new_n = len(tokenizer)
@@ -77,13 +65,11 @@ def _add_hil_xx(tokenizer, model):
     tl_id = tokenizer.lang_code_to_id.get("tl_XX")
     if tl_id is None:
         tl_id = tokenizer.convert_tokens_to_ids("tl_XX")
-    hil_id = tokenizer.lang_code_to_id["hil_XX"]
     with torch.no_grad():
         emb = model.get_input_embeddings().weight
         emb[hil_id] = emb[tl_id].clone()
         out_emb = model.get_output_embeddings()
         if out_emb is not None and out_emb.weight.shape[0] > hil_id:
-            # When weights are tied this is a no-op on a second write.
             out_emb.weight[hil_id] = out_emb.weight[tl_id].clone()
     print(f"Initialized hil_XX embedding from tl_XX (tl_id={tl_id})")
     return hil_id
@@ -168,10 +154,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"peft is required for LoRA training: {exc}", file=sys.stderr)
             return 2
-        # New embedding rows cannot be LoRA-adapted — save full modules.
-        modules_to_save = None
-        if args.lang == "hil":
-            modules_to_save = ["embed_tokens", "lm_head"]
+        # LoRA only on attention projections. PEFT modules_to_save("embed_tokens")
+        # breaks mBART's MBartScaledWordEmbedding / tied lm_head (shape error on
+        # forward). For hil_XX we instead unfreeze ``model.shared`` after wrapping
+        # and persist those weights beside the adapter (see save below).
         lora = LoraConfig(
             task_type=TaskType.SEQ_2_SEQ_LM,
             r=args.lora_r,
@@ -179,9 +165,21 @@ def main(argv: list[str] | None = None) -> int:
             lora_dropout=0.05,
             bias="none",
             target_modules=["q_proj", "v_proj"],
-            modules_to_save=modules_to_save,
         )
         model = get_peft_model(model, lora)
+        if args.lang == "hil":
+            unfrozen = 0
+            for name, param in model.named_parameters():
+                # Tied input embedding lives on ``…model.shared.weight``.
+                if name.endswith("model.shared.weight") or name.endswith(
+                    ".shared.weight"
+                ):
+                    param.requires_grad = True
+                    unfrozen += param.numel()
+            print(
+                f"Unfroze shared embedding for hil_XX "
+                f"({unfrozen:,} params, full trainable — not LoRA)"
+            )
         model.print_trainable_parameters()
 
     def preprocess(example: dict) -> dict:
@@ -320,7 +318,44 @@ def main(argv: list[str] | None = None) -> int:
 
     trainer.train()
     trainer.save_model(str(args.output_dir))
+    # Avoid KeyError on reload: MBart50TokenizerFast.__init__ looks up src_lang
+    # in the stock lang_code_to_id map, which does not include hil_XX until we
+    # re-register it. Save with a stock src_lang, plus a sidecar map.
+    if args.lang == "hil":
+        from _hil_xx_tokenizer import register_hil_xx_lang_code
+
+        hil_id = register_hil_xx_lang_code(tokenizer)
+        (args.output_dir / "extra_lang_codes.json").write_text(
+            json.dumps({"hil_XX": hil_id}, indent=2), encoding="utf-8"
+        )
+        tokenizer.src_lang = "tl_XX"
+        tokenizer.tgt_lang = "en_XX"
     tokenizer.save_pretrained(str(args.output_dir))
+
+    # Persist resized + trained shared embedding for hil merges (LoRA adapter
+    # alone does not store base embedding updates without modules_to_save).
+    if args.lang == "hil":
+        import torch
+
+        base = model.get_base_model() if hasattr(model, "get_base_model") else model
+        # PeftModel → MBartForConditionalGeneration → MBartModel.shared
+        core = base.model if hasattr(base, "model") else base
+        shared = getattr(core, "shared", None)
+        if shared is None and hasattr(core, "model"):
+            shared = getattr(core.model, "shared", None)
+        if shared is None:
+            print("WARNING: could not locate shared embedding to save", file=sys.stderr)
+        else:
+            emb_path = args.output_dir / "shared_embeddings.pt"
+            torch.save(
+                {
+                    "shared.weight": shared.weight.detach().cpu().clone(),
+                    "vocab_size": int(shared.weight.shape[0]),
+                    "has_hil_xx": True,
+                },
+                emb_path,
+            )
+            print(f"Saved trainable shared embeddings → {emb_path}")
 
     meta = {
         "base_model": args.model_name,

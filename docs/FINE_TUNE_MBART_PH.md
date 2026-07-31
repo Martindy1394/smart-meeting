@@ -140,8 +140,15 @@ Hiligaynon routing stays **Google → NLLB → mBART last**, even with a
 ```
 models/mbart-tl-en-lora/       # Tagalog LoRA adapters
 models/mbart-tl-en-merged/     # merged — point MBART_PH_FINE_TUNED_MODEL here
-models/mbart-hil-en-lora/      # Hiligaynon LoRA + saved hil_XX embed
-models/mbart-hil-en-merged/
+models/mbart-hil-en-lora/      # Hiligaynon LoRA + shared_embeddings.pt
+models/mbart-hil-en-merged/    # has_hil_xx=true in finetune_meta.json
 scripts/ph_mt/prepared/{tl,hil}/
-data/mbart_ph_ft/*_eval_report.json   # commit these reports
+data/mbart_ph_ft/              # eval reports + TRAIN_REPORT.md (committed)
 ```
+
+## Latest smoke-run verdict
+
+See [`data/mbart_ph_ft/TRAIN_REPORT.md`](../data/mbart_ph_ft/TRAIN_REPORT.md).
+CPU smoke (2026-07-31): Tagalog and Hiligaynon both show **metric improvement**
+over stock baselines but are **PROVISIONAL / NO-GO for production** until a
+GPU multi-epoch retrain clears the absolute quality floors.

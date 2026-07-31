@@ -147,6 +147,11 @@ class _Pipelines:
                 self._mbart_model = MBartForConditionalGeneration.from_pretrained(
                     model_id
                 )
+                # Vocab-extended hil_XX fine-tunes need lang_code_to_id rebound.
+                from ..languages import ensure_tokenizer_hil_xx
+
+                if ensure_tokenizer_hil_xx(self._mbart_tokenizer):
+                    logger.info("mBART tokenizer has hil_XX (PH fine-tune vocab)")
             return self._mbart_model, self._mbart_tokenizer
     def nllb(self):
         with self._lock:
