@@ -97,10 +97,9 @@ performance/cost gap: [`docs/MODELS.md`](docs/MODELS.md).
   (`requirements-rnnt.txt`), live PH captions can use a Tagalog
   FastConformer hybrid RNN-T for lower latency; final pass stays on Whisper
   (see [`docs/RNN_T_LIVE.md`](docs/RNN_T_LIVE.md)).
-- **English meeting summaries** — mBART translates the **full** transcript into
-  English with sliding context windows (PH/mixed via `id_ID`), then topic-aware
-  BART summarizes with topic overlap + coverage restore into meeting-minutes
-  sections (Discussion / Decisions / Action items).
+- **English meeting summaries** — MT translates the **full** transcript into
+  English, then **flat** BART summarizes that English (no topic re-segmentation
+  of the translation) into Discussion / Decisions / Action items.
 - **mBART translation** — context-aware English of the whole transcript, plus
   Spanish, French, German, Italian, Portuguese, Arabic, Hindi, Japanese,
   Chinese, Russian, Dutch, Korean, Hiligaynon, Tagalog.
