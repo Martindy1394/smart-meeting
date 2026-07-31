@@ -1378,18 +1378,63 @@ def _is_mostly_english_sentence(sentence: str) -> bool:
     return en >= fi and en >= 0.06
 
 
+# Context-window MT: short units skip neighbors (span trim is unreliable there).
+_CONTEXT_MIN_UNIT_WORDS = 6
+# Target/source sentence-count ratio must stay in this band to trust trimming.
+_CONTEXT_SENTENCE_PARITY_MIN = 0.5
+_CONTEXT_SENTENCE_PARITY_MAX = 2.0
+# Extracted span must cover at least this fraction of the unit's word count.
+_CONTEXT_SPAN_MIN_WORD_RATIO = 0.35
+
+
+def _word_count(text: str) -> int:
+    return len((text or "").split())
+
+
 def _extract_target_span(full_translation: str, unit: str, window: str) -> str:
-    """From a context-window translation, keep the span for ``unit``."""
+    """From a context-window translation, keep the span for ``unit``.
+
+    Uses a source word-count ratio as a sentence-count heuristic on the target.
+    Callers must validate sentence-count parity and span length before trusting
+    the result — Tagalog/Hiligaynon → English often changes sentence boundaries.
+    """
     full = (full_translation or "").strip()
     if not full:
         return ""
     sentences = _split_sentences(full)
     if len(sentences) <= 1:
         return full
-    unit_ratio = len(unit.split()) / max(1, len(window.split()))
+    unit_ratio = _word_count(unit) / max(1, _word_count(window))
     keep = max(1, min(len(sentences), int(math.ceil(len(sentences) * unit_ratio))))
     # Prefer trailing sentences (context was prefixed).
     return " ".join(sentences[-keep:]).strip()
+
+
+def _span_looks_truncated(span: str, unit: str) -> bool:
+    """True when ``span`` is empty or suspiciously short vs the source unit."""
+    span = (span or "").strip()
+    if not span:
+        return True
+    unit_words = _word_count(unit)
+    if unit_words <= 0:
+        return False
+    min_words = max(1, int(math.ceil(unit_words * _CONTEXT_SPAN_MIN_WORD_RATIO)))
+    return _word_count(span) < min_words
+
+
+def _sentence_count_parity_ok(window: str, translation: str) -> bool:
+    """True when target sentence count is roughly aligned with the source window."""
+    src_n = max(1, len(_split_sentences(window)))
+    tgt_n = max(1, len(_split_sentences(translation)))
+    ratio = tgt_n / src_n
+    return _CONTEXT_SENTENCE_PARITY_MIN <= ratio <= _CONTEXT_SENTENCE_PARITY_MAX
+
+
+def _translate_unit_alone(unit: str, src: str, *, engine: str) -> str:
+    """Context-free unit translation (NLLB or mBART). Google is handled upstream."""
+    if engine == "nllb":
+        return _nllb_translate_to_english(unit, source_language=src)
+    return _mbart_translate(unit, src, "en")
 
 
 def _translate_unit_with_context(
@@ -1400,21 +1445,80 @@ def _translate_unit_with_context(
     context_n: int = 2,
     engine: str = "mbart",
 ) -> str:
-    """Translate one unit with preceding units as discourse context."""
-    ctx = [u.strip() for u in prev_units[-context_n:] if (u or "").strip()]
-    window = " ".join(ctx + [unit]) if ctx else unit
+    """Translate one unit with preceding units as discourse context.
+
+    Falls back to a context-free translation when the unit is short, when
+    source/target sentence counts diverge, or when span extraction would drop
+    or leak content. Hiligaynon Google Translate always stays line-local.
+    """
+    unit = (unit or "").strip()
+    if not unit:
+        return ""
+
     if engine == "google":
         from . import google_translate
 
         # Line-local: avoid mixing EN/Tagalog context into Hiligaynon Google calls.
         return google_translate.translate_hiligaynon_to_english(unit)
+
+    unit_words = _word_count(unit)
+    if unit_words < _CONTEXT_MIN_UNIT_WORDS:
+        logger.info(
+            "Context-window skipped (short unit, words=%d < %d): %s…",
+            unit_words,
+            _CONTEXT_MIN_UNIT_WORDS,
+            unit[:48],
+        )
+        return _translate_unit_alone(unit, src, engine=engine)
+
+    ctx = [u.strip() for u in prev_units[-context_n:] if (u or "").strip()]
+    if not ctx:
+        return _translate_unit_alone(unit, src, engine=engine)
+
+    window = " ".join(ctx + [unit])
     if engine == "nllb":
         full = _nllb_translate_to_english(window, source_language=src)
     else:
         full = _mbart_translate(window, src, "en")
-    if not ctx:
-        return full
-    return _extract_target_span(full, unit, window) or full
+    full = (full or "").strip()
+    if not full:
+        logger.info(
+            "Context-window discarded (empty window translation); "
+            "retrying unit alone: %s…",
+            unit[:48],
+        )
+        return _translate_unit_alone(unit, src, engine=engine)
+
+    src_n = max(1, len(_split_sentences(window)))
+    tgt_n = max(1, len(_split_sentences(full)))
+    if not _sentence_count_parity_ok(window, full):
+        logger.info(
+            "Context-window discarded (sentence parity src=%d tgt=%d ratio=%.2f); "
+            "retrying unit alone: %s…",
+            src_n,
+            tgt_n,
+            tgt_n / src_n,
+            unit[:48],
+        )
+        return _translate_unit_alone(unit, src, engine=engine)
+
+    span = _extract_target_span(full, unit, window)
+    if not (span or "").strip():
+        logger.info(
+            "Context-window discarded (empty span); retrying unit alone: %s…",
+            unit[:48],
+        )
+        return _translate_unit_alone(unit, src, engine=engine)
+    if _span_looks_truncated(span, unit):
+        logger.info(
+            "Context-window discarded (truncated span, span_words=%d unit_words=%d); "
+            "retrying unit alone: %s…",
+            _word_count(span),
+            unit_words,
+            unit[:48],
+        )
+        return _translate_unit_alone(unit, src, engine=engine)
+    return span.strip()
 
 
 @dataclass
