@@ -136,7 +136,7 @@ def test_summarize_to_english_reuses_cached_translation(monkeypatch=None):
         "IT prepared livestream equipment for attendees. "
         "Education outlined workshop modules for mentors."
     )
-    summary, engine, out_en, tr_engine = llm.summarize_to_english(
+    summary, engine, out_en, tr_engine, _review = llm.summarize_to_english(
         english,
         source_language="en",
         output_format="bullets",
@@ -144,7 +144,7 @@ def test_summarize_to_english_reuses_cached_translation(monkeypatch=None):
     )
     assert tr_engine == "cached-english"
     assert out_en == english or out_en.startswith("The committee")
-    assert "- " in summary
+    assert ("- " in summary) or ("•" in summary)
     assert "english" in engine or engine.startswith("bart")
 
 

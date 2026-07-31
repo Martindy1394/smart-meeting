@@ -71,7 +71,13 @@ def summarize(
         cached_english = (meeting.translation or "").strip() or None
     try:
         with pipeline_metrics.track("summarize"):
-            summary, summary_engine, english, translate_engine = llm.summarize_to_english(
+            (
+                summary,
+                summary_engine,
+                english,
+                translate_engine,
+                mt_review,
+            ) = llm.summarize_to_english(
                 protected_source if not cached_english else source,
                 source_language=meeting.language or "auto",
                 output_format=payload.output_format,
@@ -92,7 +98,7 @@ def summarize(
     extractive = "extractive" in (summary_engine or "").lower()
     faith = llm.assess_minutes_faithfulness(summary, english or source)
     xfatih = llm.assess_translation_faithfulness(
-        source, english or "", glossary=gloss
+        source, english or "", glossary=gloss, review_lines=mt_review
     )
     items = action_items.extract_action_items(summary)
 
@@ -130,21 +136,24 @@ def translate(
     protected, gloss_map = glossary.protect(source, gloss)
     try:
         with pipeline_metrics.track("translate"):
-            translated, engine = llm.translate(
+            tr = llm.translate(
                 protected,
                 target_language=payload.target_language,
                 source_language=meeting.language or "auto",
             )
+            translated, engine = tr.text, tr.engine
+            mt_review = list(tr.review_lines or [])
     except llm.LLMUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
     translated = glossary.restore(translated, gloss_map)
+    xfatih = None
     if (payload.target_language or "").lower() in {"en", "english"}:
         meeting.translation = translated
         meeting.translation_language = "English"
         xfatih = llm.assess_translation_faithfulness(
-            source, translated, glossary=gloss
+            source, translated, glossary=gloss, review_lines=mt_review
         )
         meeting.translation_faithfulness_json = dump_faithfulness(xfatih)
         db.commit()
@@ -153,4 +162,5 @@ def translate(
         target_language=payload.target_language,
         language_name=language_name(payload.target_language),
         engine=engine,
+        translation_faithfulness=xfatih,
     )

@@ -4,10 +4,10 @@ Both features are exposed through a single ``invoke_llm(task, ...)`` entry point
 so every AI integration in the codebase flows through one consistent surface.
 
 * Meeting summarization (``summarize_to_english``) is a two-step pipeline:
-  (1) translate the **full** transcript into English (NLLB for Tagalog/PH,
-  mBART fallback), (2) BART summarizes that English with topic-aware chunking.
+  (1) three-way MT — English passthrough / Tagalog→NLLB / Hiligaynon→Google
+  Translate, (2) BART summarizes that English with topic-aware chunking.
 * ``task="summarize"`` on already-English text uses divide-and-conquer BART.
-* ``task="translate"`` uses NLLB for Philippine→English and mBART for other pairs.
+* ``task="translate"`` uses the same three-way router for →English.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import math
 import re
 import threading
 from collections import Counter
+from dataclasses import dataclass, field
 
 from ..config import settings
 from ..languages import mbart_code
@@ -820,19 +821,35 @@ def assess_translation_faithfulness(
     *,
     min_overlap: float = 0.08,
     glossary: list[str] | None = None,
+    review_lines: list[dict] | None = None,
 ) -> dict:
-    """Flag likely MT errors between source transcript and English translation.
+    """Flag likely MT errors and uncertain language-router lines.
 
-    Lexical / glossary checks — not NLI. Soft-warn before BART so bad English
-    does not silently poison minutes.
+    Lexical / glossary checks — not NLI. Also merges ``review_lines`` from the
+    three-way EN/Tagalog/Hiligaynon router (hil↔tl ambiguity).
     """
     source = (source or "").strip()
     translation = (translation or "").strip()
-    if not source or not translation:
-        return {"status": "skipped", "untraced": [], "checked": 0}
-
     untraced: list[dict] = []
     checked = 0
+
+    # Uncertain Hiligaynon/Tagalog/Cebuano disambiguation — always surface.
+    for item in review_lines or []:
+        line = (item.get("line") or "").strip()
+        if not line:
+            continue
+        checked += 1
+        untraced.append(
+            {
+                "section": item.get("section") or "Language review",
+                "line": line[:180],
+                "overlap": float(item.get("overlap") or 0.0),
+            }
+        )
+
+    if not source or not translation:
+        status = "warn" if untraced else "skipped"
+        return {"status": status, "untraced": untraced, "checked": checked}
 
     # Glossary terms in the source should survive unchanged in the translation.
     for term in glossary or []:
@@ -1105,39 +1122,41 @@ def summarize_to_english(
     source_language: str = "auto",
     output_format: str = "bullets",
     existing_english: str | None = None,
-) -> tuple[str, str, str, str]:
-    """Translate the full transcript to English (mBART), then summarize (BART).
+) -> tuple[str, str, str, str, list[dict]]:
+    """Translate the full transcript to English, then summarize (BART).
 
-    Returns ``(summary, summary_engine, english_text, translate_engine)``.
-    This is the primary meeting-minutes path so Tagalog/Hiligaynon/mixed speech
-    is summarized in English with topic context preserved.
+    Returns
+    ``(summary, summary_engine, english_text, translate_engine, mt_review_lines)``.
+    ``mt_review_lines`` are uncertain Hiligaynon/Tagalog router flags for manual review.
     """
     source = _normalize_spoken_transcript(transcript or "")
     if not source:
-        return "", "none", "", "none"
+        return "", "none", "", "none", []
 
     english = (existing_english or "").strip()
     translate_engine = "cached-english"
+    mt_review: list[dict] = []
     if not _english_covers_transcript(english, source):
-        english, translate_engine = translate(
+        tr = translate(
             source,
             target_language="en",
             source_language=source_language or "auto",
         )
-        english = _normalize_spoken_transcript(english or "")
+        english = _normalize_spoken_transcript(tr.text or "")
+        translate_engine = tr.engine
+        mt_review = list(tr.review_lines or [])
         if not english:
-            # Absolute fallback: summarize source so the user still gets bullets.
             summary, engine = summarize(
                 source, output_format=output_format, source_kind="transcript"
             )
-            return summary, engine, source, translate_engine or "none"
+            return summary, engine, source, translate_engine or "none", mt_review
 
     summary, summary_engine = summarize(
         english,
         output_format=output_format,
         source_kind="english_translation",
     )
-    return summary, summary_engine, english, translate_engine
+    return summary, summary_engine, english, translate_engine, mt_review
 
 
 def _nllb_src_code(source_language: str, text: str = "") -> str:
@@ -1384,6 +1403,11 @@ def _translate_unit_with_context(
     """Translate one unit with preceding units as discourse context."""
     ctx = [u.strip() for u in prev_units[-context_n:] if (u or "").strip()]
     window = " ".join(ctx + [unit]) if ctx else unit
+    if engine == "google":
+        from . import google_translate
+
+        # Line-local: avoid mixing EN/Tagalog context into Hiligaynon Google calls.
+        return google_translate.translate_hiligaynon_to_english(unit)
     if engine == "nllb":
         full = _nllb_translate_to_english(window, source_language=src)
     else:
@@ -1393,20 +1417,70 @@ def _translate_unit_with_context(
     return _extract_target_span(full, unit, window) or full
 
 
-def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
-    """Translate the full meeting transcript into English with context.
+@dataclass
+class TranslateResult:
+    """English translation plus three-way router metadata."""
 
-    Strategy:
-    1. Collapse Whisper repetition loops, then split into idea units.
-    2. Keep clearly-English units as-is (avoids broken en→en).
-    3. Translate PH / mixed units with **NLLB** (real Tagalog ``tgl_Latn``).
-       mBART ``id_ID`` is only a fallback — it does not understand Tagalog.
-    4. If Filipino still dominates the output, retry the full transcript once.
+    text: str
+    engine: str
+    review_lines: list[dict] = field(default_factory=list)
+    route_counts: dict = field(default_factory=dict)
+
+    def __iter__(self):
+        yield self.text
+        yield self.engine
+
+
+def _route_attempts_for_line(
+    route_lang: str,
+    *,
+    prefer_mbart: bool,
+    has_ph_mbart: bool,
+    use_nllb: bool,
+) -> list[tuple[str, str]]:
+    """Build ordered (engine, src) attempts for one routed line."""
+    from . import google_translate
+
+    attempts: list[tuple[str, str]] = []
+    if route_lang == "hil":
+        if google_translate.is_configured():
+            attempts.append(("google", "hil"))
+        fallback = (settings.hil_translate_fallback or "nllb").strip().lower()
+        if fallback == "nllb" and use_nllb:
+            attempts.append(("nllb", "hil"))
+        attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+        return attempts
+    if route_lang == "tl":
+        if prefer_mbart:
+            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+        if use_nllb:
+            attempts.append(("nllb", "tl"))
+        if not prefer_mbart:
+            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+        attempts.append(("mbart", "en"))
+        return attempts
+    if use_nllb:
+        attempts.append(("nllb", "auto"))
+    attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+    attempts.append(("mbart", "en"))
+    return attempts
+
+
+def _translate_to_english(text: str, source_language: str) -> TranslateResult:
+    """Three-way translate: EN passthrough / Tagalog→NLLB / Hiligaynon→Google.
+
+    1. Collapse Whisper loops, split into idea units (order preserved).
+    2. Classify each unit with :mod:`lang_router` (Hiligaynon wordlist — not
+       langdetect, which mislabels Ilonggo as Tagalog/Cebuano).
+    3. Route: English unchanged; Tagalog → NLLB ``tgl_Latn``; Hiligaynon →
+       Google Cloud Translation ``hil`` (NLLB ceb_Latn only as fallback).
+    4. Reassemble in original unit order; flag uncertain hil/tl lines for review.
     """
+    from . import lang_router
+
     normalized = _normalize_spoken_transcript(text or "")
     if not normalized:
-        return "", "none"
-    # Strip ASR hallucination loops before translation (Tagalog song loops, etc.).
+        return TranslateResult("", "none")
     try:
         from .transcription import _collapse_hallucinations
 
@@ -1414,42 +1488,28 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
     except Exception:
         normalized = _collapse_translation_loops(normalized)
     if not normalized:
-        return "", "none"
+        return TranslateResult("", "none")
 
     units = _segment_idea_units(normalized)
     if len(units) < 2:
         units = _split_sentences(_WS_RE.sub(" ", normalized).strip())
     if not units:
-        return "", "none"
+        return TranslateResult("", "none")
 
     primary = (source_language or "auto").strip().lower()
-    is_ph = primary in {
-        "hil",
-        "tl",
-        "fil",
-        "filipino",
-        "tagalog",
-        "hiligaynon",
-        "ilonggo",
-        "auto",
-        "detect",
-        "none",
-        "id",
-        "",
-    } or _language_scores(normalized)[1] >= 0.08
-
     backend = (settings.ph_translate_backend or "auto").strip().lower()
     has_ph_mbart = bool((settings.mbart_ph_finetuned_model or "").strip())
-    # Prefer fine-tuned mBART (tl_XX) when configured; else NLLB-first.
     prefer_mbart = backend == "mbart" or (backend == "auto" and has_ph_mbart)
-    use_nllb = backend != "mbart" and is_ph
+    use_nllb = backend != "mbart"
 
     out_units: list[str] = []
-    translated_any = False
+    review_lines: list[dict] = []
+    route_counts = {"en": 0, "tl": 0, "hil": 0, "unknown": 0, "uncertain": 0}
+    engines_used: set[str] = set()
     kept_source = 0
-    engine_name = "passthrough-english"
-    for i, unit in enumerate(units):
-        # Drop residual ASR hallucination fragments before translating.
+
+    routed = lang_router.route_units(units, meeting_language=primary)
+    for i, (unit, decision) in enumerate(routed):
         try:
             from .transcription import _collapse_hallucinations, _is_junk_transcript
 
@@ -1457,24 +1517,49 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
             if not unit_clean or _is_junk_transcript(unit_clean):
                 continue
             unit = unit_clean
+            decision = lang_router.classify_line(unit, meeting_language=primary)
         except Exception:
             pass
-        if _is_mostly_english_sentence(unit):
+
+        route_lang = decision.language
+        if route_lang == "en" or (
+            route_lang == "unknown" and _is_mostly_english_sentence(unit)
+        ):
             out_units.append(unit)
+            route_counts["en"] += 1
+            engines_used.add("passthrough-english")
+            if decision.uncertain:
+                route_counts["uncertain"] += 1
+                review_lines.append(
+                    {
+                        "section": "Language review",
+                        "line": unit[:180],
+                        "overlap": round(decision.confidence, 4),
+                    }
+                )
             continue
 
+        if route_lang not in {"en", "tl", "hil", "unknown"}:
+            route_lang = "unknown"
+        route_counts[route_lang] += 1
+        if decision.uncertain or route_lang == "unknown":
+            route_counts["uncertain"] += 1
+            review_lines.append(
+                {
+                    "section": "Language review",
+                    "line": unit[:180],
+                    "overlap": round(decision.confidence, 4),
+                }
+            )
+
+        attempts = _route_attempts_for_line(
+            route_lang,
+            prefer_mbart=prefer_mbart,
+            has_ph_mbart=has_ph_mbart,
+            use_nllb=use_nllb,
+        )
         piece = ""
         last_err = None
-        attempts: list[tuple[str, str]] = []
-        if prefer_mbart and is_ph:
-            # Fine-tuned checkpoint expects tl_XX for Tagalog + Hiligaynon.
-            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
-        if use_nllb:
-            attempts.append(("nllb", primary or "auto"))
-        if not prefer_mbart:
-            attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
-        attempts.append(("mbart", "en"))
-
         for engine, src in attempts:
             try:
                 piece = _translate_unit_with_context(
@@ -1487,13 +1572,14 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
                     raise _NonEnglishTranslation(piece)
                 if _is_garbage_english_translation(unit, piece):
                     raise _NonEnglishTranslation(piece)
-                translated_any = True
-                if engine == "nllb":
-                    engine_name = "nllb-200"
+                if engine == "google":
+                    engines_used.add("google-translate-hil")
+                elif engine == "nllb":
+                    engines_used.add("nllb-200")
                 elif has_ph_mbart and src == "tl":
-                    engine_name = "mbart-ph-finetuned"
+                    engines_used.add("mbart-ph-finetuned")
                 else:
-                    engine_name = "mbart-large-50"
+                    engines_used.add("mbart-large-50")
                 break
             except _NonEnglishTranslation as exc:
                 last_err = exc
@@ -1503,12 +1589,18 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
                 last_err = exc
                 piece = ""
                 logger.debug(
-                    "Unit translate engine=%s src=%s failed: %s", engine, src, exc
+                    "Unit translate engine=%s src=%s route=%s failed: %s",
+                    engine,
+                    src,
+                    route_lang,
+                    exc,
                 )
                 continue
         if not piece:
             logger.warning(
-                "Keeping source clause after translation failures (last=%s): %s…",
+                "Keeping source clause after translation failures "
+                "(route=%s last=%s): %s…",
+                route_lang,
                 last_err,
                 unit[:48],
             )
@@ -1518,59 +1610,52 @@ def _translate_to_english(text: str, source_language: str) -> tuple[str, str]:
 
     joined = " ".join(s for s in out_units if s).strip()
     joined = _collapse_translation_loops(joined)
-    _, fi_out = _language_scores(joined)
-    # Full-pass fallback when many PH clauses were kept or output still Filipino.
-    if kept_source >= 1 or fi_out >= 0.08:
-        for engine, src in (
-            (("nllb", primary or "auto"), ("mbart", "id"))
-            if use_nllb
-            else (("mbart", "id"),)
-        ):
-            try:
-                if engine == "nllb":
-                    whole = _nllb_translate_to_english(normalized, source_language=src)
-                    whole_engine = "nllb-200-full"
-                else:
-                    whole = _mbart_translate(normalized, src, "en")
-                    whole_engine = "mbart-large-50-full"
-                whole = _collapse_translation_loops(whole)
-                if (
-                    whole
-                    and _looks_like_latin_script(whole)
-                    and not _is_garbage_english_translation(normalized, whole)
-                ):
-                    _, fi_whole = _language_scores(whole)
-                    if fi_whole < max(0.08, fi_out):
-                        logger.info(
-                            "Using full-transcript %s fallback "
-                            "(kept_source=%d fi_out=%.2f fi_whole=%.2f)",
-                            whole_engine,
-                            kept_source,
-                            fi_out,
-                            fi_whole,
-                        )
-                        return whole, whole_engine
-            except Exception as exc:
-                logger.warning("Full-transcript fallback (%s) failed: %s", engine, exc)
 
-    if not translated_any:
+    if not engines_used:
         engine_name = "passthrough-english"
-    return joined, engine_name
+    elif len(engines_used) == 1:
+        engine_name = next(iter(engines_used))
+    else:
+        order = [
+            "google-translate-hil",
+            "nllb-200",
+            "mbart-ph-finetuned",
+            "mbart-large-50",
+            "passthrough-english",
+        ]
+        engine_name = "+".join(e for e in order if e in engines_used)
+
+    if kept_source >= 2:
+        logger.info(
+            "Three-way MT kept %d source clauses; routes=%s uncertain=%d",
+            kept_source,
+            {k: v for k, v in route_counts.items() if k != "uncertain"},
+            route_counts["uncertain"],
+        )
+
+    return TranslateResult(
+        text=joined,
+        engine=engine_name,
+        review_lines=review_lines,
+        route_counts=route_counts,
+    )
 
 
-def translate(text: str, target_language: str, source_language: str = "auto") -> tuple[str, str]:
+def translate(
+    text: str, target_language: str, source_language: str = "auto"
+) -> TranslateResult:
     text = (text or "").strip()
     if not text:
-        return "", "none"
+        return TranslateResult("", "none")
     tgt = (target_language or "en").strip().lower()
     if tgt == "en":
         return _translate_to_english(text, source_language)
     src = (source_language or "auto").strip().lower()
     if src in {"auto", "detect", "none", ""}:
-        # Non-English targets: guess PH → Indonesian source like the EN path.
         _, fi = _language_scores(text)
         src = "id" if fi >= 0.08 else "en"
-    return _mbart_translate(text, src, tgt), "mbart-large-50"
+    return TranslateResult(_mbart_translate(text, src, tgt), "mbart-large-50")
+
 
 
 def invoke_llm(task: str, text: str, **kwargs):

@@ -82,6 +82,12 @@ def _build_pipeline_status() -> dict:
             "mbart_ph_finetuned": bool(
                 (settings.mbart_ph_finetuned_model or "").strip()
             ),
+            "router": "en-passthrough / tl→nllb / hil→google",
+            "google_translate_enabled": bool(settings.google_translate_enabled),
+            "google_translate_configured": __import__(
+                "app.services.google_translate", fromlist=["is_configured"]
+            ).is_configured(),
+            "hil_translate_fallback": settings.hil_translate_fallback,
             "size_hint": "multi-gb (NLLB distilled-600M; mBART-large-50)",
             "hardware_hint": "loaded on demand via transformers; CPU or GPU host",
             "metrics_status": "BLEU/latency/cost TBD — see docs/MODELS.md",

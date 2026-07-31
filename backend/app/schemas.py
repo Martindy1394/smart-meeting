@@ -366,6 +366,7 @@ class TranslateResponse(BaseModel):
     target_language: str
     language_name: str
     engine: str
+    translation_faithfulness: FaithfulnessReport | None = None
 
 
 TokenResponse.model_rebuild()

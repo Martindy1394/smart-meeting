@@ -188,9 +188,16 @@ class Settings(BaseSettings):
     mbart_ph_finetuned_model: str = ""
     # auto | nllb | mbart — Philippine→English backend preference.
     # auto: fine-tuned mBART first when configured, otherwise NLLB.
+    # Hiligaynon lines are routed to Google Translate (see below), not NLLB.
     ph_translate_backend: str = "auto"
-    # NLLB has a real Tagalog code (tgl_Latn); used for PH → English.
+    # NLLB has a real Tagalog code (tgl_Latn); used for Tagalog → English.
     nllb_model: str = "facebook/nllb-200-distilled-600M"
+    # Hiligaynon → English via Google Cloud Translation (``hil`` code, mid-2024).
+    # NLLB/mBART do not cover Hiligaynon; ceb_Latn is only an emergency fallback.
+    google_translate_enabled: bool = True
+    google_cloud_project: str = ""
+    # google | nllb — when Google is unavailable, fall back to NLLB ceb_Latn.
+    hil_translate_fallback: str = "nllb"
     # When true, allow lightweight non-ML fallbacks (extractive summary) so the
     # feature works even without the heavy model weights downloaded.
     allow_llm_fallback: bool = True

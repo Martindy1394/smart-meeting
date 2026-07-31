@@ -55,6 +55,9 @@ export default function MeetingRoom({
   const [summaryEngine, setSummaryEngine] = useState("");
   const [extractiveFallback, setExtractiveFallback] = useState(false);
   const [faithfulness, setFaithfulness] = useState(null);
+  const [translationFaithfulness, setTranslationFaithfulness] = useState(
+    meeting.translation_faithfulness || null
+  );
   const [exportFormat, setExportFormat] = useState("pdf");
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState("");
@@ -136,6 +139,7 @@ export default function MeetingRoom({
         setSummaryEngine(res.engine || "");
         setExtractiveFallback(Boolean(res.extractive_fallback));
         setFaithfulness(res.faithfulness || null);
+        setTranslationFaithfulness(res.translation_faithfulness || null);
         // Always refresh translation from this pass (clear if empty).
         setTranslation(res.translation || "");
         setTranslationLang(res.translation_language || "English");
@@ -168,6 +172,7 @@ export default function MeetingRoom({
         });
         setTranslation(res.translation);
         setTranslationLang(res.language_name || "English");
+        setTranslationFaithfulness(res.translation_faithfulness || null);
         if (onMeetingUpdated) onMeetingUpdated();
       } catch (err) {
         autoTranslateRef.current = "";
@@ -196,6 +201,7 @@ export default function MeetingRoom({
       setTranslateError("");
       setExtractiveFallback(false);
       setFaithfulness(null);
+      setTranslationFaithfulness(null);
       autoTranslateRef.current = "";
       autoSummaryRef.current = "";
       if (persistDetails) {
@@ -283,6 +289,7 @@ export default function MeetingRoom({
     setSummaryEngine("");
     setExtractiveFallback(Boolean(meeting.extractive_fallback));
     setFaithfulness(meeting.faithfulness || null);
+    setTranslationFaithfulness(meeting.translation_faithfulness || null);
     setHasAudio(Boolean(meeting.has_audio));
     autoTranslateRef.current = meeting.translation ? meeting.final_transcript || "" : "";
     autoSummaryRef.current = meeting.summary
@@ -980,16 +987,40 @@ export default function MeetingRoom({
           </div>
         </div>
 
-        {/* Translation card (mBART/NLLB) — auto English for BART */}
+        {/* Translation card — EN passthrough / Tagalog NLLB / Hiligaynon Google */}
         <div className="card">
           <div className="card-head">
             <h3>English translation</h3>
             <span className="card-tag">
-              mBART / NLLB · {translationLang || "English"}
+              EN · Tagalog NLLB · Hiligaynon Google · {translationLang || "English"}
             </span>
           </div>
           <div className="card-body">
             {translateError && <div className="error-banner">{translateError}</div>}
+            {translationFaithfulness?.status === "warn" &&
+              Array.isArray(translationFaithfulness.untraced) &&
+              translationFaithfulness.untraced.length > 0 && (
+                <div className="banner-warn faithfulness-warn" role="status">
+                  {translationFaithfulness.untraced.filter(
+                    (item) => item.section === "Language review"
+                  ).length || translationFaithfulness.untraced.length}{" "}
+                  line
+                  {(translationFaithfulness.untraced.filter(
+                    (item) => item.section === "Language review"
+                  ).length || translationFaithfulness.untraced.length) === 1
+                    ? ""
+                    : "s"}{" "}
+                  flagged for language review (Hiligaynon / Tagalog ambiguity).
+                  <ul className="faithfulness-list">
+                    {translationFaithfulness.untraced.slice(0, 8).map((item, idx) => (
+                      <li key={`xf-${idx}`}>
+                        <span className="faithfulness-section">{item.section}</span>
+                        {item.line}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             {translating ? (
               <div className="center-spin">
                 <span className="spinner" /> Translating to English…

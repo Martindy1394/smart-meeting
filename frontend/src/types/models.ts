@@ -152,6 +152,15 @@ export interface SummarizeResponse {
   translation_language: string;
   extractive_fallback: boolean;
   faithfulness?: FaithfulnessReport | null;
+  translation_faithfulness?: FaithfulnessReport | null;
+}
+
+export interface TranslateResponse {
+  translation: string;
+  target_language: string;
+  language_name: string;
+  engine: string;
+  translation_faithfulness?: FaithfulnessReport | null;
 }
 
 /** WS live_segment / final_transcript segment payload. */
