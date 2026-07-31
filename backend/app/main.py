@@ -47,7 +47,7 @@ def _build_pipeline_status() -> dict:
     See docs/MODELS.md — hints are derived from configured ids / code posture.
     Accuracy, wall-clock latency, and dollar cost remain team-measured TBDs.
     """
-    from .services import asr
+    from .services import asr, google_translate
 
     whisper_ok = asr.is_available()
     llm_ok = llm.summarizer_available()
@@ -84,9 +84,7 @@ def _build_pipeline_status() -> dict:
             ),
             "router": "en-passthrough / tl→nllb / hil→google",
             "google_translate_enabled": bool(settings.google_translate_enabled),
-            "google_translate_configured": __import__(
-                "app.services.google_translate", fromlist=["is_configured"]
-            ).is_configured(),
+            "google_translate_configured": google_translate.is_configured(),
             "hil_translate_fallback": settings.hil_translate_fallback,
             "size_hint": "multi-gb (NLLB distilled-600M; mBART-large-50)",
             "hardware_hint": "loaded on demand via transformers; CPU or GPU host",
