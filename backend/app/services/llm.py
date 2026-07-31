@@ -430,17 +430,39 @@ def _segment_idea_units(text: str) -> list[str]:
     return _dedupe_units(units)
 
 
+# Dedup: require enough shared content words so short lyric lines that share
+# thematic vocabulary (ulan/puso/damdamin) are not collapsed as ASR repeats.
+_DEDUPE_MIN_SHARED_WORDS = 3
+_DEDUPE_RATIO = 0.7
+# Real ASR duplication is adjacent; only compare against this many prior units.
+_DEDUPE_LOCAL_WINDOW = 2
+
+
 def _dedupe_units(units: list[str]) -> list[str]:
+    """Drop near-duplicate units from literal ASR repetition.
+
+    Uses a local window + minimum absolute overlap so thematic recurrence in
+    song lyrics (distinct lines sharing a few content words) is preserved.
+    """
     kept: list[str] = []
     seen: list[set[str]] = []
     for unit in units:
         words = _content_words(unit)
         if not words:
+            # Keep non-empty surface text that has no content words (rare);
+            # skip pure noise like "Mga m." with no usable tokens.
+            if (unit or "").strip() and len((unit or "").split()) >= 3:
+                kept.append(unit)
+                seen.append(set())
             continue
         duplicate = False
-        for prev in seen:
-            overlap = len(words & prev) / max(1, len(words))
-            if overlap >= 0.7:
+        # Adjacent-only: ASR loops repeat next to each other, not across a verse.
+        for prev in seen[-_DEDUPE_LOCAL_WINDOW:]:
+            shared = len(words & prev)
+            if shared < _DEDUPE_MIN_SHARED_WORDS:
+                continue
+            overlap = shared / max(1, len(words))
+            if overlap >= _DEDUPE_RATIO:
                 duplicate = True
                 break
         if duplicate:
@@ -760,6 +782,59 @@ def _coverage_ratio(source: str, summary: str) -> float:
     return len(_content_words(summary) & src) / len(src)
 
 
+# Kept-source / untranslated marker — visible in the English panel so readers
+# can tell MT declined rather than treating Tagalog as English gloss.
+# Downstream: strip with ``strip_untranslated_spans`` before BART; faithfulness
+# surfaces each span under section "Untranslated".
+_UNTRANSLATED_OPEN = "[untranslated:"
+_UNTRANSLATED_CLOSE = "]"
+_UNTRANSLATED_RE = re.compile(
+    r"\[untranslated:\s*(.*?)\s*\]",
+    re.IGNORECASE | re.DOTALL,
+)
+# Flag when translated PH token-mass drops below this vs source PH units.
+_TRANSLATION_MASS_COVERAGE_MIN = 0.50
+
+
+def mark_untranslated(unit: str) -> str:
+    """Wrap a kept-source clause so it is visible in joined English output."""
+    inner = _WS_RE.sub(" ", (unit or "").strip())
+    if not inner:
+        return ""
+    # Neutralize nested brackets so the span stays machine-parseable.
+    inner = inner.replace("[", "(").replace("]", ")")
+    return f"{_UNTRANSLATED_OPEN} {inner}{_UNTRANSLATED_CLOSE}"
+
+
+def iter_untranslated_spans(text: str) -> list[str]:
+    return [m.group(1).strip() for m in _UNTRANSLATED_RE.finditer(text or "") if m.group(1).strip()]
+
+
+def strip_untranslated_spans(text: str, *, keep_inner: bool = False) -> str:
+    """Remove ``[untranslated: …]`` markers from text.
+
+    ``keep_inner=False`` (default) drops the untranslated source entirely —
+    used before BART so Tagalog ASR junk is not summarized as English.
+    ``keep_inner=True`` leaves the raw source text without the wrapper.
+    """
+    if keep_inner:
+        out = _UNTRANSLATED_RE.sub(lambda m: m.group(1).strip(), text or "")
+    else:
+        out = _UNTRANSLATED_RE.sub(" ", text or "")
+    return _WS_RE.sub(" ", out).strip()
+
+
+def _token_mass(text: str) -> int:
+    """Count tokens length>2 — language-agnostic mass for coverage checks."""
+    return sum(1 for w in re.findall(r"[A-Za-zÀ-ÿ']+", (text or "").lower()) if len(w) > 2)
+
+
+def _translation_mass_coverage(source_mass: int, translated_mass: int) -> float:
+    if source_mass <= 0:
+        return 1.0
+    return translated_mass / float(source_mass)
+
+
 def assess_minutes_faithfulness(
     summary: str,
     source_english: str,
@@ -847,16 +922,35 @@ def assess_translation_faithfulness(
             }
         )
 
+    # Surface kept-source spans that were never machine-translated.
+    for span in iter_untranslated_spans(translation):
+        checked += 1
+        untraced.append(
+            {
+                "section": "Untranslated",
+                "line": span[:180],
+                "overlap": 0.0,
+            }
+        )
+
     if not source or not translation:
         status = "warn" if untraced else "skipped"
         return {"status": status, "untraced": untraced, "checked": checked}
+
+    # Glossary / sentence checks ignore untranslated wrappers (not English MT).
+    translation_en = strip_untranslated_spans(translation, keep_inner=False)
 
     # Glossary terms in the source should survive unchanged in the translation.
     for term in glossary or []:
         if not term or term.casefold() not in source.casefold():
             continue
         checked += 1
-        if term not in translation and term.casefold() not in translation.casefold():
+        if (
+            term not in translation_en
+            and term.casefold() not in translation_en.casefold()
+            and term not in translation
+            and term.casefold() not in translation.casefold()
+        ):
             untraced.append(
                 {
                     "section": "Glossary",
@@ -867,7 +961,7 @@ def assess_translation_faithfulness(
 
     # Sentence-level content overlap for longer units.
     src_sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", source) if s.strip()]
-    eng_words = _content_words(translation)
+    eng_words = _content_words(translation_en)
     if not eng_words:
         return {"status": "warn" if untraced else "skipped", "untraced": untraced, "checked": checked}
 
@@ -1151,8 +1245,13 @@ def summarize_to_english(
             )
             return summary, engine, source, translate_engine or "none", mt_review
 
+    # BART must not see raw kept-source Tagalog wrapped as [untranslated: …].
+    english_for_summary = strip_untranslated_spans(english, keep_inner=False)
+    if not english_for_summary.strip():
+        english_for_summary = strip_untranslated_spans(english, keep_inner=True)
+
     summary, summary_engine = summarize(
-        english,
+        english_for_summary,
         output_format=output_format,
         source_kind="english_translation",
     )
@@ -1327,7 +1426,12 @@ def _collapse_translation_loops(text: str) -> str:
 
 
 def _is_garbage_english_translation(source: str, translated: str) -> bool:
-    """Detect mBART word-salad (e.g. bow/arrow/rope loops) on PH→EN."""
+    """Detect mBART/NLLB word-salad and broken English on PH→EN.
+
+    Combines the historical salad-word list with vocabulary-free checks
+    (length ratio, stray single-letter tokens) so failures like
+    ``sa mga halang…`` → ``To honor m Swear`` are caught too.
+    """
     dst = _collapse_translation_loops(translated or "")
     if not dst:
         return True
@@ -1352,6 +1456,17 @@ def _is_garbage_english_translation(source: str, translated: str) -> bool:
     if len(dst_tokens) >= 8:
         salad_hits = sum(1 for t in dst_tokens if t in salad)
         if salad_hits / len(dst_tokens) >= 0.35:
+            return True
+    # Stray single-letter tokens (except a/I) → broken fragments like "honor m Swear".
+    stray_letters = [
+        t for t in dst_tokens if len(t) == 1 and t.lower() not in {"a", "i"}
+    ]
+    if stray_letters and len(dst_tokens) <= 16:
+        return True
+    # Implausible length vs source (PH→EN is rarely <35% or >3.5× token count).
+    if len(src_tokens) >= 4:
+        ratio = len(dst_tokens) / float(len(src_tokens))
+        if ratio < 0.35 or ratio > 3.5:
             return True
     # Source was clearly Filipino but output still has many Filipino markers.
     if src_tokens:
@@ -1485,7 +1600,29 @@ def _translate_unit_with_context(
         return _translate_unit_alone(unit, src, engine=engine)
 
     ctx = [u.strip() for u in prev_units[-context_n:] if (u or "").strip()]
+    # Drop untranslated markers from discourse context (they're not English MT).
+    ctx = [strip_untranslated_spans(c, keep_inner=True) for c in ctx]
+    ctx = [c for c in ctx if c]
     if not ctx:
+        return _translate_unit_alone(unit, src, engine=engine)
+
+    # EN preamble + PH lyric/verse confuses NLLB/mBART and truncates the verse
+    # (observed: content after "saksihin" silently dropped). Skip cross-lang context.
+    ctx_en, ctx_fi = _language_scores(" ".join(ctx))
+    unit_en, unit_fi = _language_scores(unit)
+    cross_lang = (ctx_en > ctx_fi + 0.04 and unit_fi > unit_en + 0.04) or (
+        ctx_fi > ctx_en + 0.04 and unit_en > unit_fi + 0.04
+    )
+    if cross_lang:
+        logger.info(
+            "Context-window skipped (cross-language context en=%.2f/fi=%.2f "
+            "vs unit en=%.2f/fi=%.2f): %s…",
+            ctx_en,
+            ctx_fi,
+            unit_en,
+            unit_fi,
+            unit[:48],
+        )
         return _translate_unit_alone(unit, src, engine=engine)
 
     window = " ".join(ctx + [unit])
@@ -1528,6 +1665,12 @@ def _translate_unit_with_context(
             "retrying unit alone: %s…",
             _word_count(span),
             unit_words,
+            unit[:48],
+        )
+        return _translate_unit_alone(unit, src, engine=engine)
+    if _is_garbage_english_translation(unit, span):
+        logger.info(
+            "Context-window discarded (garbage span); retrying unit alone: %s…",
             unit[:48],
         )
         return _translate_unit_alone(unit, src, engine=engine)
@@ -1638,6 +1781,8 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
     route_counts = {"en": 0, "tl": 0, "hil": 0, "unknown": 0, "uncertain": 0}
     engines_used: set[str] = set()
     kept_source = 0
+    ph_source_mass = 0
+    ph_translated_mass = 0
 
     routed = lang_router.route_units(units, meeting_language=primary)
     for i, (unit, decision) in enumerate(routed):
@@ -1682,6 +1827,9 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
                     "overlap": round(decision.confidence, 4),
                 }
             )
+
+        unit_mass = _token_mass(unit)
+        ph_source_mass += unit_mass
 
         attempts = _route_attempts_for_line(
             route_lang,
@@ -1735,12 +1883,28 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
                 last_err,
                 unit[:48],
             )
-            piece = unit
+            # Visible marker — do not silently splice Tagalog into "English".
+            piece = mark_untranslated(unit)
             kept_source += 1
+            # Untranslated mass does not count toward English coverage.
+        else:
+            ph_translated_mass += _token_mass(piece)
         out_units.append(piece)
 
     joined = " ".join(s for s in out_units if s).strip()
-    joined = _collapse_translation_loops(joined)
+    # Collapse EN loops without rewriting [untranslated: …] spans.
+    rebuilt: list[str] = []
+    cursor = 0
+    for match in _UNTRANSLATED_RE.finditer(joined):
+        head = joined[cursor : match.start()]
+        if head.strip():
+            rebuilt.append(_collapse_translation_loops(head))
+        rebuilt.append(match.group(0))
+        cursor = match.end()
+    tail = joined[cursor:]
+    if tail.strip():
+        rebuilt.append(_collapse_translation_loops(tail))
+    joined = " ".join(rebuilt).strip() if rebuilt else _collapse_translation_loops(joined)
 
     if not engines_used:
         engine_name = "passthrough-english"
@@ -1756,12 +1920,42 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
         ]
         engine_name = "+".join(e for e in order if e in engines_used)
 
-    if kept_source >= 2:
+    if kept_source >= 1:
         logger.info(
-            "Three-way MT kept %d source clauses; routes=%s uncertain=%d",
+            "Three-way MT kept %d source clauses (marked [untranslated:…]); "
+            "routes=%s uncertain=%d",
             kept_source,
             {k: v for k, v in route_counts.items() if k != "uncertain"},
             route_counts["uncertain"],
+        )
+        review_lines.append(
+            {
+                "section": "Untranslated",
+                "line": f"{kept_source} clause(s) kept as source after MT failure",
+                "overlap": 0.0,
+            }
+        )
+
+    # Issue 5: silent content-loss detector on PH→EN token mass.
+    mass_cov = _translation_mass_coverage(ph_source_mass, ph_translated_mass)
+    if ph_source_mass >= 8 and mass_cov < _TRANSLATION_MASS_COVERAGE_MIN:
+        logger.warning(
+            "Translation mass coverage low: %.2f (ph_src_tokens=%d ph_dst_tokens=%d) "
+            "— possible silent content loss",
+            mass_cov,
+            ph_source_mass,
+            ph_translated_mass,
+        )
+        review_lines.append(
+            {
+                "section": "Coverage",
+                "line": (
+                    f"PH→EN token-mass coverage {mass_cov:.0%} "
+                    f"({ph_translated_mass}/{ph_source_mass}) below "
+                    f"{_TRANSLATION_MASS_COVERAGE_MIN:.0%}"
+                ),
+                "overlap": round(mass_cov, 4),
+            }
         )
 
     return TranslateResult(
