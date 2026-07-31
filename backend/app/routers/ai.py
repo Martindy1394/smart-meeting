@@ -82,6 +82,7 @@ def summarize(
                 source_language=meeting.language or "auto",
                 output_format=payload.output_format,
                 existing_english=cached_english,
+                source_kind=payload.source_kind or "meeting",
             )
     except llm.LLMUnavailable as exc:
         raise HTTPException(

@@ -129,11 +129,12 @@ export default function MeetingRoom({
       setSummarizing(true);
       setSummaryError("");
       try {
-        // Backend: full-transcript → English, then contextual BART summary.
+        // Backend: full-transcript → English, then topic-aware BART (meeting kind).
         const res = await api.summarize({
           meeting_id: meeting.id,
           output_format: format,
           force_retranslate: Boolean(forceRetranslate),
+          source_kind: "meeting",
         });
         setSummary(res.summary || "");
         setSummaryEngine(res.engine || "");

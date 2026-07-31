@@ -5,9 +5,10 @@ so every AI integration in the codebase flows through one consistent surface.
 
 * Meeting summarization (``summarize_to_english``) is a two-step pipeline:
   (1) three-way MT — English passthrough / Tagalog→NLLB / Hiligaynon→Google
-  Translate, (2) flat BART on that English (no topic segmentation / discourse
-  overlap tails), then Discussion / Decisions / Action items formatting.
-* ``task="summarize"`` on raw transcripts may still use topic-aware BART.
+  Translate, (2) topic-aware BART on that English.
+* ``source_kind`` / content kind: ``meeting`` (board framing + Discussion /
+  Decisions / Action items) or ``general`` (neutral framing + flat/topic
+  bullets, no minutes bucketing). ``english_translation`` aliases ``meeting``.
 * ``task="translate"`` uses the same three-way router for →English.
 """
 from __future__ import annotations
@@ -741,8 +742,20 @@ def _classify_minute_unit(unit: str) -> str:
     return "Discussion"
 
 
-def _format_meeting_minutes(units: list[str], output_format: str) -> str:
-    """Structure bullets as Discussion / Decisions / Action items."""
+def _format_meeting_minutes(
+    units: list[str],
+    output_format: str,
+    *,
+    content_kind: str = "meeting",
+) -> str:
+    """Structure bullets as Discussion / Decisions / Action items.
+
+    Only for ``content_kind="meeting"``. Non-meeting kinds return a flat
+    bullet list so ordinary future-tense phrasing is not force-bucketed into
+    Action items / Decisions.
+    """
+    if _resolve_content_kind(content_kind) != "meeting":
+        return _format_summary(units, output_format)
     cleaned = [u.strip() for u in units if u and u.strip()]
     if not cleaned:
         return ""
@@ -995,10 +1008,31 @@ def _idea_preserving_summary(text: str) -> list[str]:
     return _segment_idea_units(text)
 
 
-def _bart_summarize_chunk(summarizer, chunk: str) -> str:
+def _resolve_content_kind(source_kind: str | None) -> str:
+    """Map ``source_kind`` to ``meeting`` | ``general`` content behavior."""
+    kind = (source_kind or "meeting").strip().lower()
+    if kind in {"general", "lyric", "song", "narrative", "other"}:
+        return "general"
+    # meeting | english_translation (alias) | default
+    return "meeting"
+
+
+def _bart_frame_prefix(content_kind: str) -> str:
+    """BART input prefix — meeting-biased only for meeting content."""
+    if _resolve_content_kind(content_kind) == "meeting":
+        return "Board meeting discussion and decisions."
+    return "Summarize the following."
+
+
+def _bart_summarize_chunk(
+    summarizer,
+    chunk: str,
+    *,
+    content_kind: str = "meeting",
+) -> str:
     words = max(1, len(chunk.split()))
-    # Frame as meeting notes so CNN-BART keeps decisions / actions in context.
-    framed = f"Board meeting discussion and decisions. {chunk.strip()}"
+    prefix = _bart_frame_prefix(content_kind)
+    framed = f"{prefix} {chunk.strip()}"
     approx_tokens = max(20, int(words * 1.3))
     if words <= 150:
         max_len = min(240, max(90, approx_tokens))
@@ -1022,7 +1056,11 @@ def _bart_summarize_chunk(summarizer, chunk: str) -> str:
     return out[0]["summary_text"].strip()
 
 
-def _bart_summarize_topics(text: str) -> list[tuple[str, str]]:
+def _bart_summarize_topics(
+    text: str,
+    *,
+    content_kind: str = "meeting",
+) -> list[tuple[str, str]]:
     """Return ``[(topic_label, paragraph_summary), ...]`` via divide-and-conquer.
 
     Carries a short overlap tail from the previous topic into the next BART
@@ -1033,13 +1071,16 @@ def _bart_summarize_topics(text: str) -> list[tuple[str, str]]:
     topics = segment_transcript_topics(text, tokenizer=tokenizer)
     if not topics:
         return []
+    kind = _resolve_content_kind(content_kind)
     results: list[tuple[str, str]] = []
     prev_tail = ""
     for idx, chunk in enumerate(topics, start=1):
         label = _topic_label(chunk, idx)
         input_chunk = f"{prev_tail} {chunk}".strip() if prev_tail else chunk
         try:
-            summary = _bart_summarize_chunk(summarizer, input_chunk)
+            summary = _bart_summarize_chunk(
+                summarizer, input_chunk, content_kind=kind
+            )
         except Exception as exc:
             logger.warning("BART failed on topic %s (%s); using extractive.", idx, exc)
             summary = " ".join(_segment_idea_units(chunk)[:5])
@@ -1056,40 +1097,12 @@ def _bart_summarize_topics(text: str) -> list[tuple[str, str]]:
     return results
 
 
-def _bart_summarize_flat(text: str) -> str:
-    """Character-budget BART without topic breaks or cross-topic context tails.
-
-    Used for ``source_kind="english_translation"`` so minutes come from a
-    straightforward pass over the English text rather than TF-cosine topic
-    capture with discourse overlap.
-    """
-    summarizer = _pipelines.summarizer()
-    # Stay under BART's ~1024-token input; ~3.5 chars/token with headroom.
-    max_chars = min(_MAX_CHUNK_CHARS, max(800, int(settings.bart_max_input_tokens * 3.2)))
-    chunks = _chunk_text(text, size=max_chars)
-    if not chunks:
-        return ""
-    if len(chunks) == 1:
-        return _bart_summarize_chunk(summarizer, chunks[0])
-    partials: list[str] = []
-    for chunk in chunks:
-        try:
-            partials.append(_bart_summarize_chunk(summarizer, chunk))
-        except Exception as exc:
-            logger.warning("Flat BART chunk failed (%s); using extractive.", exc)
-            partials.append(" ".join(_segment_idea_units(chunk)[:5]))
-    combined = " ".join(p for p in partials if p).strip()
-    if len(combined.split()) > 200:
-        try:
-            return _bart_summarize_chunk(summarizer, combined)
-        except Exception:
-            return combined
-    return combined
-
-
-def _bart_summarize(text: str) -> str:
+def _bart_summarize(text: str, *, content_kind: str = "meeting") -> str:
     """Backward-compatible summary string (joined topic summaries)."""
-    parts = [summary for _, summary in _bart_summarize_topics(text)]
+    parts = [
+        summary
+        for _, summary in _bart_summarize_topics(text, content_kind=content_kind)
+    ]
     return " ".join(parts)
 
 
@@ -1099,7 +1112,9 @@ def _merge_missing_units(
     *,
     min_overlap: float = 0.55,
 ) -> list[str]:
-    """Restore source idea units that the abstractive summary omitted."""
+    """Restore omitted source ideas; dedupe overlap-boundary duplicates first."""
+    # Discourse tails can cause the same point in topic N and N+1 summaries.
+    summary_units = _dedupe_units(list(summary_units))
     summary_words = [_content_words(u) for u in summary_units]
     merged = list(summary_units)
     for unit in source_units:
@@ -1121,10 +1136,11 @@ def _contextual_bart_summary(
     output_format: str,
     engine_prefix: str,
     min_overlap: float = 0.5,
-    minutes_structure: bool = False,
+    content_kind: str = "meeting",
 ) -> tuple[str, str]:
     """Topic-aware BART + coverage restore against ``source_units``."""
-    topic_parts = _bart_summarize_topics(text)
+    kind = _resolve_content_kind(content_kind)
+    topic_parts = _bart_summarize_topics(text, content_kind=kind)
     topic_sections: list[tuple[str, list[str]]] = []
     all_units: list[str] = []
     for label, raw in topic_parts:
@@ -1134,30 +1150,37 @@ def _contextual_bart_summary(
     units = _merge_missing_units(
         source_units, all_units, min_overlap=min_overlap
     )
-    if minutes_structure:
+    if kind == "meeting":
         return (
-            _format_meeting_minutes(units, output_format),
+            _format_meeting_minutes(
+                units, output_format, content_kind="meeting"
+            ),
             f"{engine_prefix}-minutes",
         )
+    # General: keep topic headings when multi-topic and coverage didn't append
+    # extra flat units; otherwise a single flat bullet list.
     if len(topic_sections) > 1 and len(units) == len(all_units):
         return (
             _format_topic_summaries(topic_sections, output_format),
             f"{engine_prefix}-topic-chunks",
         )
-    return _format_summary(units, output_format), f"{engine_prefix}-coverage"
+    return _format_summary(units, output_format), f"{engine_prefix}-general"
 
 
 def summarize(
     text: str,
     output_format: str = "bullets",
-    source_kind: str = "transcript",
+    source_kind: str = "meeting",
 ) -> tuple[str, str]:
     """Return (formatted_summary, engine_name).
 
-    Prefer ``source_kind="english_translation"`` after MT so BART sees English.
-    That path uses **flat** BART (no topic segmentation / discourse-context
-    tails), then Discussion / Decisions / Action items. Topic-aware
-    divide-and-conquer remains available for raw-transcript callers only.
+    ``source_kind``:
+    - ``meeting`` / ``english_translation`` (alias): topic-aware BART with
+      meeting framing + Discussion / Decisions / Action items.
+    - ``general``: topic-aware BART with neutral framing + flat/topic bullets
+      (no minutes bucketing).
+    - ``transcript``: raw (often PH) path — short extractive or topic BART
+      without minutes bucketing; prefer ``summarize_to_english`` instead.
     """
     text = _normalize_spoken_transcript(text or "")
     if not text:
@@ -1165,32 +1188,40 @@ def summarize(
 
     source_units = _idea_preserving_summary(text)
     word_count = len(text.split())
-    from_english = source_kind == "english_translation"
+    kind_raw = (source_kind or "meeting").strip().lower()
+    if kind_raw == "english_translation":
+        kind_raw = "meeting"
+    content_kind = _resolve_content_kind(kind_raw)
 
-    # English path: flat BART over the translation — do not re-segment into
-    # topics or carry overlap tails from the translated text.
-    if from_english:
+    # Already-English paths (post-MT or explicit meeting/general).
+    if kind_raw in {"meeting", "general"}:
         units = source_units
-        engine = "bart-from-english"
+        engine = f"bart-from-{content_kind}"
         if word_count >= 24 and len(source_units) >= 2:
             try:
-                raw = _bart_summarize_flat(text)
-                polished = _summary_sentences_to_units(raw) or source_units
-                units = _merge_missing_units(
-                    source_units, polished, min_overlap=0.42
-                )
-                return (
-                    _format_meeting_minutes(units, output_format),
-                    "bart-english-flat",
+                return _contextual_bart_summary(
+                    text,
+                    source_units,
+                    output_format=output_format,
+                    engine_prefix=f"bart-{content_kind}",
+                    min_overlap=0.42,
+                    content_kind=content_kind,
                 )
             except Exception as exc:
                 logger.warning(
-                    "Flat BART on English translation failed (%s); "
-                    "keeping full idea units as minutes.",
+                    "Topic-aware BART (%s) failed (%s); keeping idea units.",
+                    content_kind,
                     exc,
                 )
                 units = source_units
-        return _format_meeting_minutes(units, output_format), engine
+        if content_kind == "meeting":
+            return (
+                _format_meeting_minutes(
+                    units, output_format, content_kind="meeting"
+                ),
+                engine,
+            )
+        return _format_summary(units, output_format), engine
 
     # Raw (often PH) transcript path — prefer translating first via
     # ``summarize_to_english``. Kept for direct/legacy callers.
@@ -1204,7 +1235,7 @@ def summarize(
             output_format=output_format,
             engine_prefix="bart",
             min_overlap=0.55,
-            minutes_structure=False,
+            content_kind="general",
         )
     except LLMUnavailable:
         if not settings.allow_llm_fallback:
@@ -1250,8 +1281,12 @@ def summarize_to_english(
     source_language: str = "auto",
     output_format: str = "bullets",
     existing_english: str | None = None,
+    source_kind: str = "meeting",
 ) -> tuple[str, str, str, str, list[dict]]:
     """Translate the full transcript to English, then summarize (BART).
+
+    ``source_kind`` is ``meeting`` (default) or ``general`` — controls BART
+    framing and whether Discussion / Decisions / Action items bucketing runs.
 
     Returns
     ``(summary, summary_engine, english_text, translate_engine, mt_review_lines)``.
@@ -1261,6 +1296,7 @@ def summarize_to_english(
     if not source:
         return "", "none", "", "none", []
 
+    content_kind = _resolve_content_kind(source_kind)
     english = (existing_english or "").strip()
     translate_engine = "cached-english"
     mt_review: list[dict] = []
@@ -1287,7 +1323,7 @@ def summarize_to_english(
     summary, summary_engine = summarize(
         english_for_summary,
         output_format=output_format,
-        source_kind="english_translation",
+        source_kind=content_kind,
     )
     return summary, summary_engine, english, translate_engine, mt_review
 
@@ -2022,7 +2058,7 @@ def invoke_llm(task: str, text: str, **kwargs):
         return summarize(
             text,
             output_format=kwargs.get("output_format", "bullets"),
-            source_kind=kwargs.get("source_kind", "transcript"),
+            source_kind=kwargs.get("source_kind", "meeting"),
         )
     if task == "translate":
         return translate(

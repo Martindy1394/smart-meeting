@@ -174,10 +174,11 @@ pass is what summaries and translations read.”
 
 ## BART — English meeting minutes
 
-**Role in this project:** Condense the **English** translation into structured
-meeting minutes (Discussion / Decisions / Action items) with a **flat** BART
-pass — not by re-segmenting that translation into topics or carrying
-cross-topic discourse tails.
+**Role in this project:** Condense **already-English** text with topic-aware
+BART. ``source_kind="meeting"`` (default) uses board framing and Discussion /
+Decisions / Action items. ``source_kind="general"`` uses a neutral
+“Summarize the following.” frame and flat/topic bullets with **no** minutes
+bucketing — so song/narrative content is not force-sorted into Action items.
 
 ### What it does here
 

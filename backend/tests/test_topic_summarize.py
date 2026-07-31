@@ -94,7 +94,9 @@ def test_short_summarize_stays_idea_preserving():
         "Mic test sound check. Everybody loves the things you do. "
         "Bakit ba lagi na lang ang mga Pilipino ay naging bobo sa pagpili ng politiko."
     )
-    summary, engine = llm.summarize(text, output_format="bullets")
+    summary, engine = llm.summarize(
+        text, output_format="bullets", source_kind="transcript"
+    )
     assert engine == "bart-meeting-minutes"
     assert summary.startswith(("- ", "• "))
     assert "Mic" in summary or "sound" in summary.lower()
@@ -108,11 +110,10 @@ def test_english_source_kind_summarizes_in_english():
         "Security assigned entrance badges for all guests."
     )
     summary, engine = llm.summarize(
-        text, output_format="bullets", source_kind="english_translation"
+        text, output_format="bullets", source_kind="meeting"
     )
-    # English path uses flat BART (no topic/context capture from translation).
-    assert "english" in engine
-    assert "topic" not in engine
+    # Meeting kind: topic-aware BART + minutes bucketing.
+    assert "meeting" in engine or "minutes" in engine
     assert "- " in summary or "•" in summary
     assert "budget" in summary.lower() or "Marketing" in summary or "campaign" in summary.lower()
     # Minutes sections still surface decisions / actions when present.
@@ -150,7 +151,7 @@ def test_summarize_to_english_reuses_cached_translation(monkeypatch=None):
     assert tr_engine == "cached-english"
     assert out_en == english or out_en.startswith("The committee")
     assert ("- " in summary) or ("•" in summary)
-    assert "english" in engine or engine.startswith("bart")
+    assert "meeting" in engine or "minutes" in engine or engine.startswith("bart")
 
 
 def test_format_meeting_minutes_sections():

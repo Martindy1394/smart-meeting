@@ -98,8 +98,9 @@ performance/cost gap: [`docs/MODELS.md`](docs/MODELS.md).
   FastConformer hybrid RNN-T for lower latency; final pass stays on Whisper
   (see [`docs/RNN_T_LIVE.md`](docs/RNN_T_LIVE.md)).
 - **English meeting summaries** — MT translates the **full** transcript into
-  English, then **flat** BART summarizes that English (no topic re-segmentation
-  of the translation) into Discussion / Decisions / Action items.
+  English, then topic-aware BART summarizes it. Default `source_kind=meeting`
+  keeps Discussion / Decisions / Action items; `general` uses neutral framing
+  and flat/topic bullets (see `docs/BART_CONTENT_KINDS.md`).
 - **mBART translation** — context-aware English of the whole transcript, plus
   Spanish, French, German, Italian, Portuguese, Arabic, Hindi, Japanese,
   Chinese, Russian, Dutch, Korean, Hiligaynon, Tagalog.

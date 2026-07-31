@@ -333,6 +333,9 @@ class SummarizeRequest(BaseModel):
     output_format: str = Field(default="bullets")  # bullets | numbered
     # When true, always re-translate the transcript (ignore cached English).
     force_retranslate: bool = False
+    # meeting = board framing + Discussion/Decisions/Action items;
+    # general = neutral framing + flat/topic bullets (no minutes bucketing).
+    source_kind: str = Field(default="meeting")
 
     @field_validator("output_format")
     @classmethod
@@ -340,6 +343,16 @@ class SummarizeRequest(BaseModel):
         if v not in ("bullets", "numbered"):
             raise ValueError("output_format must be 'bullets' or 'numbered'")
         return v
+
+    @field_validator("source_kind")
+    @classmethod
+    def _validate_source_kind(cls, v: str) -> str:
+        kind = (v or "meeting").strip().lower()
+        if kind in {"english_translation"}:
+            return "meeting"
+        if kind not in {"meeting", "general"}:
+            raise ValueError("source_kind must be 'meeting' or 'general'")
+        return kind
 
 
 class SummarizeResponse(BaseModel):
