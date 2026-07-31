@@ -4,6 +4,16 @@ const TOKEN_KEY = "sm_token";
 const REFRESH_KEY = "sm_refresh";
 const ACCESS_EXPIRES_AT_KEY = "sm_access_expires_at";
 
+/** Same-origin in Vite dev (proxied). Optional absolute override via VITE_API_URL. */
+function apiUrl(path) {
+  const base = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return base ? `${base}${p}` : p;
+}
+
+const NETWORK_HELP =
+  "Network error — cannot reach the API. Open the app via Cursor → Ports → 5173 (Vite), keep the API on port 8000, then retry. If the backend just reloaded, wait a few seconds and try again.";
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -87,6 +97,33 @@ export function isDataIntegrityError(err) {
   );
 }
 
+export function isNetworkError(err) {
+  return err instanceof ApiError && err.status === 0;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Low-level fetch with retries for transient tunnel / uvicorn-reload failures.
+ * Does not parse JSON — callers handle the Response.
+ */
+async function fetchWithRetry(url, init = {}, { retries = 3 } = {}) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      lastErr = e;
+      if (attempt >= retries) break;
+      // 300ms, 800ms, 1600ms — covers brief --reload Whisper warmups.
+      await sleep(300 * 2 ** attempt + 100);
+    }
+  }
+  throw new ApiError(NETWORK_HELP, 0);
+}
+
 let refreshInFlight = null;
 
 export async function refreshAccessToken() {
@@ -95,20 +132,27 @@ export async function refreshAccessToken() {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
-      const res = await fetch("/api/auth/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refresh }),
-      });
+      const res = await fetchWithRetry(
+        apiUrl("/api/auth/refresh"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refresh }),
+        },
+        { retries: 2 }
+      );
       if (!res.ok) {
-        clearSessionTokens();
+        // Only clear session on an actual auth rejection, not a proxy blip.
+        if (res.status === 401 || res.status === 403) {
+          clearSessionTokens();
+        }
         return null;
       }
       const data = await res.json();
       setSessionTokens(data);
       return data.access_token || null;
     } catch {
-      clearSessionTokens();
+      // Keep tokens on network failure — user can retry without re-login.
       return null;
     } finally {
       refreshInFlight = null;
@@ -134,25 +178,28 @@ export async function ensureFreshAccessToken({ minValiditySeconds = 120 } = {}) 
   return next || getToken();
 }
 
+/** Quick connectivity probe (no auth). Returns true when /api/health is OK. */
+export async function pingApi() {
+  try {
+    const res = await fetchWithRetry(apiUrl("/api/health"), { method: "GET" }, { retries: 1 });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function request(path, { method = "GET", body, auth = true, _retry = true } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (auth) {
-    const token = getToken();
+    const token = await ensureFreshAccessToken({ minValiditySeconds: 30 });
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
-  let res;
-  try {
-    res = await fetch(`/api${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch (e) {
-    throw new ApiError(
-      "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
-      0
-    );
-  }
+
+  const res = await fetchWithRetry(apiUrl(`/api${path}`), {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
 
   if (res.status === 401 && auth && _retry && getRefreshToken()) {
     const next = await refreshAccessToken();
@@ -174,6 +221,13 @@ async function request(path, { method = "GET", body, auth = true, _retry = true 
   }
 
   if (!res.ok) {
+    // Vite often returns 500/502 with a proxy stack when uvicorn is mid-reload.
+    if (
+      (res.status === 502 || res.status === 503 || res.status === 504) ||
+      (res.status === 500 && /ECONNREFUSED|proxy error|socket hang up/i.test(text || ""))
+    ) {
+      throw new ApiError(NETWORK_HELP, 0);
+    }
     const detail = flattenApiDetail(data?.detail);
     throw new ApiError(detail || `Request failed (${res.status})`, res.status);
   }
@@ -228,19 +282,11 @@ export const api = {
    * Download meeting package (transcript + English + summary) as txt|docx|pdf.
    */
   exportMeeting: async (id, format = "txt") => {
-    const token = getToken();
+    const token = await ensureFreshAccessToken({ minValiditySeconds: 30 });
     const fmt = encodeURIComponent(format || "txt");
-    let res;
-    try {
-      res = await fetch(`/api/meetings/${id}/export?format=${fmt}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    } catch {
-      throw new ApiError(
-        "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
-        0
-      );
-    }
+    const res = await fetchWithRetry(apiUrl(`/api/meetings/${id}/export?format=${fmt}`), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     if (res.status === 401 && getRefreshToken()) {
       const next = await refreshAccessToken();
       if (next) {
@@ -269,18 +315,10 @@ export const api = {
    * Throws ApiError on decrypt/cache/server failures (never silent empty).
    */
   getMeetingAudioUrl: async (id) => {
-    const token = getToken();
-    let res;
-    try {
-      res = await fetch(`/api/meetings/${id}/audio`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    } catch {
-      throw new ApiError(
-        "Network error — cannot reach the API. Open the app via the forwarded port (5173 or 8000) in Cursor → Ports, and keep the backend running on http://127.0.0.1:8000/.",
-        0
-      );
-    }
+    const token = await ensureFreshAccessToken({ minValiditySeconds: 30 });
+    const res = await fetchWithRetry(apiUrl(`/api/meetings/${id}/audio`), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     if (res.status === 401 && getRefreshToken()) {
       const next = await refreshAccessToken();
       if (next) {

@@ -148,7 +148,9 @@ pip install -r requirements.txt
 # Optional (enables real Whisper + BART + mBART; multi-GB downloads):
 # pip install -r requirements-ml.txt
 cp .env.example .env        # then edit JWT_SECRET_KEY etc.
-uvicorn app.main:app --reload --port 8000
+# From repo root: npm run dev:api
+# (binds 0.0.0.0, reloads only backend/app — avoids drops while writing audio)
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
 ```
 
 The API is served at `http://127.0.0.1:8000` (`/api/health` for a status probe,
@@ -164,6 +166,11 @@ npm run dev      # http://localhost:5173  (proxies /api and /ws to :8000)
 
 Open http://localhost:5173, create an account, click **New meeting**, and press
 **Start recording**.
+
+> **Cursor / remote ports:** open the app via **Ports → 5173** (Vite). The UI
+> proxies `/api` to port 8000. If you see “Network error — cannot reach the API”,
+> confirm both processes are running, wait a few seconds after an API reload
+> (Whisper warmup), then retry Re-transcribe.
 
 > **Note on ML dependencies:** the core app runs without the heavy ML packages
 > so you can exercise auth, meeting management, the UI, and the WebSocket

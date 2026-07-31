@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { api, isNetworkError, pingApi } from "../api/client";
 import { useRecorder } from "../hooks/useRecorder.js";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import MeetingDetails from "./MeetingDetails.jsx";
@@ -248,12 +248,32 @@ export default function MeetingRoom({
     autoTranslateRef.current = "";
     autoSummaryRef.current = "";
     try {
-      let detail = await api.retranscribeMeeting(meeting.id);
+      // Uvicorn --reload briefly drops the API; fail fast with a clear message.
+      if (!(await pingApi())) {
+        throw new Error(
+          "Cannot reach the API. Open Cursor → Ports → 5173, confirm the backend is on port 8000, wait a few seconds if it just restarted, then retry."
+        );
+      }
+      let detail = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          detail = await api.retranscribeMeeting(meeting.id);
+          break;
+        } catch (err) {
+          if (!isNetworkError(err) || attempt === 2) throw err;
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        }
+      }
       // Whisper can take several minutes on CPU — poll instead of one long POST.
       const deadline = Date.now() + 30 * 60 * 1000;
       while (detail?.status === "processing" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2500));
-        detail = await api.getMeeting(meeting.id);
+        try {
+          detail = await api.getMeeting(meeting.id);
+        } catch (err) {
+          // Keep polling through brief tunnel / reload blips.
+          if (!isNetworkError(err)) throw err;
+        }
       }
       if (!detail || detail.status === "processing") {
         throw new Error(

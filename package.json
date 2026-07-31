@@ -3,8 +3,8 @@
   "private": true,
   "description": "Smart Meeting — run frontend/backend from the repo root.",
   "scripts": {
-    "dev": "npm --prefix frontend run dev",
+    "dev": "npm --prefix frontend run dev -- --host 0.0.0.0 --port 5173",
     "build": "npm --prefix frontend run build",
-    "dev:api": "cd backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    "dev:api": "cd backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"
   }
 }
