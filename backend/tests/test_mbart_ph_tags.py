@@ -172,6 +172,7 @@ if __name__ == "__main__":
     test_ph_finetune_maps_tl_to_tl_xx_and_hil_legacy_proxy()
     with tempfile.TemporaryDirectory() as td:
         test_ph_finetune_maps_hil_to_hil_xx_when_meta_set(Path(td))
+    test_ensure_tokenizer_hil_xx_rebinds_lang_map()
     test_assert_mbart_codes_resolvable()
     test_route_attempts_tagalog_mbart_uses_tl_not_id()
     test_route_attempts_hiligaynon_mbart_is_last_resort()
