@@ -9,17 +9,22 @@ Tagalog (``tl``)
   Live fixture benchmark (``scripts/ph_mt/benchmark_mbart_tags.py``, 2026-07-31)
   measured higher token-F1 for ``tl_XX`` (0.43) than ``id_ID`` (0.34), so stock
   Tagalog now uses ``tl_XX``. Optional ``MBART_PH_FINE_TUNED_MODEL`` checkpoints
-  are also trained on ``tl_XX`` → ``en_XX``.
+  are trained on ``tl_XX`` → ``en_XX`` (see ``scripts/ph_mt/finetune_mbart.py``).
 
 Hiligaynon (``hil``)
-  mBART-50 has **no** ``hil_XX`` (or any Hiligaynon) token — confirmed against
-  ``tokenizer.lang_code_to_id``. Proxying as ``id_ID`` / ``tl_XX`` is a
-  **degraded last resort** only. Production Hiligaynon → English must go through
-  Google Cloud Translation (``hil``) first, then NLLB ``ceb_Latn``, then mBART.
+  Stock mBART-50 has **no** ``hil_XX``. Fine-tunes trained with ``--lang hil``
+  add ``hil_XX`` (embedding init from ``tl_XX``) and set
+  ``finetune_meta.json: has_hil_xx=true``; ``mbart_code`` then returns
+  ``hil_XX``. Without that flag, Hiligaynon still degrades to ``id_ID`` (stock)
+  or legacy ``tl_XX`` proxy (older PH fine-tunes). Production Hiligaynon →
+  English must still prefer Google Cloud Translation first.
 """
 from __future__ import annotations
 
+import json
 import logging
+from functools import lru_cache
+from pathlib import Path
 
 logger = logging.getLogger("smart_meeting.languages")
 
@@ -74,6 +79,24 @@ def language_name(code: str) -> str:
     return code
 
 
+@lru_cache(maxsize=8)
+def ph_finetune_has_hil_xx(model_path: str = "") -> bool:
+    """True when ``MBART_PH_FINE_TUNED_MODEL`` advertises a real ``hil_XX`` token."""
+    from .config import settings
+
+    path = (model_path or settings.mbart_ph_finetuned_model or "").strip()
+    if not path:
+        return False
+    meta = Path(path) / "finetune_meta.json"
+    if not meta.is_file():
+        return False
+    try:
+        data = json.loads(meta.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return bool(data.get("has_hil_xx"))
+
+
 def mbart_code(code: str) -> str | None:
     """Map a short language code to an mBART-50 ``lang_code_to_id`` key.
 
@@ -87,14 +110,12 @@ def mbart_code(code: str) -> str | None:
     if not entry:
         return None
 
-    # Fine-tuned PH mBART was trained with tl_XX for Tagalog + Hiligaynon proxy.
-    # For Hiligaynon that still is not a real vocabulary slot — it only helps
-    # when the checkpoint saw Hiligaynon text under the tl_XX tag during LoRA.
-    if (settings.mbart_ph_finetuned_model or "").strip() and normalized in {
-        "tl",
-        "hil",
-    }:
+    ph_ft = (settings.mbart_ph_finetuned_model or "").strip()
+    if ph_ft and normalized == "tl":
         return "tl_XX"
+    if ph_ft and normalized == "hil":
+        # Real vocab slot when trained with --lang hil; else legacy tl_XX proxy.
+        return "hil_XX" if ph_finetune_has_hil_xx(ph_ft) else "tl_XX"
     return entry.get("mbart")
 
 

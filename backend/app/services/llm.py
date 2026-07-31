@@ -1774,10 +1774,12 @@ def _route_attempts_for_line(
     The old ``id`` substitution for stock mBART was an inherited workaround;
     fixture benchmark prefers ``tl_XX`` over ``id_ID`` (see docs/MBART_PH_AUDIT.md).
 
-    Hiligaynon has no mBART token — Google first, NLLB ``ceb_Latn`` next, then
-    mBART as a **degraded** last resort (``tl`` when a PH fine-tune exists,
-    else ``id`` typological proxy). ``has_ph_mbart`` only affects that
-    Hiligaynon last-resort tag, not Tagalog.
+    Hiligaynon has no stock mBART token — Google first, NLLB ``ceb_Latn`` next,
+    then mBART as a **degraded** last resort. When a PH fine-tune is configured,
+    the last-resort shorthand is ``hil`` so ``mbart_code`` can resolve to a real
+    ``hil_XX`` (vocab-extended checkpoint) or legacy ``tl_XX`` proxy. Without a
+    fine-tune it stays ``id`` (typological proxy). ``has_ph_mbart`` only affects
+    that Hiligaynon last-resort tag, not Tagalog.
     """
     from . import google_translate
 
@@ -1789,8 +1791,8 @@ def _route_attempts_for_line(
         fallback = (settings.hil_translate_fallback or "nllb").strip().lower()
         if fallback == "nllb" and use_nllb:
             attempts.append(("nllb", "hil"))
-        # Degraded last resort only — no hil_XX in mBART-50 vocabulary.
-        attempts.append(("mbart", "tl" if has_ph_mbart else "id"))
+        # Last resort: ``hil`` → hil_XX or legacy tl_XX via mbart_code(); else id_ID.
+        attempts.append(("mbart", "hil" if has_ph_mbart else "id"))
         return attempts
     if route_lang == "tl":
         # Always native Tagalog token via shorthand ``tl`` → ``tl_XX``.

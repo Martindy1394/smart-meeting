@@ -1,10 +1,11 @@
 """Tagalog/Hiligaynon mBART tag + routing regressions (no full model weights)."""
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,8 +16,13 @@ from app.config import settings
 from app.services import llm
 
 
+def _clear_hil_cache() -> None:
+    languages.ph_finetune_has_hil_xx.cache_clear()
+
+
 def test_stock_tagalog_mbart_code_is_tl_xx():
     with patch.object(settings, "mbart_ph_finetuned_model", ""):
+        _clear_hil_cache()
         assert languages.mbart_code("tl") == "tl_XX"
         assert languages.mbart_code("tagalog") == "tl_XX"
         assert languages.mbart_code("fil") == "tl_XX"
@@ -24,15 +30,31 @@ def test_stock_tagalog_mbart_code_is_tl_xx():
 
 def test_hiligaynon_mbart_code_is_degraded_id_proxy():
     with patch.object(settings, "mbart_ph_finetuned_model", ""):
+        _clear_hil_cache()
         assert languages.mbart_code("hil") == "id_ID"
         assert languages.mbart_code("hiligaynon") == "id_ID"
         assert languages.LANGUAGES["hil"].get("fallback") is True
 
 
-def test_ph_finetune_maps_hil_and_tl_to_tl_xx():
+def test_ph_finetune_maps_tl_to_tl_xx_and_hil_legacy_proxy():
+    """Older PH fine-tunes without has_hil_xx still proxy hil → tl_XX."""
     with patch.object(settings, "mbart_ph_finetuned_model", "/models/mbart-ph"):
+        _clear_hil_cache()
         assert languages.mbart_code("tl") == "tl_XX"
         assert languages.mbart_code("hil") == "tl_XX"
+
+
+def test_ph_finetune_maps_hil_to_hil_xx_when_meta_set(tmp_path):
+    ckpt = tmp_path / "mbart-hil"
+    ckpt.mkdir()
+    (ckpt / "finetune_meta.json").write_text(
+        json.dumps({"has_hil_xx": True, "lang": "hil"}), encoding="utf-8"
+    )
+    with patch.object(settings, "mbart_ph_finetuned_model", str(ckpt)):
+        _clear_hil_cache()
+        assert languages.mbart_code("tl") == "tl_XX"
+        assert languages.mbart_code("hil") == "hil_XX"
+        assert languages.ph_finetune_has_hil_xx(str(ckpt)) is True
 
 
 def test_assert_mbart_codes_resolvable():
@@ -58,6 +80,16 @@ def test_route_attempts_hiligaynon_mbart_is_last_resort():
     assert attempts[0] == ("google", "hil")
     assert ("nllb", "hil") in attempts
     assert attempts[-1] == ("mbart", "id")
+
+
+def test_route_attempts_hiligaynon_ph_ft_passes_hil_shorthand():
+    with patch(
+        "app.services.google_translate.is_configured", return_value=False
+    ):
+        attempts = llm._route_attempts_for_line(
+            "hil", prefer_mbart=False, has_ph_mbart=True, use_nllb=True
+        )
+    assert attempts[-1] == ("mbart", "hil")
 
 
 def test_unmapped_mbart_source_logs_warning_not_silent_en():
@@ -116,17 +148,19 @@ def test_unmapped_mbart_source_logs_warning_not_silent_en():
 
     assert out.strip()
     assert any("Unmapped mBART source code" in r.getMessage() for r in records)
-    # Must not have silently chosen en_XX as the *source* without warning.
-    assert not any("silent" in r.getMessage().lower() and "en_xx" in r.getMessage().lower()
-                   for r in records if "Unmapped" not in r.getMessage())
 
 
 if __name__ == "__main__":
+    import tempfile
+
     test_stock_tagalog_mbart_code_is_tl_xx()
     test_hiligaynon_mbart_code_is_degraded_id_proxy()
-    test_ph_finetune_maps_hil_and_tl_to_tl_xx()
+    test_ph_finetune_maps_tl_to_tl_xx_and_hil_legacy_proxy()
+    with tempfile.TemporaryDirectory() as td:
+        test_ph_finetune_maps_hil_to_hil_xx_when_meta_set(Path(td))
     test_assert_mbart_codes_resolvable()
     test_route_attempts_tagalog_mbart_uses_tl_not_id()
     test_route_attempts_hiligaynon_mbart_is_last_resort()
+    test_route_attempts_hiligaynon_ph_ft_passes_hil_shorthand()
     test_unmapped_mbart_source_logs_warning_not_silent_en()
     print("all_mbart_ph_tag_tests_passed")

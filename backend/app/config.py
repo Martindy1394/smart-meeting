@@ -183,9 +183,9 @@ class Settings(BaseSettings):
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"
     mbart_model: str = "facebook/mbart-large-50-many-to-many-mmt"
-    # Optional LoRA-merged mBART checkpoint fine-tuned for Tagalog/Hiligaynon→EN.
-    # Train on native ``tl_XX`` (see docs/FINE_TUNE_MBART_PH.md). Hiligaynon has
-    # no mBART token — fine-tune can only proxy it under ``tl_XX``.
+    # Optional LoRA-merged mBART checkpoint (Tagalog and/or Hiligaynon→EN).
+    # Tagalog: native ``tl_XX``. Hiligaynon: vocab-extended ``hil_XX`` when
+    # trained with ``--lang hil`` (see docs/FINE_TUNE_MBART_PH.md).
     mbart_ph_finetuned_model: str = ""
     # auto | nllb | mbart — Tagalog/mixed backend preference.
     # auto: fine-tuned mBART first when configured, otherwise NLLB.
