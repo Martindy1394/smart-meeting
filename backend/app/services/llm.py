@@ -91,6 +91,9 @@ _ENGLISH_MARKERS = frozenset(
         "mind", "change", "don't", "dont", "tonight", "again", "hold",
         "breath", "know", "confused", "fall", "over", "because", "will",
         "make", "me", "my", "core", "down",
+        "need", "pretend", "assume", "everything", "believe", "somehow",
+        "perhaps", "admit", "mistakes", "actions", "eventually", "course",
+        "without", "able", "show",
     }
 )
 
@@ -287,11 +290,40 @@ def _insert_context_breaks(text: str) -> str:
     return text
 
 
+# English openers often glued onto a PH clause with "and …" in Whisper lyrics /
+# code-switch (…ako and perhaps we have to…).
+_EN_AND_OPENER_RE = re.compile(
+    r"(?<=[A-Za-zÀ-ÿ])\s+and\s+(?=("
+    r"perhaps|maybe|of course|we|you|i|i'm|don't|do not|all we|for us|"
+    r"eventually|somehow|everything"
+    r")\b)",
+    re.IGNORECASE,
+)
+
+# High-frequency PH content words (beyond function markers) for ASR-garble checks.
+_COMMON_PH_CONTENT = frozenset(
+    {
+        "pag", "ibig", "walang", "hangganan", "tunay", "aking", "nararamdaman",
+        "tahanan", "kaibigan", "lahat", "isang", "tao", "lang", "ako", "nating",
+        "natin", "ituloy", "itayo", "para", "bakit", "hindi", "pwede", "puwede",
+        "problema", "desisyon", "desisyon", "budget", "meeting", "agenda",
+        "komite", "report", "aprubahan", "aprobahan", "botohan", "dokumento",
+        "linggo", "susunod", "kulang", "dahil", "minsan", "dapat", "marunong",
+        "sumunod", "consequences", "decision", "mistakes", "actions", "believe",
+        "pretend", "assume", "everything", "somehow", "eventually", "admit",
+        "perhaps", "course", "without", "follow", "allow", "son", "need",
+        "don't", "dont", "show", "able",
+    }
+)
+
+
 def _normalize_spoken_transcript(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _FILLER_RE.sub("", text)
     text = _WS_RE.sub(" ", text).strip()
     text = _insert_context_breaks(text)
+    # Hard-split PH→EN "and perhaps / and we …" tails before idea-unit split.
+    text = _EN_AND_OPENER_RE.sub(". ", text)
     # Insert a break before discourse markers but **keep** the marker so causal
     # / purpose meaning survives for MT and minutes (do not delete "because").
     text = re.sub(
@@ -1528,6 +1560,55 @@ def _collapse_translation_loops(text: str) -> str:
     return text
 
 
+def _content_tokens(text: str) -> list[str]:
+    return [t for t in re.findall(r"[A-Za-zÀ-ÿ']+", (text or "").lower()) if len(t) >= 4]
+
+
+def _known_ph_en_lexicon() -> frozenset[str]:
+    try:
+        from . import lang_router
+
+        return frozenset(
+            _FILIPINO_MARKERS
+            | _ENGLISH_MARKERS
+            | _COMMON_PH_CONTENT
+            | getattr(lang_router, "_HILIGAYNON_MARKERS", frozenset())
+            | getattr(lang_router, "_TAGALOG_MARKERS", frozenset())
+            | getattr(lang_router, "_ENGLISH_MARKERS", frozenset())
+        )
+    except Exception:
+        return frozenset(_FILIPINO_MARKERS | _ENGLISH_MARKERS | _COMMON_PH_CONTENT)
+
+
+def _ph_asr_unknown_ratio(text: str) -> float:
+    """Fraction of longer tokens not in known PH/EN meeting lexicon."""
+    toks = _content_tokens(text)
+    if len(toks) < 5:
+        return 0.0
+    known = _known_ph_en_lexicon()
+    unknown = sum(1 for t in toks if t not in known)
+    return unknown / float(len(toks))
+
+
+def _source_looks_like_garbled_ph_asr(text: str) -> bool:
+    """True when a PH-looking clause is mostly unknown ASR salad (e.g. sung lyrics).
+
+    Translating that salad through NLLB/mBART invents fluent English nonsense
+    (garden / home / born …). Prefer keeping the source as ``[untranslated:]``.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    en, fi = _language_scores(raw)
+    # Clear English clauses are never "garbled PH ASR".
+    if en >= 0.12 and en >= fi + 0.04:
+        return False
+    toks = _content_tokens(raw)
+    if len(toks) < 8:
+        return False
+    return _ph_asr_unknown_ratio(raw) >= 0.35
+
+
 def _is_garbage_english_translation(source: str, translated: str) -> bool:
     """Detect mBART/NLLB word-salad and broken English on PH→EN.
 
@@ -1555,10 +1636,20 @@ def _is_garbage_english_translation(source: str, translated: str) -> bool:
     salad = {
         "bow", "arrow", "rope", "rail", "wing", "stone", "tail", "stub",
         "row", "rows", "wing", "wings",
+        # Fluent hallucination nouns common on garbled lyric ASR → NLLB.
+        "garden", "gardens", "bow", "arrow",
     }
     if len(dst_tokens) >= 8:
         salad_hits = sum(1 for t in dst_tokens if t in salad)
         if salad_hits / len(dst_tokens) >= 0.35:
+            return True
+    # Fluent EN invented from garbled PH ASR (high unknown src, concrete EN nouns).
+    if _source_looks_like_garbled_ph_asr(source):
+        halluc_nouns = {
+            "garden", "gardens", "silent", "beautiful", "born", "laid",
+            "unconditionally", "home", "rope", "arrow", "wing", "stone",
+        }
+        if sum(1 for t in dst_tokens if t in halluc_nouns) >= 2:
             return True
     # Stray single-letter tokens (except a/I) → broken fragments like "honor m Swear".
     stray_letters = [
@@ -1884,6 +1975,7 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
     route_counts = {"en": 0, "tl": 0, "hil": 0, "unknown": 0, "uncertain": 0}
     engines_used: set[str] = set()
     kept_source = 0
+    kept_garbled = 0
     ph_source_mass = 0
     ph_translated_mass = 0
 
@@ -1907,7 +1999,15 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
             out_units.append(unit)
             route_counts["en"] += 1
             engines_used.add("passthrough-english")
-            if decision.uncertain:
+            # Do not flag clear English passthrough (short lyric lines, etc.).
+            if decision.uncertain and decision.reason in {
+                "hil_tl_ambiguous",
+                "hil_lean_close",
+                "tl_lean_close",
+                "meeting_bias_hil",
+                "meeting_bias_tl",
+                "no_signal",
+            }:
                 route_counts["uncertain"] += 1
                 review_lines.append(
                     {
@@ -1933,6 +2033,18 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
 
         unit_mass = _token_mass(unit)
         ph_source_mass += unit_mass
+
+        # Garbled PH ASR (sung lyrics / heavy mishears): do not invent English.
+        if _source_looks_like_garbled_ph_asr(unit):
+            logger.info(
+                "Keeping garbled PH ASR clause untranslated (unknown_ratio=%.2f): %s…",
+                _ph_asr_unknown_ratio(unit),
+                unit[:48],
+            )
+            out_units.append(mark_untranslated(unit))
+            kept_source += 1
+            kept_garbled += 1
+            continue
 
         attempts = _route_attempts_for_line(
             route_lang,
@@ -2025,16 +2137,22 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
 
     if kept_source >= 1:
         logger.info(
-            "Three-way MT kept %d source clauses (marked [untranslated:…]); "
-            "routes=%s uncertain=%d",
+            "Three-way MT kept %d source clauses (marked [untranslated:…], "
+            "garbled_asr=%d); routes=%s uncertain=%d",
             kept_source,
+            kept_garbled,
             {k: v for k, v in route_counts.items() if k != "uncertain"},
             route_counts["uncertain"],
+        )
+        why = (
+            "garbled ASR / MT failure"
+            if kept_garbled
+            else "MT failure"
         )
         review_lines.append(
             {
                 "section": "Untranslated",
-                "line": f"{kept_source} clause(s) kept as source after MT failure",
+                "line": f"{kept_source} clause(s) kept as source ({why})",
                 "overlap": 0.0,
             }
         )

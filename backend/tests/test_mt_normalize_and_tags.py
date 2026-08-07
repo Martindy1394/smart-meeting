@@ -51,3 +51,62 @@ def test_hiligaynon_markers_visible_to_language_scores():
 
     en, fi = _language_scores("Indi gid kita makadto sang meeting subong.")
     assert fi > 0.0
+
+
+def test_codeswitch_and_perhaps_split():
+    from app.services.llm import _normalize_spoken_transcript
+
+    src = (
+        "pag-ibig na walang hangganan isang tao lang ako and perhaps "
+        "we have to admit our mistakes"
+    )
+    norm = _normalize_spoken_transcript(src)
+    assert "ako. " in norm or "ako." in norm
+    assert "perhaps" in norm.lower()
+
+
+def test_garbled_ph_asr_lyric_salad_detected():
+    from app.services.llm import _source_looks_like_garbled_ph_asr
+
+    salad = (
+        "pag-ibig na walang andanan itulay na aking nararang tamanan "
+        "pagkatikaw na ang aking mahanan tanay kon kaibigan al para sa lahat "
+        "itulangan nating itayo isang tao lang ako"
+    )
+    assert _source_looks_like_garbled_ph_asr(salad) is True
+    clean = "Kailangan nating aprubahan ang budget para sa susunod na linggo."
+    assert _source_looks_like_garbled_ph_asr(clean) is False
+
+
+def test_garbled_lyric_kept_untranslated_not_garden_hallucination():
+    """ACCO-style sung ASR must not become fluent English nonsense."""
+    from app.services import llm
+
+    src = (
+        "pag-ibig na walang andanan itulay na aking nararang tamanan "
+        "pagkatikaw na ang aking mahanan tanay kon kaibigan al para sa lahat "
+        "itulangan nating itayo isang tao lang ako and perhaps we have to of "
+        "course admit our mistakes and somehow eventually we will be without "
+        "our actions.... don't need to pretend.... don't need to assume.... "
+        "everything.... all we have to do is to believe you.... and for us to "
+        "be able to do that we have to somehow"
+    )
+    result = llm.translate(src, target_language="en", source_language="auto")
+    text = (result.text or "").lower()
+    assert "garden" not in text
+    assert "[untranslated:" in (result.text or "").lower() or "untranslated" in (
+        result.engine or ""
+    ).lower() or any(
+        "untranslated" in (r.get("section") or "").lower()
+        for r in (result.review_lines or [])
+    )
+    # English tail should still pass through.
+    assert "don't need to pretend" in text or "admit our mistakes" in text
+    # Short clear EN lines should not flood Language review.
+    en_review = [
+        r
+        for r in (result.review_lines or [])
+        if (r.get("section") == "Language review")
+        and "don't need to pretend" in (r.get("line") or "").lower()
+    ]
+    assert en_review == []
