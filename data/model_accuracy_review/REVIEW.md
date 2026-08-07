@@ -1,6 +1,6 @@
 # Model accuracy review — ASR, BART, mBART/NLLB
 
-**Date:** 2026-08-07  
+**Date:** 2026-08-07 (ASR re-check)
 **Environment:** CPU; ML deps installed (`requirements-ml.txt`).  
 **Machine-readable scores:** `data/model_accuracy_review/report.json`
 
@@ -10,33 +10,30 @@ Reviewed **one by one** against expected outputs (fixtures or labeled clips).
 
 ## 1. Whisper ASR
 
-### How it works
-| Pass | Entry | Model |
-|---|---|---|
-| Live | `asr.transcribe_pcm(..., live=True)` → `transcription.transcribe_live` | faster-whisper `small` |
-| Final | `asr.transcribe_file` → `transcription.transcribe_final` | HF PH candidates / Whisper `medium` |
-| Languages | `en` forced; `tl` forced `tl`; `hil` auto-detect (no Whisper `hil` token) | see `transcription.py` |
+**Re-checked:** 2026-08-07 07:09 UTC · 5 trials/clip · median scoring.
+See also `ASR_REVIEW.md` for full trial logs.
 
-### Expected vs measured
-No labeled meeting audio is checked into the repo. Fresh **gTTS → 16 kHz WAV** clips were used as ground truth.
+### Expected vs measured (final pass)
 
-| Clip | Lang | Expected (ref) | Hypothesis | WER | token-F1 | Pass |
-|---|---|---|---|---|---|---|
-| `en_meeting.wav` | en | The board approved the quarterly budget after a careful review. | (exact, trailing period drop) | **0.000** | **1.000** | ✓ |
-| `en_action.wav` | en | Maria will send the report on Friday before the board meeting. | (exact) | **0.000** | **1.000** | ✓ |
-| `tl_greeting.wav` | tl | Magandang umaga sa lahat. Kailangan nating aprubahan ang budget. | …`aprobahan`… (spelling variant) | **0.111** | **0.889** | ✓ |
+| Clip | Lang | Med WER | Med F1 | Trial pass-rate | Clip pass |
+|---|---|---|---|---|---|
+| `en_meeting.wav` | en | **0.000** | **1.000** | 100% | ✓ |
+| `en_action.wav` | en | **0.000** | **1.000** | 100% | ✓ |
+| `tl_greeting.wav` | tl | **0.222** | **0.842** | 80% | ✓ |
 
-**Bar:** WER ≤ 0.25 or token-F1 ≥ 0.75  
-**Verdict: PASS** (mean WER 0.037, mean F1 0.963)
+**Bar:** median WER ≤ 0.25 or median token-F1 ≥ 0.75
+**Verdict: PASS** (mean median WER 0.074)
 
 ### Notes
-- English final ASR is near-perfect on clean TTS.
-- Tagalog: one morphological spelling drift (`aprubahan` → `aprobahan`) — still clear pass.
-- Real board audio / Hiligaynon PLD WER still needs labeled clips (`scripts/hiligaynon_asr/wer.py`).
+
+- English final + live: accurate on clean TTS (median WER 0).
+- Tagalog: median PASS but **unstable** (80% trial pass; occasional wrong-script tokens).
+- Hiligaynon: language routing PASS (auto, never `tl`); proxy TTS median WER 0.455 (weak); native PLD WER still TBD.
 
 ---
 
 ## 2. BART summarization
+
 
 ### How it works
 `llm.summarize(..., source_kind=)` → topic-aware `facebook/bart-large-cnn`:
@@ -105,7 +102,7 @@ Confirms **`tl_XX` > `id_ID`**; production Tagalog path correctly prefers NLLB (
 
 | Component | Function check | Accuracy vs expected | Verdict |
 |---|---|---|---|
-| **Whisper ASR** | Final file path loads & decodes | EN WER 0; TL WER 0.11 | **PASS** |
+| **Whisper ASR** | Final+live load & decode | EN med WER~0.00/0.00; TL med 0.22 (unstable) | **PASS** | EN WER 0; TL WER 0.11 | **PASS** |
 | **BART** | Meeting minutes + general kind | Structure + 100% key content | **PASS** (dupe noise) |
 | **NLLB/mBART MT** | Three-way route | TL F1 0.89; Hil F1 0.72 | **PASS** (configure Google for Hil) |
 
