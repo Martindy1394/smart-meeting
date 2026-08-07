@@ -112,18 +112,24 @@ python3 scripts/hiligaynon_asr/prepare_whisper_pld.py --pld-root "M:/MSCS/PLD" -
 
 ### Fine-tune and plug in
 
-Use the cleaned speaker-disjoint splits from `prepare_whisper_pld.py`:
+Use the cleaned speaker-disjoint splits from `prepare_whisper_pld.py`.
+**Recommended:** LoRA (`finetune_whisper_lora.py`) then merge before pointing the app at the checkpoint. Full FT remains in `finetune_whisper.py` — see [`docs/FINE_TUNE_HILIGAYNON.md`](FINE_TUNE_HILIGAYNON.md).
 
 ```bash
-python3 scripts/hiligaynon_asr/finetune_whisper.py \
+# LoRA train → merge → plug in
+python3 scripts/hiligaynon_asr/finetune_whisper_lora.py \
   --train-jsonl ./data/pld_hiligaynon_clean/train.jsonl \
   --eval-jsonl ./data/pld_hiligaynon_clean/dev.jsonl \
-  --output-dir ./models/whisper-medium-pld-hil \
+  --output-dir ./models/whisper-medium-hil-lora \
   --model-name openai/whisper-medium \
   --fp16
 
-# backend/.env
-WHISPER_HILIGAYNON_FINE_TUNED_MODEL=M:/MSCS/smart-meeting/models/whisper-medium-pld-hil
+python3 scripts/hiligaynon_asr/merge_whisper_lora.py \
+  --adapter-dir ./models/whisper-medium-hil-lora \
+  --output-dir ./models/whisper-medium-hiligaynon
+
+# backend/.env (merged full checkpoint, not the adapter folder)
+WHISPER_HILIGAYNON_FINE_TUNED_MODEL=M:/MSCS/smart-meeting/models/whisper-medium-hiligaynon
 WHISPER_FINAL_BACKEND=auto
 WHISPER_HILIGAYNON_FINAL_LANGUAGE_MODE=auto
 ```
@@ -131,12 +137,16 @@ WHISPER_HILIGAYNON_FINAL_LANGUAGE_MODE=auto
 Windows (PowerShell):
 
 ```powershell
-py -3 scripts/hiligaynon_asr/finetune_whisper.py `
+py -3 scripts/hiligaynon_asr/finetune_whisper_lora.py `
   --train-jsonl .\data\pld_hiligaynon_clean\train.jsonl `
   --eval-jsonl .\data\pld_hiligaynon_clean\dev.jsonl `
-  --output-dir .\models\whisper-medium-pld-hil `
+  --output-dir .\models\whisper-medium-hil-lora `
   --model-name openai/whisper-medium `
   --fp16
+
+py -3 scripts/hiligaynon_asr/merge_whisper_lora.py `
+  --adapter-dir .\models\whisper-medium-hil-lora `
+  --output-dir .\models\whisper-medium-hiligaynon
 ```
 
 ## Other PLD languages

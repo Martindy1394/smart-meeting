@@ -23,41 +23,65 @@ languages such as Basque on `whisper-medium`). This repo:
 
 | Suggestion | Status in this project |
 |---|---|
-| Fine-tune Whisper on Hiligaynon audio + transcripts | Supported via `scripts/hiligaynon_asr/finetune_whisper.py` (HF Transformers). SpeechBrain is also fine — export a transformers-compatible folder. |
-| Use ~tens–100+ hours when possible (Basque ~116h → ~8.7% WER) | Documented; you supply the dataset. Even a few clean hours helps. |
+| Fine-tune Whisper on Hiligaynon audio + transcripts | **Full FT:** `finetune_whisper.py`. **LoRA (recommended):** `finetune_whisper_lora.py` + `merge_whisper_lora.py`. |
+| LoRA on attention / FFN (`q_proj`, `v_proj`, `out_proj`, `fc1`, `fc2`) | Supported — default r=64, α=128; optional `--load-in-4bit` on CUDA. |
+| Use ~tens–100+ hours when possible (PLD ~41h Hiligaynon) | Documented; prep via `prepare_whisper_pld.py`. Even a few clean hours helps. |
 | faster-whisper / SpeechBrain fine-tunes | Final ASR uses HF transformers checkpoints. Live captions use a **CTranslate2** export (`export_ct2.sh`) with faster-whisper. |
-| Improve accuracy beyond stock Whisper | Runtime: custom fine-tune → `rbcurzon/whisper-medium-ph` → faster-whisper, plus Hiligaynon prompt bias and auto-detect (no forced `tl`). Preferred training data: **UP-DSP PLD** (~41h Hiligaynon) — see [`docs/PLD.md`](PLD.md). |
+| Improve accuracy beyond stock Whisper | Runtime: custom fine-tune → `rbcurzon/whisper-medium-ph` → faster-whisper, plus Hiligaynon prompt bias and auto-detect (no forced `tl`). Preferred training data: **UP-DSP PLD** — see [`docs/PLD.md`](PLD.md). |
 
 ## Scripts (train → evaluate → plug in)
 
+### A) Recommended: LoRA fine-tune (cheaper VRAM)
+
+Adapted from the Hiligaynon LoRA guide (PEFT on `q_proj`/`v_proj`/`out_proj`/`fc1`/`fc2`).
+Does **not** force a Whisper `hil` language token (stock Whisper has none).
+
 ```bash
-# 0) Preferred: clean + speaker-disjoint PLD splits for Whisper
-#    (OmniVoice-style filters: drop spontaneous, digits/parens, keep 1–15s)
+# 0) Preferred: clean + speaker-disjoint PLD splits
 #    See docs/PLD.md
 python3 scripts/hiligaynon_asr/prepare_whisper_pld.py \
   --pld-root ./data/PLD --language hil --out-dir ./data/pld_hiligaynon_clean
-# Inspect layout only: python3 scripts/hiligaynon_asr/import_pld.py --pld-root ./data --inspect
 
-# 1) Or build JSONL from your own WAV+TXT pairs (or CSV)
-python scripts/hiligaynon_asr/prepare_dataset.py \
+# 1) LoRA train (GPU recommended)
+pip install "transformers>=4.40" datasets accelerate peft torch \
+  librosa soundfile evaluate jiwer
+# Optional 4-bit on CUDA: pip install bitsandbytes  →  add --load-in-4bit
+python3 scripts/hiligaynon_asr/finetune_whisper_lora.py \
+  --train-jsonl ./data/pld_hiligaynon_clean/train.jsonl \
+  --eval-jsonl ./data/pld_hiligaynon_clean/dev.jsonl \
+  --test-jsonl ./data/pld_hiligaynon_clean/test.jsonl \
+  --output-dir ./models/whisper-medium-hil-lora \
+  --model-name openai/whisper-medium \
+  --lora-r 64 --lora-alpha 128 \
+  --num-train-epochs 10 --fp16
+
+# 2) Merge adapters → full transformers checkpoint
+python3 scripts/hiligaynon_asr/merge_whisper_lora.py \
+  --adapter-dir ./models/whisper-medium-hil-lora \
+  --output-dir ./models/whisper-medium-hiligaynon
+
+# 3) WER on held-out pairs (optional)
+python3 scripts/hiligaynon_asr/wer.py --pair ./eval/pairs.jsonl
+
+# 4) Optional: CT2 for live captions
+./scripts/hiligaynon_asr/export_ct2.sh \
+  ./models/whisper-medium-hiligaynon \
+  ./models/whisper-medium-hiligaynon-ct2
+```
+
+### B) Full fine-tune (no LoRA)
+
+```bash
+# Or build JSONL from your own WAV+TXT pairs
+python3 scripts/hiligaynon_asr/prepare_dataset.py \
   --input-dir ./hil-data --output ./hil-train.jsonl
 
-# 2) Fine-tune whisper-medium (GPU recommended; omit --language for hil)
-python scripts/hiligaynon_asr/finetune_whisper.py \
+python3 scripts/hiligaynon_asr/finetune_whisper.py \
   --train-jsonl ./data/pld_hiligaynon_clean/train.jsonl \
   --eval-jsonl ./data/pld_hiligaynon_clean/dev.jsonl \
   --output-dir ./models/whisper-medium-hiligaynon \
   --model-name openai/whisper-medium \
   --fp16
-
-# 3) Measure WER on a held-out set
-python scripts/hiligaynon_asr/wer.py \
-  --reference ./eval/ref.txt --hypothesis ./eval/hyp.txt
-
-# 4) Optional: export CT2 for live captions
-./scripts/hiligaynon_asr/export_ct2.sh \
-  ./models/whisper-medium-hiligaynon \
-  ./models/whisper-medium-hiligaynon-ct2
 ```
 
 ## Configure Smart Meeting
