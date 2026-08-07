@@ -155,15 +155,17 @@ Whisper final_transcript
 
 ---
 
-## Fix order (highest impact)
+## Fix status (implemented 2026-08-07)
 
-1. **Configure Google Translate** (`GOOGLE_TRANSLATE_API_KEY` or ADC + project) —
-   required for Hiligaynon accuracy; keep NLLB/mBART as last resort only.
-2. **Fix Taglish split** — do not treat `i-` / `I-` verb prefixes as English “I”
-   (`_ENGLISH_AFTER_PH_RE`); stop re-normalizing post-MT English with the spoken splitter.
-3. **Stop pretending ceb/id ≈ Hiligaynon** except true emergency; surface “degraded” in UI.
-4. **Improve ASR first** for Hiligaynon (fine-tune + strip-bug fixes) — MT cannot fix WER 0.45.
-5. Only then consider PH mBART LoRA for Tagalog; do not expect it to teach Hiligaynon.
+1. **Ops still required:** Configure Google Translate credentials for Hiligaynon.
+2. **Done:** Taglish `i-` prefixes not split as English “I”; hyphenated stems kept
+   intact before `ang`/`mga`; “because” markers kept (not deleted); post-MT
+   English uses `_normalize_mt_english` (no spoken PH splitter).
+3. **Done:** Auto NLLB source uses `lang_router` (hil → `ceb_Latn`, tl → `tgl_Latn`);
+   Hiligaynon markers added to `_FILIPINO_MARKERS`; non-EN auto mBART prefers `tl`
+   over `id`.
+4. **Still needed:** Hiligaynon ASR fine-tune + Google for true hil accuracy.
+5. PH mBART LoRA remains Tagalog-oriented only (cannot add `hil_XX`).
 
 ---
 

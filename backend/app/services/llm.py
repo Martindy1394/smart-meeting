@@ -76,6 +76,10 @@ _FILIPINO_MARKERS = frozenset(
         "kulang", "siyang", "ito", "ngayon", "tapos", "salamat", "mahal",
         "gusto", "kailangan", "pwede", "puwede", "sige", "oo", "huwag",
         "kanila", "kanilang", "atin", "inyo", "ninyo", "kayo",
+        # Distinctive Hiligaynon / Ilonggo markers (shared PH scoring helpers).
+        "gid", "indi", "sang", "kag", "amo", "subong", "subung", "naton",
+        "nakapoy", "kabalo", "buwas", "dayon", "waay", "pamangkot",
+        "maayo", "maayong", "ilonggo", "hiligaynon",
     }
 )
 _ENGLISH_MARKERS = frozenset(
@@ -202,9 +206,12 @@ def _language_scores(text: str) -> tuple[float, float]:
 
 
 # English clause after Filipino (Whisper often glues: "...ibigin ka I know you").
+# Do **not** treat Taglish ``i-`` / ``I-`` verb prefixes (i-move, i-approve) as
+# the English pronoun "I" — ``I(?!-)`` blocks the hyphenated form.
 _ENGLISH_AFTER_PH_RE = re.compile(
     r"(?<=[A-Za-zÀ-ÿ,\"'”’])\s+(?=("
-    r"I|I'm|I've|I'd|I'll|You|We|They|He|She|The|This|That|These|Those|"
+    r"I(?!-)(?:'m|'ve|'d|'ll)?|"
+    r"You|We|They|He|She|The|This|That|These|Those|"
     r"What|When|Where|Why|How|Who|Don't|Doesn't|Didn't|Can't|Won't|"
     r"Tonight|Today|Tomorrow|Because|Over|Hold|Please|Thank|Hello|Good|"
     r"My|Your|Our|His|Her|Their"
@@ -224,6 +231,9 @@ def _insert_context_breaks(text: str) -> str:
         "ba", "lang", "na", "ang", "mga", "ng", "sa", "ay", "po", "naman", "pa",
         "haa", "ha",
     }
+    # Keep Taglish hyphen stems (i-move) as one token so "move" is not treated
+    # as an English code-switch boundary before ang/mga/….
+    _tok_re = re.compile(r"[A-Za-zÀ-ÿ']+(?:-[A-Za-zÀ-ÿ']+)*")
     pieces: list[str] = []
     cursor = 0
     for match in _FILIPINO_STARTER_RE.finditer(text):
@@ -232,9 +242,9 @@ def _insert_context_breaks(text: str) -> str:
         pieces.append(text[cursor:ws_start])
         built = "".join(pieces)
         clause = re.split(r"[.!?]\s*", built)[-1]
-        prev_tokens = re.findall(r"[A-Za-zÀ-ÿ']+", clause.lower())
+        prev_tokens = _tok_re.findall(clause.lower())
         last_tok = prev_tokens[-1] if prev_tokens else ""
-        if last_tok in fil_func:
+        if last_tok in fil_func or "-" in last_tok:
             pieces.append(text[ws_start:ws_end])
         else:
             en, fi = _language_scores(clause)
@@ -282,10 +292,11 @@ def _normalize_spoken_transcript(text: str) -> str:
     text = _FILLER_RE.sub("", text)
     text = _WS_RE.sub(" ", text).strip()
     text = _insert_context_breaks(text)
-    # Turn spoken discourse markers into hard sentence breaks (drop the marker).
+    # Insert a break before discourse markers but **keep** the marker so causal
+    # / purpose meaning survives for MT and minutes (do not delete "because").
     text = re.sub(
-        r"\s+(?:and because of|and because|so that|because of|because)\s+",
-        ". ",
+        r"\s+(and because of|and because|so that|because of|because)\s+",
+        r". \1 ",
         text,
         flags=re.IGNORECASE,
     )
@@ -295,6 +306,15 @@ def _normalize_spoken_transcript(text: str) -> str:
         text = text[0].upper() + text[1:]
     if text and text[-1] not in ".!?":
         text += "."
+    return text
+
+
+def _normalize_mt_english(text: str) -> str:
+    """Light cleanup for already-translated English (no spoken PH splitter)."""
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _WS_RE.sub(" ", text).strip()
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
     return text
 
 
@@ -1306,7 +1326,9 @@ def summarize_to_english(
             target_language="en",
             source_language=source_language or "auto",
         )
-        english = _normalize_spoken_transcript(tr.text or "")
+        # Do not re-run the spoken PH splitter on MT English (it shreds
+        # "because …" and can invent false clause breaks).
+        english = _normalize_mt_english(tr.text or "")
         translate_engine = tr.engine
         mt_review = list(tr.review_lines or [])
         if not english:
@@ -1339,8 +1361,19 @@ def _nllb_src_code(source_language: str, text: str = "") -> str:
         return "tgl_Latn"
     if primary in {"id", "indonesian"}:
         return "ind_Latn"
-    # auto / mixed: prefer Tagalog when Filipino markers dominate.
-    _, fi = _language_scores(text or "")
+    # auto / mixed: prefer lexical router over always forcing Tagalog.
+    raw = text or ""
+    try:
+        from . import lang_router
+
+        route = lang_router.classify_line(raw)
+        if route.language == "hil":
+            return "ceb_Latn"
+        if route.language == "tl":
+            return "tgl_Latn"
+    except Exception:
+        pass
+    _, fi = _language_scores(raw)
     if fi >= 0.08:
         return "tgl_Latn"
     return "tgl_Latn"
@@ -2048,7 +2081,18 @@ def translate(
     src = (source_language or "auto").strip().lower()
     if src in {"auto", "detect", "none", ""}:
         _, fi = _language_scores(text)
-        src = "id" if fi >= 0.08 else "en"
+        # Prefer native Tagalog token over historical Indonesian workaround.
+        src = "tl" if fi >= 0.08 else "en"
+        try:
+            from . import lang_router
+
+            route = lang_router.classify_line(text or "")
+            if route.language == "hil":
+                src = "hil"  # degraded id_ID proxy via languages.mbart_code
+            elif route.language == "tl":
+                src = "tl"
+        except Exception:
+            pass
     return TranslateResult(_mbart_translate(text, src, tgt), "mbart-large-50")
 
 

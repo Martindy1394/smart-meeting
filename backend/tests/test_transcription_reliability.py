@@ -196,6 +196,8 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
     prev_live = settings.whisper_live_hiligaynon_model
     prev_ft = settings.whisper_hiligaynon_fine_tuned_model
     prev_ph = settings.whisper_hiligaynon_model
+    prev_tl_ft = settings.whisper_tagalog_fine_tuned_model
+    prev_tl = settings.whisper_tagalog_model
     try:
         settings.whisper_final_backend = "auto"
         settings.whisper_hiligaynon_fine_tuned_model = ""
@@ -203,7 +205,12 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         assert resolve_final_backend("hil") == "huggingface"
         assert resolve_final_backend("en") == "faster-whisper"
         assert philippine_hf_candidates("en") == []
-        assert hiligaynon_hf_candidates() == ["rbcurzon/whisper-medium-ph"]
+        settings.whisper_tagalog_fine_tuned_model = ""
+        settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
+        assert hiligaynon_hf_candidates() == [
+            "rbcurzon/whisper-medium-ph",
+            "LWobole/whisper-small-tagalog",
+        ]
         assert hiligaynon_model_id() == "rbcurzon/whisper-medium-ph"
 
         settings.whisper_hiligaynon_fine_tuned_model = "/models/my-hil-ft"
@@ -211,6 +218,7 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         assert hiligaynon_hf_candidates() == [
             "/models/my-hil-ft",
             "rbcurzon/whisper-medium-ph",
+            "LWobole/whisper-small-tagalog",
         ]
         assert hiligaynon_model_id() == "/models/my-hil-ft"
 
@@ -224,6 +232,8 @@ def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
         settings.whisper_live_hiligaynon_model = prev_live
         settings.whisper_hiligaynon_fine_tuned_model = prev_ft
         settings.whisper_hiligaynon_model = prev_ph
+        settings.whisper_tagalog_fine_tuned_model = prev_tl_ft
+        settings.whisper_tagalog_model = prev_tl
 
 
 def test_auto_final_backend_prefers_hf_for_tagalog():
@@ -305,6 +315,16 @@ def test_visayan_markers_boost_quality_and_strip_prompt_echo():
     assert "nakapoy" in cleaned.lower()
     assert "Buwas" in cleaned or "buwas" in cleaned.lower()
 
+    # Prompt content words that are real Ilonggo lexicon must survive.
+    real = "Wala gid kami sang budget subong. Amo ina ang plano."
+    prompt = (
+        "Diskusyon sa board meeting sa Hiligaynon kag English. "
+        "Wala gid, indi, sang, kag, amo."
+    )
+    kept = _strip_initial_prompt_echo(real, prompt)
+    assert "gid" in kept.lower()
+    assert "amo" in kept.lower()
+
 
 def test_auto_meeting_uses_combined_ph_hf_candidates():
     from app.config import settings
@@ -321,12 +341,13 @@ def test_auto_meeting_uses_combined_ph_hf_candidates():
         settings.whisper_tagalog_fine_tuned_model = ""
         settings.whisper_tagalog_model = "LWobole/whisper-small-tagalog"
         settings.whisper_hiligaynon_model = "rbcurzon/whisper-medium-ph"
-        # auto → Hiligaynon default; uses PH dialect HF candidates.
+        # auto → combined PH + Tagalog HF (scored; no first-wins).
         assert resolve_final_backend("auto") == "huggingface"
-        # auto_hf_candidates still lists medium-PH for Tagalog/legacy callers.
         assert auto_hf_candidates() == [
             "rbcurzon/whisper-medium-ph",
+            "LWobole/whisper-small-tagalog",
         ]
+        assert philippine_hf_candidates("auto") == auto_hf_candidates()
         settings.whisper_live_hiligaynon_model = "/models/hil-ct2"
         assert live_model_id("auto") == "/models/hil-ct2"
     finally:

@@ -416,6 +416,8 @@ def hiligaynon_hf_candidates() -> list[str]:
     2. Philippine dialect medium (``rbcurzon/whisper-medium-ph``) — trained on
        Visayan/PH speech and recovers Ilonggo forms (``gid``, ``nakapoy``,
        ``mangita sang``) far better than stock Whisper+``tl``
+    3. Tagalog HF as a scored secondary — product ``auto→hil`` sessions often
+       carry Tagalog speech; junk/loop Tagalog-small outputs lose on quality score.
 
     Quiet-mic hallucinations are mitigated by ``amplify_for_asr`` before decode;
     results are still scored against faster-whisper and the better transcript wins.
@@ -424,6 +426,8 @@ def hiligaynon_hf_candidates() -> list[str]:
         [
             settings.whisper_hiligaynon_fine_tuned_model,
             settings.whisper_hiligaynon_model,
+            settings.whisper_tagalog_fine_tuned_model,
+            settings.whisper_tagalog_model,
         ]
     )
 
@@ -447,15 +451,16 @@ def tagalog_hf_candidates() -> list[str]:
 def auto_hf_candidates() -> list[str]:
     """HF candidates when language is unknown / auto-detected.
 
-    Prefer Philippine medium. Tagalog-small is omitted here — it often wins
-    first-wins/scoring with high-coverage **repetition loops** on mixed speech.
-    Explicit Tagalog meetings still use ``tagalog_hf_candidates()``.
+    Prefer Philippine medium, then Tagalog HF. Candidates are **scored** (junk /
+    loop filters) — Tagalog-small is no longer omitted so Tagalog speech on
+    ``auto`` meetings can win when it is the better transcript.
     """
     return _dedupe_model_ids(
         [
             settings.whisper_hiligaynon_fine_tuned_model,
             settings.whisper_tagalog_fine_tuned_model,
             settings.whisper_hiligaynon_model,
+            settings.whisper_tagalog_model,
         ]
     )
 
@@ -470,12 +475,15 @@ def philippine_hf_candidates(language: str | None) -> list[str]:
     # Honor explicit English before effective_asr_language remaps unknowns.
     if raw in {"en", "english"}:
         return []
+    # Keep auto on the combined PH+Tagalog list before default hil remapping.
+    if is_auto_language(raw) or not raw:
+        return auto_hf_candidates()
     lang = effective_asr_language(language)
     if is_tagalog_language(lang):
         return tagalog_hf_candidates()
     if is_hiligaynon_language(lang):
         return hiligaynon_hf_candidates()
-    if is_philippine_language(lang) or is_auto_language(raw):
+    if is_philippine_language(lang):
         return auto_hf_candidates()
     return []
 
@@ -1480,6 +1488,8 @@ def _strip_initial_prompt_echo(text: str, prompt: str | None) -> str:
         if len(t) >= 3
     }
     # Never strip ubiquitous PH particles that also appear in real speech.
+    # Include prompt content words that are real Ilonggo lexicon (gid, amo) —
+    # otherwise Hiligaynon transcripts lose core tokens after decode.
     keep = {
         "ang",
         "mga",
@@ -1499,6 +1509,8 @@ def _strip_initial_prompt_echo(text: str, prompt: str | None) -> str:
         "indi",
         "dili",
         "wala",
+        "gid",
+        "amo",
         "english",
         "hiligaynon",
         "ilonggo",
@@ -2121,10 +2133,16 @@ def _transcribe_final_once(
         # real Visayan content.
         if fw_lang in {"en", "english"} and fw_conf >= 0.45 and hf_visayan < 0.04:
             prefer_fw = best_score < fw_score * 2.0 or prefer_fw
-        # FW Tagalog/English with solid lexical mass beats PH word salad.
-        if fw_lang in {"en", "tl", "tagalog", "fil", "filipino"} and fw_score >= 8.0:
-            if hf_garble < 0.75 and best_score < fw_score * 1.8:
-                prefer_fw = True
+        # FW often labels Hiligaynon as ``tl`` (no hil token). Never discard an
+        # already-higher HF score just because FW detected Tagalog/English —
+        # only prefer FW when it actually outscores HF (or HF is garbled above).
+        if (
+            fw_lang in {"en", "tl", "tagalog", "fil", "filipino"}
+            and fw_score >= 8.0
+            and best_score < fw_score
+            and hf_garble < 0.75
+        ):
+            prefer_fw = True
         if prefer_fw:
             logger.info(
                 "Final ASR preferring FW '%s' (fw=%.1f) over HF '%s' (hf=%.1f) "

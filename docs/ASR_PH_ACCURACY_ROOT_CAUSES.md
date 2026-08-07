@@ -138,17 +138,14 @@ prefer-FW (#2) can still destroy or discard the better text.
 
 ---
 
-## Fix order (if implementing next)
+## Fix status (implemented 2026-08-07)
 
-1. Add `gid`, `amo` (and other prompt content words that are real speech) to
-   `_strip_initial_prompt_echo` `keep` — or stop putting content words in the prompt.
-2. Soften / remove the `fw_lang in {tl,en} → prefer_fw` override when HF score
-   already beats FW (especially for hil/auto meetings).
-3. Product language: either expose Tagalog vs Hiligaynon, or on `auto` try both
-   Tagalog HF and Hiligaynon HF and pick by score (without #2 discarding HF).
-4. Train/merge Hiligaynon LoRA → set `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`.
-5. Prefer a stronger Tagalog checkpoint than `whisper-small-tagalog` when available.
-6. Optional: CT2 export for live PH captions.
+1. **Done:** `gid` / `amo` added to `_strip_initial_prompt_echo` `keep`.
+2. **Done:** FW-over-HF `tl` override only when FW **outscores** HF (no more
+   discard of higher HF via `hf < fw*1.8`).
+3. **Done:** `auto` / hil HF candidate lists include Tagalog HF as scored secondary.
+4. **Still needed:** Train/merge Hiligaynon LoRA → `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`.
+5. **Still needed:** Stronger Tagalog checkpoint when available; optional CT2 live.
 
 ---
 
