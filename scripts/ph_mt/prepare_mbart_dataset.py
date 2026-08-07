@@ -138,6 +138,18 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path("scripts/ph_mt/seed_hiligaynon_en.jsonl"),
     )
+    p.add_argument(
+        "--tl-seed",
+        type=Path,
+        default=Path("scripts/ph_mt/seed_tagalog_en.jsonl"),
+        help="Curated Tagalog meeting-domain seed JSONL",
+    )
+    p.add_argument(
+        "--lang",
+        choices=("all", "tl", "hil"),
+        default="all",
+        help="Keep only Tagalog, only Hiligaynon proxy rows, or both",
+    )
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--dict-limit-per-lang", type=int, default=800)
     p.add_argument("--eval-ratio", type=float, default=0.05)
@@ -157,7 +169,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Tatoeba files missing under {args.tatoeba_dir}", file=sys.stderr)
 
-    if args.hil_seed and args.hil_seed.exists():
+    if args.tl_seed and args.tl_seed.exists():
+        tl_seed = _load_jsonl(args.tl_seed)
+        rows.extend(tl_seed)
+        print(f"Tagalog meeting seed: {len(tl_seed)}")
+
+    if args.hil_seed and args.hil_seed.exists() and args.lang in {"all", "hil"}:
         hil = _load_jsonl(args.hil_seed)
         rows.extend(hil)
         print(f"Hiligaynon seed: {len(hil)}")
@@ -180,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
     seen: set[str] = set()
     unique: list[dict] = []
     for row in rows:
+        lang = (row.get("language") or "tl").strip().lower()
+        if args.lang == "tl" and lang not in {"tl", "tagalog", "fil", "filipino"}:
+            continue
+        if args.lang == "hil" and lang not in {"hil", "hiligaynon", "ilonggo"}:
+            continue
         key = f"{row['src'].lower()}||{row['tgt'].lower()}"
         if key in seen:
             continue

@@ -4,11 +4,23 @@ Smart Meeting’s PH→English path defaults to **NLLB** (better Tagalog codes).
 This guide fine-tunes **mBART-50** with LoRA so you can optionally prefer a
 custom Philippine checkpoint.
 
+## Accuracy reality check
+
+Neural mBART/NLLB **cannot** guarantee 100% Tagalog→English accuracy on open
+speech. Smart Meeting stacks three layers:
+
+| Layer | Coverage | Accuracy |
+|---|---|---|
+| Exact **Tagalog phrase lexicon** (`tagalog_phrases.py` ← `seed_tagalog_en.jsonl`) | Curated board lines | **100%** on exact matches |
+| **NLLB** `tgl_Latn` (default when no strong FT) | Open Tagalog | High (~0.89 F1 on fixtures) |
+| **mBART LoRA** `tl_XX` (`MBART_PH_FINE_TUNED_MODEL`) | Open Tagalog after GPU train | Improves domain residual |
+
 ## Data
 
 | Source | Role |
 |---|---|
 | OPUS Tatoeba `en-tl` | Real Tagalog↔English sentences (~8.7k) |
+| `scripts/ph_mt/seed_tagalog_en.jsonl` | Curated Tagalog **meeting** phrases (lexicon + FT) |
 | FLORES-200 `tgl_Latn` | Held-out chrF/BLEU (not train-only) |
 | OPUS JW300 / GlobalVoices / CCAligned / WikiMatrix | Broader Tagalog parallel |
 | Domain Taglish + meeting transcripts | Critical — web bitext misses spoken code-switch |
@@ -39,21 +51,30 @@ curl -L -o scripts/ph_mt/data/tagalog_dictionary.json \
 curl -L -o scripts/ph_mt/data/hiligaynon_dictionary.json \
   https://raw.githubusercontent.com/luisligunas/pinoy-dictionary-scraper/main/Scraped%20Data/Dictionaries/hiligaynon_dictionary.json
 
-# 3) Build JSONL
+# 3) Build Tagalog-only JSONL (meeting seed + Tatoeba)
 python scripts/ph_mt/prepare_mbart_dataset.py \
   --tatoeba-dir /tmp/opus-tl \
-  --dictionary-dir scripts/ph_mt/data \
-  --hil-seed scripts/ph_mt/seed_hiligaynon_en.jsonl \
-  --output-dir scripts/ph_mt/prepared
+  --tl-seed scripts/ph_mt/seed_tagalog_en.jsonl \
+  --lang tl \
+  --output-dir scripts/ph_mt/prepared_tl
 
-# 4) LoRA fine-tune (GPU strongly recommended)
+# Optional: include Hiligaynon proxy rows too
+#   --hil-seed scripts/ph_mt/seed_hiligaynon_en.jsonl --lang all \
+#   --dictionary-dir scripts/ph_mt/data --output-dir scripts/ph_mt/prepared
+
+# 4) LoRA fine-tune (GPU strongly recommended; CPU smoke: --max-steps 40)
 pip install "transformers>=4.40" datasets accelerate peft sentencepiece protobuf torch
 python scripts/ph_mt/finetune_mbart.py \
-  --train-jsonl scripts/ph_mt/prepared/train.jsonl \
-  --eval-jsonl scripts/ph_mt/prepared/eval.jsonl \
-  --output-dir models/mbart-ph-en-lora \
+  --train-jsonl scripts/ph_mt/prepared_tl/train.jsonl \
+  --eval-jsonl scripts/ph_mt/prepared_tl/eval.jsonl \
+  --output-dir models/mbart-tl-en-lora \
   --num-train-epochs 1 \
   --fp16
+
+# Eval fixtures (lexicon / NLLB / mBART)
+python scripts/ph_mt/eval_tagalog_mt.py \
+  --fixtures scripts/ph_mt/fixtures/tagalog_en_sample.jsonl \
+  --engines lexicon,pipeline,nllb
 
 # 5) Merge adapters into a full checkpoint
 python scripts/ph_mt/merge_lora.py \

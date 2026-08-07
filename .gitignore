@@ -21,6 +21,8 @@ backend/smart_meeting.db
 models/
 scripts/ph_mt/data/*_dictionary.json
 scripts/ph_mt/prepared/
+scripts/ph_mt/prepared_tl/
+scripts/ph_mt/data/
 dump.rdb
 *.db-shm
 *.db-wal

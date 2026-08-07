@@ -2034,6 +2034,20 @@ def _translate_to_english(text: str, source_language: str) -> TranslateResult:
         unit_mass = _token_mass(unit)
         ph_source_mass += unit_mass
 
+        # Exact Tagalog meeting phrases → deterministic English (100% on coverage).
+        if route_lang in {"tl", "unknown"}:
+            try:
+                from . import tagalog_phrases
+
+                exact = tagalog_phrases.lookup_exact(unit)
+            except Exception:
+                exact = None
+            if exact:
+                out_units.append(exact)
+                ph_translated_mass += _token_mass(exact)
+                engines_used.add("tagalog-phrase-lexicon")
+                continue
+
         # Garbled PH ASR (sung lyrics / heavy mishears): do not invent English.
         if _source_looks_like_garbled_ph_asr(unit):
             logger.info(
