@@ -1,0 +1,235 @@
+{
+  "generated_at": "2026-08-07T05:37:00.444999+00:00",
+  "asr": {
+    "engine": "Whisper final (WHISPER_FINAL_MODEL / HF candidates)",
+    "clips": [
+      {
+        "file": "en_meeting.wav",
+        "language": "en",
+        "reference": "The board approved the quarterly budget after a careful review.",
+        "hypothesis": "The board approved the quarterly budget after a careful review",
+        "wer": 0.0,
+        "token_f1": 1.0,
+        "engine": "whisper",
+        "detected_lang": "en",
+        "seconds": 11.28,
+        "pass": true
+      },
+      {
+        "file": "en_action.wav",
+        "language": "en",
+        "reference": "Maria will send the report on Friday before the board meeting.",
+        "hypothesis": "Maria will send the report on Friday before the Board meeting",
+        "wer": 0.0,
+        "token_f1": 1.0,
+        "engine": "whisper",
+        "detected_lang": "en",
+        "seconds": 4.74,
+        "pass": true
+      },
+      {
+        "file": "tl_greeting.wav",
+        "language": "tl",
+        "reference": "Magandang umaga sa lahat. Kailangan nating aprubahan ang budget.",
+        "hypothesis": "Magandang umaga sa lahat kailangan nating aprobahan ang budget",
+        "wer": 0.1111111111111111,
+        "token_f1": 0.8888888888888888,
+        "engine": "whisper",
+        "detected_lang": "tl",
+        "seconds": 20.73,
+        "pass": true
+      }
+    ],
+    "mean_wer": 0.037037037037037035,
+    "mean_token_f1": 0.9629629629629629,
+    "pass_rate": 1.0,
+    "expected": "WER ≤ 0.25 or token-F1 ≥ 0.75 on clean TTS clips",
+    "note": "No in-repo labeled meeting audio; used fresh gTTS 16 kHz mono clips."
+  },
+  "bart": {
+    "engine": "bart-meeting-minutes",
+    "input": "The board approved the quarterly budget after review. Marketing will launch the campaign next week. Facilities will prepare the hall and stage lighting. Security assigned entrance badges for all guests. The chair opened discussion on the annual calendar carefully.",
+    "output": "Discussion\n• Board meeting discussion and decisions.\n• The chair opened discussion on the annual calendar carefully.\n• Board meeting discussion and decisions.\n\nDecisions\n• The board approved the quarterly budget after review.\n• Board met to discuss and decide on the budget for the next quarter.\n• The board approved the quarterly budget after review.\n\nAction items\n• Marketing will launch the campaign next week.\n• Marketing will launch the campaign next week.\n• Facilities will prepare the hall and stage lighting.\n• Security assigned entrance badges for all guests.",
+    "seconds": 8.36,
+    "structure": {
+      "expected_sections": [
+        "Discussion",
+        "Decisions",
+        "Action items"
+      ],
+      "found": [
+        "Discussion",
+        "Decisions",
+        "Action items"
+      ],
+      "ok": true
+    },
+    "content": {
+      "hits": [
+        "budget",
+        "Marketing",
+        "campaign",
+        "calendar"
+      ],
+      "misses": [],
+      "coverage": 1.0
+    },
+    "general_kind": {
+      "engine": "bart-general-general",
+      "no_minutes_bucketing": true,
+      "sample_head": "• The board approved the quarterly budget after review.\n• Marketing will launch the campaign next week.\n• Summarize the following.\n• The board agreed to a quarterly budget of $1.2 million.\n• The board approved the quarterly budget after review.\n• Marketing will launch the campaign next week.\n• Facil"
+    },
+    "pass": true,
+    "expected": "meeting → Discussion/Decisions/Action items; ≥50% key content; general skips minutes buckets"
+  },
+  "mbart_nllb": {
+    "tagalog_pipeline": {
+      "mean_token_f1": 0.8873847926267281,
+      "pass": true,
+      "expected": "mean token-F1 ≥ 0.40 (vs stock id_ID~0.34 / tl_XX~0.43)",
+      "rows": [
+        {
+          "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "Good morning to all who attended the meeting.",
+          "engine": "nllb-200",
+          "token_f1": 0.875,
+          "seconds": 8.68
+        },
+        {
+          "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "We need to approve the budget for the next quarter.",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 1.58
+        },
+        {
+          "src": "Si Maria ang magiging responsible sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria will be responsible for the follow-up.",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 0.98
+        },
+        {
+          "src": "Mayroon bang katanungan tungkol sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "Are there any questions about the agenda?",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 0.79
+        },
+        {
+          "src": "Salamat sa inyong oras. Meeting adjourned.",
+          "ref": "Thank you for your time. Meeting adjourned.",
+          "hyp": "Thank you for your time. Meeting adjourned.",
+          "engine": "nllb-200+passthrough-english",
+          "token_f1": 1.0,
+          "seconds": 0.61
+        },
+        {
+          "src": "Pwede ba nating i-move ang botohan sa susunod na linggo dahil kulang pa ang dokumento?",
+          "ref": "Can we move the vote to next week because the documents are still incomplete?",
+          "hyp": "Can we? Keep moving. Can we? Keep moving. The vote next week because the document is still missing?",
+          "engine": "nllb-200",
+          "token_f1": 0.5625000000000001,
+          "seconds": 2.6
+        },
+        {
+          "src": "Sige, i-record natin na ang action item ay kay Juan bago ang deadline.",
+          "ref": "Alright, let's record that the action item is for Juan before the deadline.",
+          "hyp": "That's all right. That's all right. Let's record that the action item is for Juan before the deadline.",
+          "engine": "nllb-200",
+          "token_f1": 0.7741935483870968,
+          "seconds": 2.47
+        }
+      ]
+    },
+    "hiligaynon_pipeline": {
+      "mean_token_f1": 0.7239121989121989,
+      "pass": true,
+      "expected": "mean token-F1 ≥ 0.30 (Google if configured; else NLLB/mBART)",
+      "rows": [
+        {
+          "src": "Maayong aga sa tanan nga nag-atendir sang miting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "Good morning to all who attended the meeting.",
+          "engine": "nllb-200",
+          "token_f1": 0.875,
+          "seconds": 0.91
+        },
+        {
+          "src": "Kinahanglan naton aprubahan ang budget para sa masunod nga quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "We need to approve the budget for the next quarter.",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 1.11
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria is responsible for the follow-up.",
+          "engine": "nllb-200",
+          "token_f1": 0.7999999999999999,
+          "seconds": 0.9
+        },
+        {
+          "src": "May pamangkot bala parte sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "Is that part of the agenda?",
+          "engine": "nllb-200",
+          "token_f1": 0.30769230769230765,
+          "seconds": 0.76
+        },
+        {
+          "src": "Salamat sa inyo nga oras. Tapos na ang miting.",
+          "ref": "Thank you for your time. The meeting is over.",
+          "hyp": "Thank you for your time.. The meeting was over.",
+          "engine": "nllb-200",
+          "token_f1": 0.8888888888888888,
+          "seconds": 1.16
+        },
+        {
+          "src": "Indi gid naton magdesisyon subong kon wala pa ang report sang komite.",
+          "ref": "We really should not decide today if the committee report is not yet available.",
+          "hyp": "We cannot make decisions without the committee's report.",
+          "engine": "nllb-200",
+          "token_f1": 0.2727272727272727,
+          "seconds": 1.07
+        },
+        {
+          "src": "Maayong hapon; palihog i-record ang action item kay Ana antes magtapos ang miting.",
+          "ref": "Good afternoon; please record the action item for Ana before the meeting ends.",
+          "hyp": "Good afternoon; please record the action item to Ana before the meeting ends.",
+          "engine": "nllb-200",
+          "token_f1": 0.9230769230769231,
+          "seconds": 1.38
+        }
+      ]
+    },
+    "stock_mbart_tag_isolation": {
+      "tl_XX": 0.3941,
+      "id_ID": 0.3236
+    },
+    "historical_stock_baseline": {
+      "tl_XX": {
+        "n": 5,
+        "token_f1_mean": 0.4301,
+        "token_f1_median": 0.3077
+      },
+      "id_ID": {
+        "n": 5,
+        "token_f1_mean": 0.3398,
+        "token_f1_median": 0.4
+      }
+    }
+  },
+  "verdict": {
+    "asr": "PASS",
+    "bart": "PASS",
+    "translation_tagalog": "PASS",
+    "translation_hiligaynon": "PASS"
+  }
+}
