@@ -102,12 +102,14 @@ Confirms **`tl_XX` > `id_ID`**; production Tagalog path correctly prefers NLLB (
 
 | Component | Function check | Accuracy vs expected | Verdict |
 |---|---|---|---|
-| **Whisper ASR** | Final+live load & decode | EN med WER~0.00/0.00; TL med 0.22 (unstable) | **PASS** | EN WER 0; TL WER 0.11 | **PASS** |
+| **Whisper ASR** | Final+live load & decode | EN med WER 0; TL med 0.22 (unstable 80%) | **PASS*** |
 | **BART** | Meeting minutes + general kind | Structure + 100% key content | **PASS** (dupe noise) |
 | **NLLB/mBART MT** | Three-way route | TL F1 0.89; Hil F1 0.72 | **PASS** (configure Google for Hil) |
 
+\*ASR overall median bar passes; Tagalog trial variance and Hiligaynon proxy weakness remain (see `ASR_REVIEW.md`).
+
 ### Recommended follow-ups
-1. ASR: run WER on real Hiligaynon/Tagalog meeting labels (PLD / board clips).  
-2. BART: strip frame-prefix leakage and tighten bullet dedupe.  
-3. Hiligaynon MT: enable Google Cloud Translation; keep NLLB/mBART as fallback only.  
-4. Do not deploy provisional mBART PH fine-tunes until GPU GO (see prior `data/mbart_ph_ft` work if present on other branches).
+1. ASR: stabilize Tagalog candidate selection (wrong-script tokens on some runs).
+2. ASR: WER on real Hiligaynon/Tagalog meeting labels (PLD / board clips); wire LoRA merge into `WHISPER_HILIGAYNON_FINE_TUNED_MODEL`.
+3. BART: strip frame-prefix leakage and tighten bullet dedupe.
+4. Hiligaynon MT: enable Google Cloud Translation; keep NLLB/mBART as fallback only.
