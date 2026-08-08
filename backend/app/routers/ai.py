@@ -18,10 +18,24 @@ from ..schemas import (
     TranslateRequest,
     TranslateResponse,
 )
-from ..services import action_items, glossary, llm, pipeline_metrics
+from ..services import action_items, glossary, llm, mbart_dialect, pipeline_metrics
 from ..services.ai_quality import dump_faithfulness
+from ..services.attendees import load_attendees
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+
+def _meeting_mbart_context(meeting: Meeting):
+    """Bind SmartScribe MBART_SYSTEM_PROMPT context for pre-mBART normalize."""
+    try:
+        participants = load_attendees(meeting.attendees)
+    except Exception:
+        participants = []
+    return mbart_dialect.meeting_context(
+        source_lang=meeting.language or "auto",
+        meeting_title=meeting.title or "Untitled meeting",
+        participants=participants,
+    )
 
 
 @router.get("/languages")
@@ -43,8 +57,6 @@ def _meeting_glossary(meeting: Meeting) -> list[str]:
     terms = glossary.load_glossary(getattr(meeting, "translation_glossary_json", None))
     # Attendee names are always do-not-translate.
     try:
-        from ..services.attendees import load_attendees
-
         terms = glossary.load_glossary(terms + load_attendees(meeting.attendees))
     except Exception:
         pass
@@ -70,20 +82,21 @@ def summarize(
     if not payload.force_retranslate:
         cached_english = (meeting.translation or "").strip() or None
     try:
-        with pipeline_metrics.track("summarize"):
-            (
-                summary,
-                summary_engine,
-                english,
-                translate_engine,
-                mt_review,
-            ) = llm.summarize_to_english(
-                protected_source if not cached_english else source,
-                source_language=meeting.language or "auto",
-                output_format=payload.output_format,
-                existing_english=cached_english,
-                source_kind=payload.source_kind or "meeting",
-            )
+        with _meeting_mbart_context(meeting):
+            with pipeline_metrics.track("summarize"):
+                (
+                    summary,
+                    summary_engine,
+                    english,
+                    translate_engine,
+                    mt_review,
+                ) = llm.summarize_to_english(
+                    protected_source if not cached_english else source,
+                    source_language=meeting.language or "auto",
+                    output_format=payload.output_format,
+                    existing_english=cached_english,
+                    source_kind=payload.source_kind or "meeting",
+                )
     except llm.LLMUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
@@ -136,14 +149,15 @@ def translate(
     gloss = _meeting_glossary(meeting)
     protected, gloss_map = glossary.protect(source, gloss)
     try:
-        with pipeline_metrics.track("translate"):
-            tr = llm.translate(
-                protected,
-                target_language=payload.target_language,
-                source_language=meeting.language or "auto",
-            )
-            translated, engine = tr.text, tr.engine
-            mt_review = list(tr.review_lines or [])
+        with _meeting_mbart_context(meeting):
+            with pipeline_metrics.track("translate"):
+                tr = llm.translate(
+                    protected,
+                    target_language=payload.target_language,
+                    source_language=meeting.language or "auto",
+                )
+                translated, engine = tr.text, tr.engine
+                mt_review = list(tr.review_lines or [])
     except llm.LLMUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)

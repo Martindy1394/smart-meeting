@@ -1479,6 +1479,19 @@ def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
     if src == "en_XX" and tgt == "en_XX":
         return text.strip()
 
+    # SmartScribe MBART_SYSTEM_PROMPT rules → deterministic pre-encode cleanup.
+    # mBART cannot consume chat system prompts; normalization stabilizes dialect
+    # ASR before ``tl_XX`` / proxy encode (see mbart_dialect.py).
+    if bool(getattr(settings, "mbart_dialect_normalize", True)) and src != "en_XX":
+        try:
+            from . import mbart_dialect
+
+            text = mbart_dialect.normalize_for_mbart(
+                text, source_lang=src_code or src
+            )
+        except Exception:
+            logger.debug("mBART dialect normalize skipped", exc_info=True)
+
     bos_id = tokenizer.lang_code_to_id.get(tgt)
     if bos_id is None:
         bos_id = tokenizer.convert_tokens_to_ids(tgt)

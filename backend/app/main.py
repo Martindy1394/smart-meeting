@@ -82,6 +82,9 @@ def _build_pipeline_status() -> dict:
             "mbart_ph_finetuned": bool(
                 (settings.mbart_ph_finetuned_model or "").strip()
             ),
+            "mbart_dialect_normalize": bool(
+                getattr(settings, "mbart_dialect_normalize", True)
+            ),
             "router": "en-passthrough / tl→nllb / hil→google",
             "google_translate_enabled": bool(settings.google_translate_enabled),
             "google_translate_configured": google_translate.is_configured(),

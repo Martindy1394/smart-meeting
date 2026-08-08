@@ -187,6 +187,10 @@ class Settings(BaseSettings):
     # Train on native ``tl_XX`` (see docs/FINE_TUNE_MBART_PH.md). Hiligaynon has
     # no mBART token — fine-tune can only proxy it under ``tl_XX``.
     mbart_ph_finetuned_model: str = ""
+    # Pre-mBART dialect normalizer (SmartScribe MBART_SYSTEM_PROMPT rules).
+    # mBART cannot take chat system prompts — we apply filler cleanup, Taglish
+    # stabilization, and NAPAGPASYAHAN/AKSYON labels before encode.
+    mbart_dialect_normalize: bool = True
     # auto | nllb | mbart — Tagalog/mixed backend preference.
     # auto: fine-tuned mBART first when configured, otherwise NLLB.
     # Stock mBART Tagalog uses native ``tl_XX`` (not id_ID) — see docs/MBART_PH_AUDIT.md.
