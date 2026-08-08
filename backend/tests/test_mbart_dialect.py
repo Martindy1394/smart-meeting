@@ -56,6 +56,9 @@ def test_decision_and_action_labels():
     out_a = normalize_for_mbart(action, source_lang="tl")
     assert out_a.startswith("AKSYON:")
     assert "Juan" in out_a
+    assert "Biyernes" in out_a
+    # Person should not be duplicated as "Juan – kay Juan …".
+    assert out_a.lower().count("juan") == 1
 
 
 def test_meeting_context_binds_for_prompt():

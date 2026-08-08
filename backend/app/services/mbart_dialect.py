@@ -228,15 +228,14 @@ def _label_decision_action(text: str) -> str:
             task,
             flags=re.I,
         )
-        task = re.sub(r"\s{2,}", " ", task).strip(" –-.,;")
-        # Keep person/deadline inside the task clause; prefix person when known.
-        if person and person.lower() not in task.lower():
-            body = " – ".join(p for p in (person, task or raw, deadline) if p)
-        else:
-            body = " – ".join(p for p in (person, task or raw) if p)
-            if deadline and deadline.lower() not in body.lower():
-                body = f"{body} – {deadline}"
-        return f"AKSYON: {body}"
+        task = re.sub(r"\s{2,}", " ", task).strip(" –-.,;") or raw
+        # Avoid duplicating the person when already present in the clause.
+        if person and person.lower() in task.lower():
+            return f"AKSYON: {task}"
+        parts = [p for p in (person, task) if p]
+        if deadline and deadline.lower() not in task.lower():
+            parts.append(deadline)
+        return "AKSYON: " + " – ".join(parts)
 
     if _DECISION_CUE_RE.search(raw):
         body = re.sub(
