@@ -222,29 +222,20 @@ def _label_decision_action(text: str) -> str:
             raw,
             flags=re.I,
         )
-        if person:
-            task = re.sub(
-                rf"\b(?:kay|ni|si)\s+{re.escape(person)}\b",
-                "",
-                task,
-                flags=re.I,
-            )
-        if deadline:
-            task = re.sub(re.escape(deadline), "", task, flags=re.I)
-            task = re.sub(
-                r"\b(?:bago ang|before|sa|on)\s*$",
-                "",
-                task,
-                flags=re.I,
-            )
         task = re.sub(
-            r"\b(?:ang\s+)?(?:action item|aksyon)\s+ay\s+",
+            r"^(?:ang\s+)?(?:action item|aksyon)\s+ay\s+",
             "",
             task,
             flags=re.I,
         )
         task = re.sub(r"\s{2,}", " ", task).strip(" –-.,;")
-        body = " – ".join(p for p in (person, task or raw, deadline) if p)
+        # Keep person/deadline inside the task clause; prefix person when known.
+        if person and person.lower() not in task.lower():
+            body = " – ".join(p for p in (person, task or raw, deadline) if p)
+        else:
+            body = " – ".join(p for p in (person, task or raw) if p)
+            if deadline and deadline.lower() not in body.lower():
+                body = f"{body} – {deadline}"
         return f"AKSYON: {body}"
 
     if _DECISION_CUE_RE.search(raw):
