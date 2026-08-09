@@ -313,6 +313,12 @@ _COMMON_PH_CONTENT = frozenset(
         "pretend", "assume", "everything", "somehow", "eventually", "admit",
         "perhaps", "course", "without", "follow", "allow", "son", "need",
         "don't", "dont", "show", "able",
+        # Frequent Tagalog meeting open-class words (reduce false "unknown ASR").
+        "pasalamatan", "dumalo", "ating", "regular", "pagpupulong", "ngayong",
+        "umaga", "upang", "usapan", "isyu", "tungkol", "pasilidad", "basahin",
+        "muna", "minutes", "nakaraang", "corrections", "ipaalam", "sekretarya",
+        "resolusyon", "nagkaisa", "araw", "pasilidad", "pagpupulong", "kong",
+        "gusto", "una", "mga", "lahat",
     }
 )
 
@@ -1663,6 +1669,12 @@ def _source_looks_like_garbled_ph_asr(text: str) -> bool:
 
     Translating that salad through NLLB/mBART invents fluent English nonsense
     (garden / home / born …). Prefer keeping the source as ``[untranslated:]``.
+
+    Important gap (fixed): open-class Tagalog meeting words
+    (``pasalamatan``, ``pagpupulong``, …) are often absent from the small
+    known lexicon, so ``unknown_ratio`` alone false-triggered on *real*
+    Tagalog and skipped mBART entirely → ``[untranslated:…]``. Clear
+    Tagalog/Hiligaynon scaffold from ``lang_router`` must still go to MT.
     """
     raw = (text or "").strip()
     if not raw:
@@ -1671,6 +1683,26 @@ def _source_looks_like_garbled_ph_asr(text: str) -> bool:
     # Clear English clauses are never "garbled PH ASR".
     if en >= 0.12 and en >= fi + 0.04:
         return False
+    # Real PH prose (strong, non-ambiguous markers) is not ASR salad even when
+    # many content words are OOV to our tiny meeting lexicon.
+    try:
+        from . import lang_router
+
+        route = lang_router.classify_line(raw)
+        tl = float((route.scores or {}).get("tl", 0) or 0)
+        hil = float((route.scores or {}).get("hil", 0) or 0)
+        if (
+            route.language in {"tl", "hil"}
+            and not route.uncertain
+            and (
+                float(route.confidence or 0) >= 0.20
+                or (route.language == "tl" and tl >= 0.15)
+                or (route.language == "hil" and hil >= 0.15)
+            )
+        ):
+            return False
+    except Exception:
+        pass
     toks = _content_tokens(raw)
     if len(toks) < 8:
         return False

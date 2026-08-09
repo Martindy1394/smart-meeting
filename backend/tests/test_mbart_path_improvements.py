@@ -67,3 +67,33 @@ def test_mbart_path_uses_exact_lexicon_before_model():
     with patch.object(llm._pipelines, "mbart", side_effect=_boom):
         out = llm._mbart_translate(src, "tl", "en")
     assert out == expected
+
+
+def test_clear_tagalog_reaches_mbart_not_untranslated_marker():
+    """Gap fix: clear Tagalog prose must call mBART, not keep [untranslated:]."""
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.services import llm
+
+    prose = (
+        "Una sa lahat gusto kong pasalamatan ang lahat ng dumalo sa ating "
+        "regular na pagpupulong ngayong umaga upang pag-usapan ang mga isyu "
+        "tungkol sa pasilidad."
+    )
+    calls: list[tuple] = []
+
+    def fake_mbart(text, src, tgt):
+        calls.append((text, src, tgt))
+        return "First of all I want to thank everyone who attended our regular meeting this morning to discuss facility issues."
+
+    with (
+        patch.object(settings, "ph_translate_backend", "mbart"),
+        patch.object(llm, "_mbart_translate", side_effect=fake_mbart),
+        patch("app.services.tagalog_phrases.lookup_exact", return_value=None),
+    ):
+        tr = llm._translate_to_english(prose, "tl")
+
+    assert calls, "mBART must be invoked for clear Tagalog prose"
+    assert "[untranslated:" not in (tr.text or "").lower()
+    assert "thank" in (tr.text or "").lower() or "facility" in (tr.text or "").lower()

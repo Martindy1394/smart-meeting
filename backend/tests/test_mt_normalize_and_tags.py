@@ -78,6 +78,23 @@ def test_garbled_ph_asr_lyric_salad_detected():
     assert _source_looks_like_garbled_ph_asr(clean) is False
 
 
+def test_clear_tagalog_prose_not_garbled_asr():
+    """Open-class Tagalog must reach mBART — not short-circuit to [untranslated:]."""
+    from app.services.llm import _source_looks_like_garbled_ph_asr
+
+    prose = (
+        "Una sa lahat gusto kong pasalamatan ang lahat ng dumalo sa ating "
+        "regular na pagpupulong ngayong umaga upang pag-usapan ang mga isyu "
+        "tungkol sa pasilidad."
+    )
+    assert _source_looks_like_garbled_ph_asr(prose) is False
+    minutes = (
+        "Basahin muna ang minutes ng nakaraang meeting at kung may "
+        "corrections ay ipaalam sa sekretarya."
+    )
+    assert _source_looks_like_garbled_ph_asr(minutes) is False
+
+
 def test_garbled_lyric_kept_untranslated_not_garden_hallucination():
     """ACCO-style sung ASR must not become fluent English nonsense."""
     from app.services import llm

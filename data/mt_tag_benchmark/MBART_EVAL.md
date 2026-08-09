@@ -42,3 +42,14 @@ python scripts/ph_mt/eval_tagalog_mt.py --engines mbart \
   mBART engine is selected or used as a fallback.
 - Do **not** wire the provisional CPU LoRA (`MBART_PH_FINE_TUNED_MODEL`) until a
   GPU merge beats NLLB on held-out meeting lines.
+
+## `[untranslated:]` gap (fixed)
+
+Clear Tagalog meeting prose was sometimes kept as `[untranslated:…]` **without
+calling mBART**. Cause: `_source_looks_like_garbled_ph_asr` used only
+`unknown_ratio` against a tiny lexicon — open-class Tagalog
+(`pasalamatan`, `pagpupulong`, …) looked like ASR salad.
+
+Fix: if `lang_router` marks the clause as clear, non-ambiguous Tagalog/
+Hiligaynon, skip the garble short-circuit and let mBART/NLLB translate.
+True lyric ASR salad (ambiguous / low marker confidence) still keeps source.
