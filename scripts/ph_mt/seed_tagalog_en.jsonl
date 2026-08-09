@@ -1,0 +1,60 @@
+{"src": "Magandang umaga sa lahat ng dumalo sa meeting.", "tgt": "Good morning to everyone who attended the meeting.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.", "tgt": "We need to approve the budget for the next quarter.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Si Maria ang magiging responsible sa follow-up.", "tgt": "Maria will be responsible for the follow-up.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Mayroon bang katanungan tungkol sa agenda?", "tgt": "Are there any questions about the agenda?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Salamat sa inyong oras. Meeting adjourned.", "tgt": "Thank you for your time. Meeting adjourned.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Pwede ba nating i-move ang botohan sa susunod na linggo dahil kulang pa ang dokumento?", "tgt": "Can we move the vote to next week because the documents are still incomplete?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Sige, i-record natin na ang action item ay kay Juan bago ang deadline.", "tgt": "Alright, let's record that the action item is for Juan before the deadline.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Simulan na natin ang meeting.", "tgt": "Let us start the meeting.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Basahin muna ang minutes ng nakaraang meeting.", "tgt": "Please read the minutes of the previous meeting first.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Mayroon bang corrections sa minutes?", "tgt": "Are there any corrections to the minutes?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Kung wala, aprubahan natin ang minutes.", "tgt": "If there are none, let us approve the minutes.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Ang unang agenda ay ang quarterly budget.", "tgt": "The first agenda item is the quarterly budget.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Ipinapanukala kong aprubahan ang budget.", "tgt": "I move to approve the budget.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "May second ba?", "tgt": "Is there a second?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Lahat ng sang-ayon, magtaas ng kamay.", "tgt": "All in favor, please raise your hand.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Naaprubahan ang mosyon.", "tgt": "The motion is approved.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-table muna natin ang usaping ito.", "tgt": "Let us table this matter for now.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Kailangan nating magdesisyon ngayon.", "tgt": "We need to decide today.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Ipaabot ang report sa komite bago ang Biyernes.", "tgt": "Please submit the report to the committee before Friday.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Sino ang responsable sa action item na ito?", "tgt": "Who is responsible for this action item?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Ang deadline ay sa susunod na linggo.", "tgt": "The deadline is next week.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Pakilagay sa minutes ang desisyon.", "tgt": "Please put the decision in the minutes.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "May komento ba ang board?", "tgt": "Does the board have any comments?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Sumasang-ayon ako sa mungkahi.", "tgt": "I agree with the proposal.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Hindi ako sang-ayon sa budget na ito.", "tgt": "I do not agree with this budget.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Maaari ba nating ipagpaliban ang botohan?", "tgt": "Can we postpone the vote?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Kulang pa ang dokumento para sa review.", "tgt": "The documents for review are still incomplete.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-presenta ang financial report.", "tgt": "Please present the financial report.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Tapos na ang discussion sa agenda item na ito.", "tgt": "Discussion on this agenda item is finished.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Magpatuloy tayo sa susunod na agenda.", "tgt": "Let us proceed to the next agenda item.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "May other matters ba?", "tgt": "Are there any other matters?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Wala nang ibang usapan. Meeting adjourned.", "tgt": "There are no other matters. Meeting adjourned.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Salamat sa lahat. Magandang araw.", "tgt": "Thank you everyone. Good day.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Pakisuri ang attendance.", "tgt": "Please check the attendance.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Nasa quorum ba tayo?", "tgt": "Do we have a quorum?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Oo, may quorum.", "tgt": "Yes, we have a quorum.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-assign kay Ana ang follow-up sa facilities.", "tgt": "Assign the facilities follow-up to Ana.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Kailangan ng budget amendment.", "tgt": "A budget amendment is needed.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-approve ang resolusyon.", "tgt": "Approve the resolution.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-reject ang proposal.", "tgt": "Reject the proposal.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Mag-break muna tayo ng limang minuto.", "tgt": "Let us take a five-minute break.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Bumalik na tayo sa session.", "tgt": "Let us return to the session.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Pakipasa ang micropono.", "tgt": "Please pass the microphone.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Hindi ko marinig. Pakiulit.", "tgt": "I cannot hear. Please repeat.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Para sa record, sumasang-ayon ako.", "tgt": "For the record, I agree.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-defer natin ito sa next meeting.", "tgt": "Let us defer this to the next meeting.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Kailangan ng legal opinion bago bumoto.", "tgt": "A legal opinion is needed before voting.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-circulate ang draft resolution.", "tgt": "Please circulate the draft resolution.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Ang chair ang magpapasya.", "tgt": "The chair will decide.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Walang objection. Approved.", "tgt": "No objection. Approved.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-note ang concern ng members.", "tgt": "Note the members' concern.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Maganda ang punto mo.", "tgt": "That is a good point.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Kailangan nating maging transparent.", "tgt": "We need to be transparent.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-submit ang liquidation report.", "tgt": "Submit the liquidation report.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Ang next meeting ay sa Lunes.", "tgt": "The next meeting is on Monday.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Pakipirma ang attendance sheet.", "tgt": "Please sign the attendance sheet.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "May conflict of interest ba?", "tgt": "Is there a conflict of interest?", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-abstain ako sa botohan.", "tgt": "I abstain from the vote.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "I-call to order ang meeting.", "tgt": "Call the meeting to order.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}
+{"src": "Tapos na ang meeting.", "tgt": "The meeting is finished.", "src_lang": "tl_XX", "tgt_lang": "en_XX", "language": "tl", "source": "meeting-seed"}

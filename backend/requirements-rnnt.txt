@@ -1,0 +1,13 @@
+# Optional NeMo RNN-T / FastConformer live ASR (Tagalog hybrid transducer).
+# Install separately — NeMo is large and not required for Whisper final ASR.
+#
+#   pip install -r requirements-rnnt.txt
+#
+# Then set in .env:
+#   WHISPER_LIVE_BACKEND=auto
+#   RNNT_LIVE_MODEL=NCSpeech/stt_tl_fastconformer_hybrid_large
+#
+# GPU strongly recommended for real-time live captions.
+
+nemo_toolkit[asr]>=1.23.0
+huggingface_hub>=0.23.0

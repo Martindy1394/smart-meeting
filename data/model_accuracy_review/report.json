@@ -1,0 +1,607 @@
+{
+  "generated_at": "2026-08-07T07:09:43.934684+00:00",
+  "asr": {
+    "generated_at": "2026-08-07T07:09:43.934684+00:00",
+    "path": "app.services.asr.transcribe_file \u2192 transcription.transcribe_final",
+    "trials_per_clip": 5,
+    "scoring": "Clip pass = median trial meets WER\u22640.25 or token-F1\u22650.75",
+    "runtime": {
+      "whisper_available": true,
+      "final_backend": "auto",
+      "final_model": "medium",
+      "tagalog_model": "LWobole/whisper-small-tagalog",
+      "tagalog_hf_candidates": [
+        "LWobole/whisper-small-tagalog",
+        "rbcurzon/whisper-medium-ph"
+      ],
+      "hiligaynon_model": "rbcurzon/whisper-medium-ph",
+      "hiligaynon_hf_candidates": [
+        "rbcurzon/whisper-medium-ph"
+      ],
+      "hiligaynon_fine_tuned": null,
+      "hil_language_arg": null,
+      "tl_language_arg": "tl",
+      "en_language_arg": "en"
+    },
+    "clips": [
+      {
+        "file": "en_meeting.wav",
+        "language": "en",
+        "reference": "The board approved the quarterly budget after a careful review.",
+        "acoustic_proxy": false,
+        "trials": [
+          {
+            "trial": 1,
+            "hypothesis": "Approved the quarterly budget after a careful review",
+            "wer": 0.2,
+            "token_f1": 0.9411764705882353,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 8.23,
+            "pass": true
+          },
+          {
+            "trial": 2,
+            "hypothesis": "The Board approved the quarterly budget after a careful review",
+            "wer": 0.0,
+            "token_f1": 1.0,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 4.96,
+            "pass": true
+          },
+          {
+            "trial": 3,
+            "hypothesis": "The board approved the quarterly budget after a careful review",
+            "wer": 0.0,
+            "token_f1": 1.0,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 4.95,
+            "pass": true
+          },
+          {
+            "trial": 4,
+            "hypothesis": "The board approved the quarterly budget after a careful review",
+            "wer": 0.0,
+            "token_f1": 1.0,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 5.08,
+            "pass": true
+          },
+          {
+            "trial": 5,
+            "hypothesis": "The board approved the quarterly budget after a careful review",
+            "wer": 0.0,
+            "token_f1": 1.0,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 5.19,
+            "pass": true
+          }
+        ],
+        "median_wer": 0.0,
+        "median_token_f1": 1.0,
+        "median_hypothesis": "The board approved the quarterly budget after a careful review",
+        "best_wer": 0.0,
+        "worst_wer": 0.2,
+        "pass_rate": 1.0,
+        "pass": true,
+        "note": null
+      },
+      {
+        "file": "en_action.wav",
+        "language": "en",
+        "reference": "Maria will send the report on Friday before the board meeting.",
+        "acoustic_proxy": false,
+        "trials": [
+          {
+            "trial": 1,
+            "hypothesis": "Maria will send the report on Friday before the board meeting",
+            "wer": 0.0,
+            "token_f1": 1.0,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 0.9879978895187378,
+            "seconds": 5.31,
+            "pass": true
+          },
+          {
+            "trial": 2,
+            "hypothesis": "Mariaa will send the report on Friday before the board meeting",
+            "wer": 0.09090909090909091,
+            "token_f1": 0.9,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 5.05,
+            "pass": true
+          },
+          {
+            "trial": 3,
+            "hypothesis": "Maria will send the report on Friday before!\"",
+            "wer": 0.2727272727272727,
+            "token_f1": 0.888888888888889,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 0.9794880747795105,
+            "seconds": 5.17,
+            "pass": true
+          },
+          {
+            "trial": 4,
+            "hypothesis": "Maria will send the report on Friday before the board meeting",
+            "wer": 0.0,
+            "token_f1": 1.0,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 5.17,
+            "pass": true
+          },
+          {
+            "trial": 5,
+            "hypothesis": "Maria will send the report on Friday before the board meeting",
+            "wer": 0.0,
+            "token_f1": 1.0,
+            "engine": "whisper",
+            "detected_lang": "en",
+            "language_confidence": 1.0,
+            "seconds": 5.07,
+            "pass": true
+          }
+        ],
+        "median_wer": 0.0,
+        "median_token_f1": 1.0,
+        "median_hypothesis": "Maria will send the report on Friday before the board meeting",
+        "best_wer": 0.0,
+        "worst_wer": 0.2727272727272727,
+        "pass_rate": 1.0,
+        "pass": true,
+        "note": null
+      },
+      {
+        "file": "tl_greeting.wav",
+        "language": "tl",
+        "reference": "Magandang umaga sa lahat. Kailangan nating aprubahan ang budget.",
+        "acoustic_proxy": false,
+        "trials": [
+          {
+            "trial": 1,
+            "hypothesis": "Magandang umaga sa lahat kailangan natin nating gawin ang budget",
+            "wer": 0.2222222222222222,
+            "token_f1": 0.8421052631578948,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 1.0,
+            "seconds": 13.56,
+            "pass": true
+          },
+          {
+            "trial": 2,
+            "hypothesis": "Ang umaga sa lahat, kailangan nating aprobahan\ufffd\ub3c4 ang budget",
+            "wer": 0.2222222222222222,
+            "token_f1": 0.823529411764706,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 1.0,
+            "seconds": 10.18,
+            "pass": true
+          },
+          {
+            "trial": 3,
+            "hypothesis": "magandang umaga sa lahat kailangan nating apropahan ang budget",
+            "wer": 0.1111111111111111,
+            "token_f1": 0.8888888888888888,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": null,
+            "seconds": 9.42,
+            "pass": true
+          },
+          {
+            "trial": 4,
+            "hypothesis": "Magandang umaga sa c\u00e1i lang nating aprobahan ang budget",
+            "wer": 0.3333333333333333,
+            "token_f1": 0.6666666666666666,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 1.0,
+            "seconds": 11.63,
+            "pass": false
+          },
+          {
+            "trial": 5,
+            "hypothesis": "Magandang umaga sa lahat, kailangan nating aprobahan ang budget",
+            "wer": 0.1111111111111111,
+            "token_f1": 0.8888888888888888,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 0.9804712533950806,
+            "seconds": 11.05,
+            "pass": true
+          }
+        ],
+        "median_wer": 0.2222222222222222,
+        "median_token_f1": 0.8421052631578948,
+        "median_hypothesis": "Magandang umaga sa lahat kailangan natin nating gawin ang budget",
+        "best_wer": 0.1111111111111111,
+        "worst_wer": 0.3333333333333333,
+        "pass_rate": 0.8,
+        "pass": true,
+        "note": null
+      },
+      {
+        "file": "hil_meeting.wav",
+        "language": "hil",
+        "reference": "Maayong aga sa tanan. Kinahanglan naton aprubahan ang budget sang board.",
+        "acoustic_proxy": true,
+        "trials": [
+          {
+            "trial": 1,
+            "hypothesis": "Mayong aga sa tanan, kinahanglin Nathan aprobahan ang budget sang board",
+            "wer": 0.36363636363636365,
+            "token_f1": 0.6363636363636364,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 0.987930417060852,
+            "seconds": 6.92,
+            "pass": false
+          },
+          {
+            "trial": 2,
+            "hypothesis": "Mayong aga sa tanan Kinahang lan natin aprobahan ang bang board",
+            "wer": 0.6363636363636364,
+            "token_f1": 0.45454545454545453,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 0.9240468144416809,
+            "seconds": 6.88,
+            "pass": false
+          },
+          {
+            "trial": 3,
+            "hypothesis": "Mayong aga sa tanan, kinahang lanit at aprobahanan ang budget sang board",
+            "wer": 0.45454545454545453,
+            "token_f1": 0.6086956521739131,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 0.9229742288589478,
+            "seconds": 6.89,
+            "pass": false
+          },
+          {
+            "trial": 4,
+            "hypothesis": "mayong aga sa tanan kinahanglan niten aprubahan ang budget sang board",
+            "wer": 0.18181818181818182,
+            "token_f1": 0.8181818181818182,
+            "engine": "whisper",
+            "detected_lang": "hil",
+            "language_confidence": null,
+            "seconds": 6.73,
+            "pass": true
+          },
+          {
+            "trial": 5,
+            "hypothesis": "Mayo \u0111\u00f3, aga sa tanan... Kinahanglin ni, tinaprobahan ang budget",
+            "wer": 0.6363636363636364,
+            "token_f1": 0.47619047619047616,
+            "engine": "whisper",
+            "detected_lang": "tl",
+            "language_confidence": 0.9529383778572083,
+            "seconds": 6.66,
+            "pass": false
+          }
+        ],
+        "median_wer": 0.45454545454545453,
+        "median_token_f1": 0.6086956521739131,
+        "median_hypothesis": "Mayong aga sa tanan, kinahang lanit at aprobahanan ang budget sang board",
+        "best_wer": 0.18181818181818182,
+        "worst_wer": 0.6363636363636364,
+        "pass_rate": 0.2,
+        "pass": false,
+        "note": "Hiligaynon orthography via Filipino TTS"
+      }
+    ],
+    "live_smoke": {
+      "file": "en_action.wav",
+      "language": "en",
+      "pass_type": "live",
+      "reference": "Maria will send the report on Friday before the board meeting.",
+      "hypothesis": "Maria will send the report on Friday before the Board meeting",
+      "wer": 0.0,
+      "token_f1": 1.0,
+      "engine": "whisper",
+      "seconds": 1.48,
+      "pass": true
+    },
+    "primary_clean_tts": {
+      "clips": [
+        "en_meeting.wav",
+        "en_action.wav",
+        "tl_greeting.wav"
+      ],
+      "mean_median_wer": 0.07407407407407407,
+      "mean_median_token_f1": 0.9473684210526315,
+      "clip_pass_rate": 1.0,
+      "trial_pass_rate": 0.9333333333333332,
+      "bar": "median WER \u2264 0.25 or median token-F1 \u2265 0.75 (5 trials)",
+      "verdict": "PASS",
+      "unstable_clips": [
+        "tl_greeting.wav"
+      ]
+    },
+    "hiligaynon_proxy": {
+      "note": "gTTS has no Hiligaynon voice; Filipino TTS speaking Hiligaynon text.",
+      "clips": [
+        {
+          "file": "hil_meeting.wav",
+          "language": "hil",
+          "reference": "Maayong aga sa tanan. Kinahanglan naton aprubahan ang budget sang board.",
+          "acoustic_proxy": true,
+          "trials": [
+            {
+              "trial": 1,
+              "hypothesis": "Mayong aga sa tanan, kinahanglin Nathan aprobahan ang budget sang board",
+              "wer": 0.36363636363636365,
+              "token_f1": 0.6363636363636364,
+              "engine": "whisper",
+              "detected_lang": "tl",
+              "language_confidence": 0.987930417060852,
+              "seconds": 6.92,
+              "pass": false
+            },
+            {
+              "trial": 2,
+              "hypothesis": "Mayong aga sa tanan Kinahang lan natin aprobahan ang bang board",
+              "wer": 0.6363636363636364,
+              "token_f1": 0.45454545454545453,
+              "engine": "whisper",
+              "detected_lang": "tl",
+              "language_confidence": 0.9240468144416809,
+              "seconds": 6.88,
+              "pass": false
+            },
+            {
+              "trial": 3,
+              "hypothesis": "Mayong aga sa tanan, kinahang lanit at aprobahanan ang budget sang board",
+              "wer": 0.45454545454545453,
+              "token_f1": 0.6086956521739131,
+              "engine": "whisper",
+              "detected_lang": "tl",
+              "language_confidence": 0.9229742288589478,
+              "seconds": 6.89,
+              "pass": false
+            },
+            {
+              "trial": 4,
+              "hypothesis": "mayong aga sa tanan kinahanglan niten aprubahan ang budget sang board",
+              "wer": 0.18181818181818182,
+              "token_f1": 0.8181818181818182,
+              "engine": "whisper",
+              "detected_lang": "hil",
+              "language_confidence": null,
+              "seconds": 6.73,
+              "pass": true
+            },
+            {
+              "trial": 5,
+              "hypothesis": "Mayo \u0111\u00f3, aga sa tanan... Kinahanglin ni, tinaprobahan ang budget",
+              "wer": 0.6363636363636364,
+              "token_f1": 0.47619047619047616,
+              "engine": "whisper",
+              "detected_lang": "tl",
+              "language_confidence": 0.9529383778572083,
+              "seconds": 6.66,
+              "pass": false
+            }
+          ],
+          "median_wer": 0.45454545454545453,
+          "median_token_f1": 0.6086956521739131,
+          "median_hypothesis": "Mayong aga sa tanan, kinahang lanit at aprobahanan ang budget sang board",
+          "best_wer": 0.18181818181818182,
+          "worst_wer": 0.6363636363636364,
+          "pass_rate": 0.2,
+          "pass": false,
+          "note": "Hiligaynon orthography via Filipino TTS"
+        }
+      ],
+      "median_wer": 0.45454545454545453,
+      "median_token_f1": 0.6086956521739131,
+      "routing_ok": true,
+      "pass": false
+    }
+  },
+  "bart": {
+    "engine": "bart-meeting-minutes",
+    "input": "The board approved the quarterly budget after review. Marketing will launch the campaign next week. Facilities will prepare the hall and stage lighting. Security assigned entrance badges for all guests. The chair opened discussion on the annual calendar carefully.",
+    "output": "Discussion\n\u2022 Board meeting discussion and decisions.\n\u2022 The chair opened discussion on the annual calendar carefully.\n\u2022 Board meeting discussion and decisions.\n\nDecisions\n\u2022 The board approved the quarterly budget after review.\n\u2022 Board met to discuss and decide on the budget for the next quarter.\n\u2022 The board approved the quarterly budget after review.\n\nAction items\n\u2022 Marketing will launch the campaign next week.\n\u2022 Marketing will launch the campaign next week.\n\u2022 Facilities will prepare the hall and stage lighting.\n\u2022 Security assigned entrance badges for all guests.",
+    "seconds": 8.36,
+    "structure": {
+      "expected_sections": [
+        "Discussion",
+        "Decisions",
+        "Action items"
+      ],
+      "found": [
+        "Discussion",
+        "Decisions",
+        "Action items"
+      ],
+      "ok": true
+    },
+    "content": {
+      "hits": [
+        "budget",
+        "Marketing",
+        "campaign",
+        "calendar"
+      ],
+      "misses": [],
+      "coverage": 1.0
+    },
+    "general_kind": {
+      "engine": "bart-general-general",
+      "no_minutes_bucketing": true,
+      "sample_head": "\u2022 The board approved the quarterly budget after review.\n\u2022 Marketing will launch the campaign next week.\n\u2022 Summarize the following.\n\u2022 The board agreed to a quarterly budget of $1.2 million.\n\u2022 The board approved the quarterly budget after review.\n\u2022 Marketing will launch the campaign next week.\n\u2022 Facil"
+    },
+    "pass": true,
+    "expected": "meeting \u2192 Discussion/Decisions/Action items; \u226550% key content; general skips minutes buckets"
+  },
+  "mbart_nllb": {
+    "tagalog_pipeline": {
+      "mean_token_f1": 0.8873847926267281,
+      "pass": true,
+      "expected": "mean token-F1 \u2265 0.40 (vs stock id_ID~0.34 / tl_XX~0.43)",
+      "rows": [
+        {
+          "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "Good morning to all who attended the meeting.",
+          "engine": "nllb-200",
+          "token_f1": 0.875,
+          "seconds": 8.68
+        },
+        {
+          "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "We need to approve the budget for the next quarter.",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 1.58
+        },
+        {
+          "src": "Si Maria ang magiging responsible sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria will be responsible for the follow-up.",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 0.98
+        },
+        {
+          "src": "Mayroon bang katanungan tungkol sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "Are there any questions about the agenda?",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 0.79
+        },
+        {
+          "src": "Salamat sa inyong oras. Meeting adjourned.",
+          "ref": "Thank you for your time. Meeting adjourned.",
+          "hyp": "Thank you for your time. Meeting adjourned.",
+          "engine": "nllb-200+passthrough-english",
+          "token_f1": 1.0,
+          "seconds": 0.61
+        },
+        {
+          "src": "Pwede ba nating i-move ang botohan sa susunod na linggo dahil kulang pa ang dokumento?",
+          "ref": "Can we move the vote to next week because the documents are still incomplete?",
+          "hyp": "Can we? Keep moving. Can we? Keep moving. The vote next week because the document is still missing?",
+          "engine": "nllb-200",
+          "token_f1": 0.5625000000000001,
+          "seconds": 2.6
+        },
+        {
+          "src": "Sige, i-record natin na ang action item ay kay Juan bago ang deadline.",
+          "ref": "Alright, let's record that the action item is for Juan before the deadline.",
+          "hyp": "That's all right. That's all right. Let's record that the action item is for Juan before the deadline.",
+          "engine": "nllb-200",
+          "token_f1": 0.7741935483870968,
+          "seconds": 2.47
+        }
+      ]
+    },
+    "hiligaynon_pipeline": {
+      "mean_token_f1": 0.7239121989121989,
+      "pass": true,
+      "expected": "mean token-F1 \u2265 0.30 (Google if configured; else NLLB/mBART)",
+      "rows": [
+        {
+          "src": "Maayong aga sa tanan nga nag-atendir sang miting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "Good morning to all who attended the meeting.",
+          "engine": "nllb-200",
+          "token_f1": 0.875,
+          "seconds": 0.91
+        },
+        {
+          "src": "Kinahanglan naton aprubahan ang budget para sa masunod nga quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "We need to approve the budget for the next quarter.",
+          "engine": "nllb-200",
+          "token_f1": 1.0,
+          "seconds": 1.11
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria is responsible for the follow-up.",
+          "engine": "nllb-200",
+          "token_f1": 0.7999999999999999,
+          "seconds": 0.9
+        },
+        {
+          "src": "May pamangkot bala parte sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "Is that part of the agenda?",
+          "engine": "nllb-200",
+          "token_f1": 0.30769230769230765,
+          "seconds": 0.76
+        },
+        {
+          "src": "Salamat sa inyo nga oras. Tapos na ang miting.",
+          "ref": "Thank you for your time. The meeting is over.",
+          "hyp": "Thank you for your time.. The meeting was over.",
+          "engine": "nllb-200",
+          "token_f1": 0.8888888888888888,
+          "seconds": 1.16
+        },
+        {
+          "src": "Indi gid naton magdesisyon subong kon wala pa ang report sang komite.",
+          "ref": "We really should not decide today if the committee report is not yet available.",
+          "hyp": "We cannot make decisions without the committee's report.",
+          "engine": "nllb-200",
+          "token_f1": 0.2727272727272727,
+          "seconds": 1.07
+        },
+        {
+          "src": "Maayong hapon; palihog i-record ang action item kay Ana antes magtapos ang miting.",
+          "ref": "Good afternoon; please record the action item for Ana before the meeting ends.",
+          "hyp": "Good afternoon; please record the action item to Ana before the meeting ends.",
+          "engine": "nllb-200",
+          "token_f1": 0.9230769230769231,
+          "seconds": 1.38
+        }
+      ]
+    },
+    "stock_mbart_tag_isolation": {
+      "tl_XX": 0.3941,
+      "id_ID": 0.3236
+    },
+    "historical_stock_baseline": {
+      "tl_XX": {
+        "n": 5,
+        "token_f1_mean": 0.4301,
+        "token_f1_median": 0.3077
+      },
+      "id_ID": {
+        "n": 5,
+        "token_f1_mean": 0.3398,
+        "token_f1_median": 0.4
+      }
+    }
+  },
+  "verdict": {
+    "asr": "PASS",
+    "bart": "PASS",
+    "translation_tagalog": "PASS",
+    "translation_hiligaynon": "PASS"
+  }
+}
