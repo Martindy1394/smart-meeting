@@ -21,8 +21,12 @@ neural accuracy is not achievable**; we stack exact lexicon + NLLB + optional Lo
 |---|---|---|
 | **Phrase lexicon / pipeline** | **1.000** | **100%** |
 | NLLB `tgl_Latn` | 0.907 | 57% |
-| Stock mBART `tl_XX` (prior audit) | ~0.39 | — |
+| mBART path (lexicon + EN prep fixes) | **1.000** | **100%** |
+| Stock mBART neural-only (after EN prep fixes) | 0.393 | 0% |
+| Stock mBART before (labels/Taglish force) | 0.316 | 0% |
 | CPU LoRA 40-step | Not production — loss still ~11; **do not wire** |
+
+See `MBART_EVAL.md` for the isolated mBART before/after write-up.
 
 ## Wiring decision
 

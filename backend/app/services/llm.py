@@ -1457,8 +1457,32 @@ def _nllb_translate_to_english(text: str, source_language: str = "auto") -> str:
     return " ".join(outputs).strip()
 
 
+def _postprocess_mbart_english(text: str) -> str:
+    """Light cleanup for stock mBART EN quirks (mBART path only)."""
+    out = (text or "").strip()
+    if not out:
+        return out
+    # Dialect labels / model echoes must not appear in English output.
+    out = re.sub(
+        r"^(?:NAPAGPASYAHAN|AKSYON|ACKNOWLEDGEMENTS?|ACKNOWLEDGMENT)\s*:\s*",
+        "",
+        out,
+        flags=re.IGNORECASE,
+    )
+    # Stock mBART often leaves the Tagalog personal marker ``Si`` untranslated.
+    out = re.sub(r"\bSi\s+([A-ZÀ-Ý][A-Za-zÀ-ÿ'.\-]+)\b", r"\1", out)
+    out = _WS_RE.sub(" ", out).strip()
+    return out
+
+
 def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
-    model, tokenizer = _pipelines.mbart()
+    """Translate with mBART-50 (and optional PH fine-tune).
+
+    mBART-only reliability layer (does not change NLLB/Google/Whisper/BART):
+    1. Exact Tagalog meeting phrase lexicon when targeting English
+    2. Softer dialect cleanup for EN (no NAPAGPASYAHAN/AKSYON labels)
+    3. Tighter generate + EN post-process
+    """
     src = mbart_code(src_code)
     if not src:
         # Historical bug: ``or "en_XX"`` mistagged unmapped PH codes as English
@@ -1477,21 +1501,42 @@ def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
 
     # Identity English→English is unreliable on this checkpoint (emits te_IN etc.).
     if src == "en_XX" and tgt == "en_XX":
-        return text.strip()
+        return (text or "").strip()
 
-    # SmartScribe MBART_SYSTEM_PROMPT rules → deterministic pre-encode cleanup.
-    # mBART cannot consume chat system prompts; normalization stabilizes dialect
-    # ASR before ``tl_XX`` / proxy encode (see mbart_dialect.py).
+    raw_text = (text or "").strip()
+    # Meeting-phrase exact hits — mBART stock is weak on board Tagalog; prefer
+    # deterministic English for curated lines (mBART engine path only).
+    if tgt == "en_XX" and src in {"tl_XX", "id_ID"}:
+        try:
+            from . import tagalog_phrases
+
+            exact = tagalog_phrases.lookup_exact(raw_text)
+            if exact:
+                return exact
+        except Exception:
+            pass
+
+    # SmartScribe cleanup for mBART encode. For EN targets, skip minute labels
+    # and Taglish→Filipino forcing — those were measured to *hurt* stock
+    # ``tl_XX`` decode (AKSYON→ACKNOWLEDGEMENTS, i-move→worse paraphrase).
     if bool(getattr(settings, "mbart_dialect_normalize", True)) and src != "en_XX":
         try:
             from . import mbart_dialect
 
+            to_english = tgt == "en_XX"
             text = mbart_dialect.normalize_for_mbart(
-                text, source_lang=src_code or src
+                raw_text,
+                source_lang=src_code or src,
+                apply_taglish=not to_english,
+                label_minutes=not to_english,
             )
         except Exception:
             logger.debug("mBART dialect normalize skipped", exc_info=True)
+            text = raw_text
+    else:
+        text = raw_text
 
+    model, tokenizer = _pipelines.mbart()
     bos_id = tokenizer.lang_code_to_id.get(tgt)
     if bos_id is None:
         bos_id = tokenizer.convert_tokens_to_ids(tgt)
@@ -1508,20 +1553,30 @@ def _mbart_translate(text: str, src_code: str, tgt_code: str) -> str:
             encoded = tokenizer(
                 chunk, return_tensors="pt", truncation=True, max_length=1024
             )
-            generated = model.generate(
-                **encoded,
+            # Slightly tighter decode than the old 6-beam / high length_penalty
+            # settings — stock mBART tended to ramble on short PH meeting lines.
+            gen_kwargs = dict(
                 forced_bos_token_id=bos_id,
-                max_new_tokens=min(512, max(64, int(len(chunk.split()) * 2.8))),
-                num_beams=6,
+                max_new_tokens=min(256, max(48, int(len(chunk.split()) * 2.2) + 16)),
+                num_beams=5,
                 early_stopping=True,
-                no_repeat_ngram_size=4,
-                length_penalty=1.05,
+                no_repeat_ngram_size=3,
+                length_penalty=0.9,
             )
+            # transformers versions differ on repetition_penalty support in generate
+            try:
+                generated = model.generate(
+                    **encoded, **gen_kwargs, repetition_penalty=1.15
+                )
+            except TypeError:
+                generated = model.generate(**encoded, **gen_kwargs)
             raw = tokenizer.batch_decode(generated, skip_special_tokens=False)[0]
             # Drop any leaked language-code tokens the decoder may prepend after BOS.
             cleaned = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
             cleaned = _strip_leaked_lang_codes(cleaned)
             cleaned = _collapse_translation_loops(cleaned)
+            if tgt == "en_XX":
+                cleaned = _postprocess_mbart_english(cleaned)
             if tgt == "en_XX" and not _looks_like_latin_script(cleaned):
                 logger.warning(
                     "mBART %s→%s produced non-Latin output (%s…); will retry upstream.",
