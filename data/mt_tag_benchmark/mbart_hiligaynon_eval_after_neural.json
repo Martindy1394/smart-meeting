@@ -1,0 +1,384 @@
+{
+  "scope": "mBART-only Hiligaynon / Tagalogized-Hiligaynon / Tagalog\u2192EN",
+  "neural_only": true,
+  "conditions": {
+    "hil_clean_to_id_ID": {
+      "label": "hil_clean\u2192id_ID (hil proxy)",
+      "src_code": "hil",
+      "mean_token_f1": 0.23498059094659293,
+      "exact_match_rate": 0.0,
+      "seconds": 14.0,
+      "n": 7,
+      "rows": [
+        {
+          "src": "Maayong aga sa tanan nga nag-atendir sang miting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "Maayong, on the other hand, planted the crop at the center of the dispute.",
+          "token_f1": 0.10526315789473685,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Kinahanglan naton aprubahan ang budget para sa masunod nga quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "It's a little bit like budget cuts on the side of a quarter.",
+          "token_f1": 0.28571428571428575,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria was in charge of the follow-up.",
+          "token_f1": 0.5,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "May pamangkot bala parte sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "May I have a show of hands?",
+          "token_f1": 0.0,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Salamat sa inyo nga oras. Tapos na ang miting.",
+          "ref": "Thank you for your time. The meeting is over.",
+          "hyp": "Bye bye to the air. Good afternoon.",
+          "token_f1": 0.13333333333333333,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Indi gid naton magdesisyon subong kon wala pa ang report sang komite.",
+          "ref": "We really should not decide today if the committee report is not yet available.",
+          "hyp": "I was asked to vote on the report to the committee.",
+          "token_f1": 0.27272727272727276,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Maayong hapon; palihog i-record ang action item kay Ana antes magtapos ang miting.",
+          "ref": "Good afternoon; please record the action item for Ana before the meeting ends.",
+          "hyp": "Diamonds; the i-record is an action item that precedes competition.",
+          "token_f1": 0.34782608695652173,
+          "exact": false,
+          "note": ""
+        }
+      ]
+    },
+    "hil_clean_to_tl_XX": {
+      "label": "hil_clean\u2192tl_XX (mistagged as Tagalog)",
+      "src_code": "tl",
+      "mean_token_f1": 0.3330895921121485,
+      "exact_match_rate": 0.0,
+      "seconds": 10.25,
+      "n": 7,
+      "rows": [
+        {
+          "src": "Maayong aga sa tanan nga nag-atendir sang miting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "The meeting was canceled because of a missed meeting.",
+          "token_f1": 0.25,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Kinahanglan naton aprubahan ang budget para sa masunod nga quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "I had to raise a quarterly budget for this project.",
+          "token_f1": 0.3157894736842105,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria is responsible for follow-up.",
+          "token_f1": 0.7142857142857143,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "May pamangkot bala parte sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "Maykatanungan be part of the agenda?",
+          "token_f1": 0.30769230769230765,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Salamat sa inyo nga oras. Tapos na ang miting.",
+          "ref": "Thank you for your time. The meeting is over.",
+          "hyp": "Bye to you all in the air. Enjoy the slowing down.",
+          "token_f1": 0.2105263157894737,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Indi gid naton magdesisyon subong kon wala pa ang report sang komite.",
+          "ref": "We really should not decide today if the committee report is not yet available.",
+          "hyp": "Hindi is the official language of the United States, and it was approved by the Committee on the Rights of the Child.",
+          "token_f1": 0.20000000000000004,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Maayong hapon; palihog i-record ang action item kay Ana antes magtapos ang miting.",
+          "ref": "Good afternoon; please record the action item for Ana before the meeting ends.",
+          "hyp": "Action Items; Pack up your I-Record for an action item so that I can add it to a meeting.",
+          "token_f1": 0.33333333333333337,
+          "exact": false,
+          "note": ""
+        }
+      ]
+    },
+    "hil_as_tl_noise_to_tl_XX": {
+      "label": "hil_as_tl_noise\u2192tl_XX",
+      "src_code": "tl",
+      "mean_token_f1": 0.40748521630874573,
+      "exact_match_rate": 0.0,
+      "seconds": 12.3,
+      "n": 10,
+      "rows": [
+        {
+          "src": "Magandang aga sa lahat ng nag-atendir sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "So Magandang left for Nag-Atendir at the meeting.",
+          "token_f1": 0.23529411764705882,
+          "exact": false,
+          "note": "Hiligaynon 'Maayong aga sa tanan' ASR-forced toward Tagalog particles"
+        },
+        {
+          "src": "Kailangan natin aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "I was asked to approve a quarterly budget for my family.",
+          "token_f1": 0.39999999999999997,
+          "exact": false,
+          "note": "Hiligaynon 'Kinahanglan naton\u2026masunod' misheard with Tagalog natin/susunod"
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria is responsible for follow-up.",
+          "token_f1": 0.7142857142857143,
+          "exact": false,
+          "note": "Shared surface; often routed as Tagalog"
+        },
+        {
+          "src": "May tanong ba parte sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "May I be part of the agenda?",
+          "token_f1": 0.2857142857142857,
+          "exact": false,
+          "note": "Hiligaynon 'May pamangkot bala' \u2192 Tagalog-leaning 'May tanong ba'"
+        },
+        {
+          "src": "Salamat sa inyong oras. Tapos na ang meeting.",
+          "ref": "Thank you for your time. The meeting is over.",
+          "hyp": "Good afternoon, everyone. Enjoy your meeting.",
+          "token_f1": 0.26666666666666666,
+          "exact": false,
+          "note": "Hiligaynon 'Salamat sa inyo nga oras' Tagalogized"
+        },
+        {
+          "src": "Hindi gid natin magdesisyon ngayon kung wala pa ang report ng komite.",
+          "ref": "We really should not decide today if the committee report is not yet available.",
+          "hyp": "Hindi is the mother tongue of censorship, which is why you have to report back to committee.",
+          "token_f1": 0.28571428571428575,
+          "exact": false,
+          "note": "Mixed: Hiligaynon gid retained amid Tagalog hindi/natin/ngayon/kung"
+        },
+        {
+          "src": "Magandang hapon; pakirecord ang action item kay Ana bago matapos ang meeting.",
+          "ref": "Good afternoon; please record the action item for Ana before the meeting ends.",
+          "hyp": "We're on the air; we recorded an action item from Ana related to a meeting.",
+          "token_f1": 0.3703703703703704,
+          "exact": false,
+          "note": "Hiligaynon 'Maayong hapon; palihog i-record\u2026antes' Tagalog-leaning ASR"
+        },
+        {
+          "src": "Indi pa ready ang final draft ng minutes.",
+          "ref": "The final draft of the minutes is not ready yet.",
+          "hyp": "Hindi is ready for final draft in minutes.",
+          "token_f1": 0.5882352941176471,
+          "exact": false,
+          "note": "Hiligaynon indi + Tagalog ng particles (common Whisper mix)"
+        },
+        {
+          "src": "Kinahanglan naton magtambong sa training next week.",
+          "ref": "We need to attend the training next week.",
+          "hyp": "I'm planning to cancel my training next week.",
+          "token_f1": 0.5,
+          "exact": false,
+          "note": "Hiligaynon naton/magtambong kept; English week noise"
+        },
+        {
+          "src": "May ara ba sang corrections sa minutes?",
+          "ref": "Are there any corrections to the minutes?",
+          "hyp": "May I have corrections for the minutes?",
+          "token_f1": 0.42857142857142855,
+          "exact": false,
+          "note": "Hiligaynon ara/sang amid Tagalog minutes loanwords"
+        }
+      ]
+    },
+    "hil_as_tl_noise_to_id_ID": {
+      "label": "hil_as_tl_noise\u2192id_ID",
+      "src_code": "hil",
+      "mean_token_f1": 0.2872217628470152,
+      "exact_match_rate": 0.0,
+      "seconds": 13.55,
+      "n": 10,
+      "rows": [
+        {
+          "src": "Magandang aga sa lahat ng nag-atendir sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "It's a meeting room full of people.",
+          "token_f1": 0.13333333333333333,
+          "exact": false,
+          "note": "Hiligaynon 'Maayong aga sa tanan' ASR-forced toward Tagalog particles"
+        },
+        {
+          "src": "Kailangan natin aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "There's been a lot of budget cuts in the last couple of years.",
+          "token_f1": 0.1904761904761905,
+          "exact": false,
+          "note": "Hiligaynon 'Kinahanglan naton\u2026masunod' misheard with Tagalog natin/susunod"
+        },
+        {
+          "src": "Si Maria ang responsable sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria was in charge of the follow-up.",
+          "token_f1": 0.5,
+          "exact": false,
+          "note": "Shared surface; often routed as Tagalog"
+        },
+        {
+          "src": "May tanong ba parte sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "May I have a show of hands?",
+          "token_f1": 0.0,
+          "exact": false,
+          "note": "Hiligaynon 'May pamangkot bala' \u2192 Tagalog-leaning 'May tanong ba'"
+        },
+        {
+          "src": "Salamat sa inyong oras. Tapos na ang meeting.",
+          "ref": "Thank you for your time. The meeting is over.",
+          "hyp": "Bye for the weather. Good afternoon.",
+          "token_f1": 0.26666666666666666,
+          "exact": false,
+          "note": "Hiligaynon 'Salamat sa inyo nga oras' Tagalogized"
+        },
+        {
+          "src": "Hindi gid natin magdesisyon ngayon kung wala pa ang report ng komite.",
+          "ref": "We really should not decide today if the committee report is not yet available.",
+          "hyp": "He's the director of the board of directors who reports to the committee.",
+          "token_f1": 0.17391304347826086,
+          "exact": false,
+          "note": "Mixed: Hiligaynon gid retained amid Tagalog hindi/natin/ngayon/kung"
+        },
+        {
+          "src": "Magandang hapon; pakirecord ang action item kay Ana bago matapos ang meeting.",
+          "ref": "Good afternoon; please record the action item for Ana before the meeting ends.",
+          "hyp": "It's a magazine; it's an action item for meetings.",
+          "token_f1": 0.3,
+          "exact": false,
+          "note": "Hiligaynon 'Maayong hapon; palihog i-record\u2026antes' Tagalog-leaning ASR"
+        },
+        {
+          "src": "Indi pa ready ang final draft ng minutes.",
+          "ref": "The final draft of the minutes is not ready yet.",
+          "hyp": "I'm ready for the final draft in a few minutes.",
+          "token_f1": 0.5263157894736842,
+          "exact": false,
+          "note": "Hiligaynon indi + Tagalog ng particles (common Whisper mix)"
+        },
+        {
+          "src": "Kinahanglan naton magtambong sa training next week.",
+          "ref": "We need to attend the training next week.",
+          "hyp": "I'm going to do some mockingbird exercises next week.",
+          "token_f1": 0.35294117647058826,
+          "exact": false,
+          "note": "Hiligaynon naton/magtambong kept; English week noise"
+        },
+        {
+          "src": "May ara ba sang corrections sa minutes?",
+          "ref": "Are there any corrections to the minutes?",
+          "hyp": "May I have corrections for the minutes?",
+          "token_f1": 0.42857142857142855,
+          "exact": false,
+          "note": "Hiligaynon ara/sang amid Tagalog minutes loanwords"
+        }
+      ]
+    },
+    "tagalog_to_tl_XX": {
+      "label": "tagalog\u2192tl_XX control",
+      "src_code": "tl",
+      "mean_token_f1": 0.393293180249702,
+      "exact_match_rate": 0.0,
+      "seconds": 9.98,
+      "n": 7,
+      "rows": [
+        {
+          "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "We were left out of the meeting because of a missed meeting.",
+          "token_f1": 0.22222222222222224,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "I'm going to make an adjustment to the budget for each quarter.",
+          "token_f1": 0.5,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Si Maria ang magiging responsible sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria is responsible for follow-up.",
+          "token_f1": 0.7142857142857143,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Mayroon bang katanungan tungkol sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "What's my next big bang on the agenda?",
+          "token_f1": 0.26666666666666666,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Salamat sa inyong oras. Meeting adjourned.",
+          "ref": "Thank you for your time. Meeting adjourned.",
+          "hyp": "Bye, city of New York. Meeting adjourned.",
+          "token_f1": 0.2857142857142857,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Pwede ba nating i-move ang botohan sa susunod na linggo dahil kulang pa ang dokumento?",
+          "ref": "Can we move the vote to next week because the documents are still incomplete?",
+          "hyp": "Have you ever wanted to i-move your phone every day of the week including when you're signing a document?",
+          "token_f1": 0.24242424242424246,
+          "exact": false,
+          "note": ""
+        },
+        {
+          "src": "Sige, i-record natin na ang action item ay kay Juan bago ang deadline.",
+          "ref": "Alright, let's record that the action item is for Juan before the deadline.",
+          "hyp": "Sige, the i-record on the action item is not Juan's deadline.",
+          "token_f1": 0.5217391304347826,
+          "exact": false,
+          "note": ""
+        }
+      ]
+    }
+  }
+}
