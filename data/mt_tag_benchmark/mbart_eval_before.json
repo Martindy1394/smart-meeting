@@ -1,0 +1,68 @@
+{
+  "fixtures": "scripts/ph_mt/fixtures/tagalog_en_sample.jsonl",
+  "engines": {
+    "mbart": {
+      "mean_token_f1": 0.3163007627293341,
+      "exact_match_rate": 0.0,
+      "seconds": 21.45,
+      "rows": [
+        {
+          "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "We were left out of the meeting because of a missed meeting.",
+          "token_f1": 0.22222222222222224,
+          "exact": false,
+          "engine": "mbart"
+        },
+        {
+          "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "I'm going to make an adjustment to the budget for each quarter.",
+          "token_f1": 0.5,
+          "exact": false,
+          "engine": "mbart"
+        },
+        {
+          "src": "Si Maria ang magiging responsible sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Si Maria is responsible for everything we do.",
+          "token_f1": 0.375,
+          "exact": false,
+          "engine": "mbart"
+        },
+        {
+          "src": "Mayroon bang katanungan tungkol sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "What's my big bang for the agenda?",
+          "token_f1": 0.2857142857142857,
+          "exact": false,
+          "engine": "mbart"
+        },
+        {
+          "src": "Salamat sa inyong oras. Meeting adjourned.",
+          "ref": "Thank you for your time. Meeting adjourned.",
+          "hyp": "Bye, city of New York. Meeting adjourned.",
+          "token_f1": 0.2857142857142857,
+          "exact": false,
+          "engine": "mbart"
+        },
+        {
+          "src": "Pwede ba nating i-move ang botohan sa susunod na linggo dahil kulang pa ang dokumento?",
+          "ref": "Can we move the vote to next week because the documents are still incomplete?",
+          "hyp": "Will I ever be able to fold up a button from every single day of the week including the corner of a document?",
+          "token_f1": 0.18181818181818185,
+          "exact": false,
+          "engine": "mbart"
+        },
+        {
+          "src": "Sige, i-record natin na ang action item ay kay Juan bago ang deadline.",
+          "ref": "Alright, let's record that the action item is for Juan before the deadline.",
+          "hyp": "ACKNOWLEDGEMENTS: Juan is famous for his tattoos on the chest.",
+          "token_f1": 0.3636363636363636,
+          "exact": false,
+          "engine": "mbart"
+        }
+      ]
+    }
+  }
+}

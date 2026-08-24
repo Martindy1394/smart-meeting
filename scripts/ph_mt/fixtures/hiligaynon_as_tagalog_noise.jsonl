@@ -1,0 +1,10 @@
+{"source":"Magandang aga sa lahat ng nag-atendir sa meeting.","reference":"Good morning to everyone who attended the meeting.","note":"Hiligaynon 'Maayong aga sa tanan' ASR-forced toward Tagalog particles"}
+{"source":"Kailangan natin aprubahan ang budget para sa susunod na quarter.","reference":"We need to approve the budget for the next quarter.","note":"Hiligaynon 'Kinahanglan naton…masunod' misheard with Tagalog natin/susunod"}
+{"source":"Si Maria ang responsable sa follow-up.","reference":"Maria will be responsible for the follow-up.","note":"Shared surface; often routed as Tagalog"}
+{"source":"May tanong ba parte sa agenda?","reference":"Are there any questions about the agenda?","note":"Hiligaynon 'May pamangkot bala' → Tagalog-leaning 'May tanong ba'"}
+{"source":"Salamat sa inyong oras. Tapos na ang meeting.","reference":"Thank you for your time. The meeting is over.","note":"Hiligaynon 'Salamat sa inyo nga oras' Tagalogized"}
+{"source":"Hindi gid natin magdesisyon ngayon kung wala pa ang report ng komite.","reference":"We really should not decide today if the committee report is not yet available.","note":"Mixed: Hiligaynon gid retained amid Tagalog hindi/natin/ngayon/kung"}
+{"source":"Magandang hapon; pakirecord ang action item kay Ana bago matapos ang meeting.","reference":"Good afternoon; please record the action item for Ana before the meeting ends.","note":"Hiligaynon 'Maayong hapon; palihog i-record…antes' Tagalog-leaning ASR"}
+{"source":"Indi pa ready ang final draft ng minutes.","reference":"The final draft of the minutes is not ready yet.","note":"Hiligaynon indi + Tagalog ng particles (common Whisper mix)"}
+{"source":"Kinahanglan naton magtambong sa training next week.","reference":"We need to attend the training next week.","note":"Hiligaynon naton/magtambong kept; English week noise"}
+{"source":"May ara ba sang corrections sa minutes?","reference":"Are there any corrections to the minutes?","note":"Hiligaynon ara/sang amid Tagalog minutes loanwords"}

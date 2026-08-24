@@ -1,0 +1,68 @@
+{
+  "fixtures": "scripts/ph_mt/fixtures/tagalog_en_sample.jsonl",
+  "engines": {
+    "nllb": {
+      "mean_token_f1": 0.906904761904762,
+      "exact_match_rate": 0.5714285714285714,
+      "seconds": 10.5,
+      "rows": [
+        {
+          "src": "Magandang umaga sa lahat ng dumalo sa meeting.",
+          "ref": "Good morning to everyone who attended the meeting.",
+          "hyp": "Good morning to all who attended the meeting.",
+          "token_f1": 0.875,
+          "exact": false,
+          "engine": "nllb"
+        },
+        {
+          "src": "Kailangan nating aprubahan ang budget para sa susunod na quarter.",
+          "ref": "We need to approve the budget for the next quarter.",
+          "hyp": "We need to approve the budget for the next quarter.",
+          "token_f1": 1.0,
+          "exact": true,
+          "engine": "nllb"
+        },
+        {
+          "src": "Si Maria ang magiging responsible sa follow-up.",
+          "ref": "Maria will be responsible for the follow-up.",
+          "hyp": "Maria will be responsible for the follow-up.",
+          "token_f1": 1.0,
+          "exact": true,
+          "engine": "nllb"
+        },
+        {
+          "src": "Mayroon bang katanungan tungkol sa agenda?",
+          "ref": "Are there any questions about the agenda?",
+          "hyp": "Are there any questions about the agenda?",
+          "token_f1": 1.0,
+          "exact": true,
+          "engine": "nllb"
+        },
+        {
+          "src": "Salamat sa inyong oras. Meeting adjourned.",
+          "ref": "Thank you for your time. Meeting adjourned.",
+          "hyp": "Thank you for your time, meeting adjourned.",
+          "token_f1": 1.0,
+          "exact": true,
+          "engine": "nllb"
+        },
+        {
+          "src": "Pwede ba nating i-move ang botohan sa susunod na linggo dahil kulang pa ang dokumento?",
+          "ref": "Can we move the vote to next week because the documents are still incomplete?",
+          "hyp": "Can we move the ballot next week because the document is still missing?",
+          "token_f1": 0.64,
+          "exact": false,
+          "engine": "nllb"
+        },
+        {
+          "src": "Sige, i-record natin na ang action item ay kay Juan bago ang deadline.",
+          "ref": "Alright, let's record that the action item is for Juan before the deadline.",
+          "hyp": "Well, let's record that the action item is for John before the deadline.",
+          "token_f1": 0.8333333333333334,
+          "exact": false,
+          "engine": "nllb"
+        }
+      ]
+    }
+  }
+}

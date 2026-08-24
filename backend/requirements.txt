@@ -1,0 +1,37 @@
+# Core web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+websockets==14.1
+
+# Database
+SQLAlchemy==2.0.36
+# PostgreSQL driver (used in production / docker-compose; SQLite needs nothing).
+psycopg[binary]==3.2.3
+
+# Settings / validation
+pydantic==2.10.4
+pydantic-settings==2.7.1
+email-validator==2.2.0
+
+# Security / auth
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.1
+python-jose[cryptography]==3.3.0
+
+# Numeric (audio buffer handling)
+numpy==2.2.1
+
+# In-memory audio / session storage
+redis==5.2.1
+
+# Optional WebRTC VAD — install when available; energy fallback is always on.
+# webrtcvad==2.0.10
+
+# Meeting export (PDF / DOCX)
+fpdf2==2.8.2
+python-docx==1.1.2
+
+# Optional: Hiligaynon → English via Google Cloud Translation (``hil``).
+# Also supports GOOGLE_TRANSLATE_API_KEY without this package (v2 REST).
+google-cloud-translate==3.20.2
