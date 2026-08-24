@@ -1,0 +1,31 @@
+{
+  "scope": "Whisper ASR + mBART translation GPU enablement only",
+  "host": {
+    "nvidia_smi": {
+      "available": false,
+      "reason": "nvidia-smi not found"
+    },
+    "torch": {
+      "installed": false,
+      "cuda_available": false,
+      "error": "No module named 'torch'"
+    },
+    "gpu_present": false
+  },
+  "settings": {
+    "whisper_device": "auto",
+    "whisper_compute_type": "auto",
+    "mbart_device": "auto"
+  },
+  "resolved": {
+    "whisper_device": "cpu",
+    "whisper_compute_type": "int8",
+    "mbart_device": "cpu"
+  },
+  "evaluation": {
+    "whisper_using_gpu": false,
+    "mbart_using_gpu": false,
+    "success": false,
+    "notes": "No usable CUDA GPU on this host \u2014 Whisper/mBART correctly fall back to CPU. Run this script on a CUDA machine (or set WHISPER_DEVICE=cuda / MBART_DEVICE=cuda there) to confirm GPU."
+  }
+}

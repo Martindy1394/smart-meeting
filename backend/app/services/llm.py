@@ -25,6 +25,34 @@ from ..languages import mbart_code
 
 logger = logging.getLogger("smart_meeting.llm")
 
+
+def resolve_mbart_device() -> str:
+    """Resolve mBART torch device: prefer CUDA when ``auto`` and a GPU is present."""
+    raw = (getattr(settings, "mbart_device", None) or "auto").strip().lower() or "auto"
+    if raw not in {"auto", "cuda", "cpu"}:
+        logger.warning("Unknown MBART_DEVICE=%r — using auto", settings.mbart_device)
+        raw = "auto"
+
+    def _cuda_available() -> bool:
+        try:
+            import torch  # type: ignore
+
+            return bool(torch.cuda.is_available())
+        except Exception:
+            return False
+
+    if raw == "cpu":
+        return "cpu"
+    if raw == "cuda":
+        if _cuda_available():
+            return "cuda"
+        logger.warning(
+            "MBART_DEVICE=cuda but no CUDA GPU detected — falling back to CPU"
+        )
+        return "cpu"
+    return "cuda" if _cuda_available() else "cpu"
+
+
 _MAX_CHUNK_CHARS = 3500
 _SPEAKER_TURN_RE = re.compile(
     r"^(?:Speaker\s*\d+|[\w][\w .'-]{0,40})\s*:\s+(.+)$",
@@ -149,11 +177,33 @@ class _Pipelines:
                 model_id = (settings.mbart_ph_finetuned_model or "").strip() or (
                     settings.mbart_model
                 )
-                logger.info("Loading mBART translator '%s'", model_id)
+                device = resolve_mbart_device()
+                logger.info("Loading mBART translator '%s' (device=%s)", model_id, device)
                 self._mbart_tokenizer = MBart50TokenizerFast.from_pretrained(model_id)
                 self._mbart_model = MBartForConditionalGeneration.from_pretrained(
                     model_id
                 )
+                try:
+                    import torch  # type: ignore
+
+                    if device == "cuda":
+                        self._mbart_model = self._mbart_model.to("cuda")
+                        # Prefer FP16 on GPU for faster translation when supported.
+                        try:
+                            self._mbart_model = self._mbart_model.half()
+                        except Exception:
+                            logger.debug("mBART FP16 cast skipped", exc_info=True)
+                    self._mbart_model.eval()
+                    logger.info(
+                        "mBART ready on %s (param_device=%s)",
+                        device,
+                        next(self._mbart_model.parameters()).device,
+                    )
+                except Exception:
+                    logger.warning(
+                        "mBART device placement failed; remaining on default tensors",
+                        exc_info=True,
+                    )
             return self._mbart_model, self._mbart_tokenizer
     def nllb(self):
         with self._lock:
@@ -1497,6 +1547,12 @@ def _mbart_generate_text(text: str, src: str, tgt: str) -> str:
             encoded = tokenizer(
                 chunk, return_tensors="pt", truncation=True, max_length=1024
             )
+            # Keep inputs on the same device as the mBART weights (CUDA when enabled).
+            try:
+                model_device = next(model.parameters()).device
+                encoded = {k: v.to(model_device) for k, v in encoded.items()}
+            except Exception:
+                pass
             gen_kwargs = dict(
                 forced_bos_token_id=bos_id,
                 max_new_tokens=min(256, max(48, int(len(chunk.split()) * 2.2) + 16)),

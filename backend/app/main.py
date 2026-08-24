@@ -53,6 +53,23 @@ def _build_pipeline_status() -> dict:
     llm_ok = llm.summarizer_available()
     ph_backend = (settings.ph_translate_backend or "auto").strip().lower()
     device = (settings.whisper_device or "auto").strip() or "auto"
+    try:
+        from .services.transcription import (
+            resolve_whisper_compute_type,
+            resolve_whisper_device,
+        )
+
+        resolved_whisper = resolve_whisper_device()
+        resolved_compute = resolve_whisper_compute_type(resolved_whisper)
+    except Exception:
+        resolved_whisper = device
+        resolved_compute = settings.whisper_compute_type
+    try:
+        from .services.llm import resolve_mbart_device
+
+        resolved_mbart = resolve_mbart_device()
+    except Exception:
+        resolved_mbart = getattr(settings, "mbart_device", "auto")
     return {
         "whisper": {
             "role": "asr",
@@ -67,7 +84,8 @@ def _build_pipeline_status() -> dict:
             "hiligaynon_forced_language": None,
             "hiligaynon_decode": "auto-detect (never tl)",
             "hardware_hint": (
-                f"device={device}; compute_type={settings.whisper_compute_type}; "
+                f"setting={device}; resolved={resolved_whisper}; "
+                f"compute_type={resolved_compute}; "
                 "live favors latency (small), final favors accuracy (medium/HF PH)"
             ),
             "metrics_status": "WER/latency/cost TBD — see docs/MODELS.md",
@@ -90,7 +108,10 @@ def _build_pipeline_status() -> dict:
             "google_translate_configured": google_translate.is_configured(),
             "hil_translate_fallback": settings.hil_translate_fallback,
             "size_hint": "multi-gb (NLLB distilled-600M; mBART-large-50)",
-            "hardware_hint": "loaded on demand via transformers; CPU or GPU host",
+            "hardware_hint": (
+                f"mBART setting={getattr(settings, 'mbart_device', 'auto')}; "
+                f"resolved={resolved_mbart}; NLLB unchanged"
+            ),
             "metrics_status": "BLEU/latency/cost TBD — see docs/MODELS.md",
         },
         "bart": {
