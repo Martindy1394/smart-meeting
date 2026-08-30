@@ -1,2 +1,2 @@
-# smart-meeting
+# smartmeeting
 Online minute-making
