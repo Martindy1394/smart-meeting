@@ -22,8 +22,11 @@ export function AuthProvider({ children }) {
       try {
         const me = await api.me();
         if (!cancelled) setUser(me);
-      } catch {
-        clearSessionTokens();
+      } catch (err) {
+        // Keep the session on network blips; only drop tokens on auth rejection.
+        if (err?.status === 401 || err?.status === 403) {
+          clearSessionTokens();
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

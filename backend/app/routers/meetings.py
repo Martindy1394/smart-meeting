@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -387,7 +387,9 @@ def list_meetings(
                 Meeting.summary.ilike(pattern),
                 Meeting.translation.ilike(pattern),
                 Meeting.venue.ilike(pattern),
-                Meeting.attendees.ilike(pattern),
+                # Attendees are JSON text via TypeDecorator — cast so ILIKE
+                # works on SQLite and PostgreSQL.
+                cast(Meeting.attendees, String).ilike(pattern),
             )
         )
     meetings = query.order_by(Meeting.created_at.desc()).all()

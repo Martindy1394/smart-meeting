@@ -18,10 +18,13 @@ def _sample_meeting():
         text="Maayong aga.",
         start_time=1.5,
         end_time=3.0,
+        speaker_label="Voice 1",
+        speaker_index=1,
     )
     return SimpleNamespace(
         title="Board huddle",
         venue="Iloilo Hall",
+        attendees=["Ada", "Bob"],
         language="hil",
         status="finalized",
         meeting_date=None,
@@ -43,6 +46,9 @@ class ExportServiceTests(unittest.TestCase):
         self.assertIn("Good morning", data)
         self.assertIn("Structured summary", data)
         self.assertIn("Timestamped segments", data)
+        self.assertIn("Voice 1:", data)
+        self.assertIn("Attendees: Ada, Bob", data)
+        self.assertIn("[0:01–0:03]", data)
 
     def test_docx_and_pdf_nonempty(self):
         meeting = _sample_meeting()

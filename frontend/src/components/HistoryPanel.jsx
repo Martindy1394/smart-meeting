@@ -172,7 +172,7 @@ export default function HistoryPanel({
           <div className="history-toolbar">
             <input
               className="history-search"
-              placeholder="Search title, transcript, summary…"
+              placeholder="Search title, venue, attendees, transcript, summary…"
               value={search}
               onChange={(e) => onSearch(e.target.value)}
             />
