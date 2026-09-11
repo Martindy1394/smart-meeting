@@ -66,9 +66,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
 ) {
   const [title, setTitle] = useState(meeting.title || "");
   const [venue, setVenue] = useState(meeting.venue || "");
-  const [presidingOffice, setPresidingOffice] = useState(
-    meeting.presiding_office || ""
-  );
   const [presidingOfficer, setPresidingOfficer] = useState(
     meeting.presiding_officer || ""
   );
@@ -91,7 +88,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     skipAutosave.current = true;
     setTitle(meeting.title || "");
     setVenue(meeting.venue || "");
-    setPresidingOffice(meeting.presiding_office || "");
     setPresidingOfficer(meeting.presiding_officer || "");
     // New meetings always open on the current local date & time.
     setDateTime(
@@ -129,7 +125,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     return (
       title.trim() !== (meeting.title || "").trim() ||
       venue.trim() !== (meeting.venue || "").trim() ||
-      presidingOffice.trim() !== (meeting.presiding_office || "").trim() ||
       presidingOfficer.trim() !== (meeting.presiding_officer || "").trim() ||
       dateTime !== savedDateTime ||
       !sameAttendees(currentAttendees, savedAttendees) ||
@@ -171,7 +166,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       await api.updateMeeting(meeting.id, {
         title: title.trim(),
         venue: venue.trim(),
-        presiding_office: presidingOffice.trim(),
         presiding_officer: presidingOfficer.trim(),
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
@@ -187,7 +181,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           ...meeting,
           title: title.trim(),
           venue: venue.trim(),
-          presiding_office: presidingOffice.trim(),
           presiding_officer: presidingOfficer.trim(),
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
@@ -209,7 +202,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOffice, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   // Debounced autosave whenever required fields are complete and dirty.
   useEffect(() => {
@@ -225,7 +218,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOffice, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
+  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
 
   useEffect(() => {
     if (!onAutosaveStatus) return;
@@ -237,7 +230,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ready: isComplete(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, savedAt, error, title, venue, presidingOffice, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [saving, savedAt, error, title, venue, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   useEffect(() => {
     return () => {
@@ -323,18 +316,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
             value={venue}
             onChange={(e) => setVenue(e.target.value)}
             required
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="presiding-office">Presiding office</label>
-          <input
-            id="presiding-office"
-            type="text"
-            placeholder="e.g. Office of the Chair / Dean"
-            value={presidingOffice}
-            onChange={(e) => setPresidingOffice(e.target.value)}
-            autoComplete="organization"
           />
         </div>
 

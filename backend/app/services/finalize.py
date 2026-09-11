@@ -183,7 +183,6 @@ def finalize_meeting_recording(
                 list(extra_terms)
                 + load_attendees(meeting.attendees)
                 + [
-                    (getattr(meeting, "presiding_office", None) or "").strip(),
                     (getattr(meeting, "presiding_officer", None) or "").strip(),
                 ]
             )
