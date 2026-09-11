@@ -100,8 +100,6 @@ class Meeting(Base):
     faithfulness_json: Mapped[str] = mapped_column(Text, default="")
     # Transcript↔translation faithfulness (Tier 2).
     translation_faithfulness_json: Mapped[str] = mapped_column(Text, default="")
-    # Optional proper nouns injected into Whisper initial_prompt (newline/JSON).
-    custom_vocab: Mapped[str] = mapped_column(Text, default="")
     # Do-not-translate terms for NLLB/mBART (JSON list).
     translation_glossary_json: Mapped[str] = mapped_column(Text, default="[]")
     # Structured action items extracted from BART Action Items section.

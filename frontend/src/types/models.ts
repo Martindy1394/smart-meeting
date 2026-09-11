@@ -105,8 +105,6 @@ export interface MeetingDetail {
   extractive_fallback: boolean;
   /** Persisted faithfulness report — survives reload. */
   faithfulness?: FaithfulnessReport | null;
-  /** Proper nouns / terms for Whisper initial_prompt (JSON list or newlines). */
-  custom_vocab?: string;
   /** Do-not-translate glossary JSON for NLLB/mBART. */
   translation_glossary_json?: string;
   /** Persisted action items JSON (or parsed array below). */
@@ -131,7 +129,6 @@ export interface MeetingCreate {
   presiding_officer?: string;
   meeting_date?: string | null;
   attendees?: string[];
-  custom_vocab?: string;
   translation_glossary_json?: string;
   action_items_json?: string;
   action_items?: ActionItem[];
@@ -147,7 +144,6 @@ export interface MeetingUpdate {
   meeting_date?: string | null;
   attendees?: string[] | null;
   language?: string | null;
-  custom_vocab?: string;
   translation_glossary_json?: string;
   action_items_json?: string;
   action_items?: ActionItem[];

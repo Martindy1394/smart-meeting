@@ -107,15 +107,26 @@ class ActionItemExtractionTests(unittest.TestCase):
         self.assertTrue(any(i.get("due_date") for i in items))
 
 
-class CustomVocabPromptTests(unittest.TestCase):
+class PromptTermTests(unittest.TestCase):
     def test_prompt_appends_terms(self):
-        from app.services.transcription import initial_prompt, parse_custom_vocab
+        from app.services.transcription import initial_prompt, parse_prompt_terms
 
-        terms = parse_custom_vocab("Garcia\nIloilo City")
+        terms = parse_prompt_terms("Garcia\nIloilo City")
         prompt = initial_prompt("hil", extra_terms=terms)
         self.assertIsNotNone(prompt)
         self.assertIn("Garcia", prompt)
         self.assertIn("Iloilo City", prompt)
+
+    def test_meeting_prompt_terms_uses_names(self):
+        from types import SimpleNamespace
+        from app.services.transcription import meeting_prompt_terms
+
+        meeting = SimpleNamespace(
+            attendees=["Garcia", "Juan"],
+            presiding_officer="Maria Santos",
+        )
+        terms = meeting_prompt_terms(meeting)
+        self.assertEqual(terms, ["Garcia", "Juan", "Maria Santos"])
 
 
 if __name__ == "__main__":

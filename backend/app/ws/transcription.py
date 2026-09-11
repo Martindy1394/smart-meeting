@@ -303,7 +303,7 @@ async def transcribe_ws(websocket: WebSocket):
     warmup_done = bool(meta.get("seq"))  # skip warmup after reconnect mid-session
     resumed = bool(seq or live_caption or live_offset)
 
-    # Custom vocabulary + session language lock (Tier 1).
+    # Session language lock + attendee/officer name hints for Whisper.
     from ..services import transcription as transcription_svc
     extra_terms: list[str] = []
     language_locked = bool(meta.get("language_locked"))
@@ -314,17 +314,7 @@ async def transcribe_ws(websocket: WebSocket):
         try:
             mrow = db2.get(Meeting, meeting_id)
             if mrow is not None:
-                extra_terms = transcription_svc.parse_custom_vocab(
-                    getattr(mrow, "custom_vocab", "") or ""
-                )
-                # Also bias with attendee names (proper nouns).
-                try:
-                    from ..services.attendees import load_attendees
-                    extra_terms = transcription_svc.parse_custom_vocab(
-                        list(extra_terms) + load_attendees(mrow.attendees)
-                    )
-                except Exception:
-                    pass
+                extra_terms = transcription_svc.meeting_prompt_terms(mrow)
                 if getattr(mrow, "language_locked", False) and (mrow.language or "").strip():
                     language_locked = True
                     locked_language = (mrow.language or "").strip()

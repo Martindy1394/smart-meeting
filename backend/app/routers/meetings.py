@@ -245,7 +245,6 @@ def _to_detail(m: Meeting) -> MeetingDetail:
     detail.language_detection = _language_detection_info(m)
     detail.extractive_fallback = bool(getattr(m, "extractive_fallback", False))
     detail.language_locked = bool(getattr(m, "language_locked", False))
-    detail.custom_vocab = getattr(m, "custom_vocab", "") or ""
     detail.translation_glossary_json = (
         getattr(m, "translation_glossary_json", None) or "[]"
     )
@@ -437,7 +436,6 @@ def create_meeting(
         presiding_officer=(payload.presiding_officer or "").strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
-        custom_vocab=(payload.custom_vocab or "").strip(),
         translation_glossary_json=(
             payload.translation_glossary_json or "[]"
         ).strip()
@@ -677,8 +675,6 @@ def update_meeting(
         meeting.meeting_date = payload.meeting_date
     if payload.attendees is not None:
         meeting.attendees = _clean_attendees(payload.attendees)
-    if payload.custom_vocab is not None:
-        meeting.custom_vocab = (payload.custom_vocab or "").strip()
     if payload.translation_glossary_json is not None:
         meeting.translation_glossary_json = (
             (payload.translation_glossary_json or "").strip() or "[]"

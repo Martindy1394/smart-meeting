@@ -173,21 +173,7 @@ def finalize_meeting_recording(
 
         from ..services import transcription as transcription_svc
 
-        extra_terms = transcription_svc.parse_custom_vocab(
-            getattr(meeting, "custom_vocab", "") or ""
-        )
-        try:
-            from .attendees import load_attendees
-
-            extra_terms = transcription_svc.parse_custom_vocab(
-                list(extra_terms)
-                + load_attendees(meeting.attendees)
-                + [
-                    (getattr(meeting, "presiding_officer", None) or "").strip(),
-                ]
-            )
-        except Exception:
-            pass
+        extra_terms = transcription_svc.meeting_prompt_terms(meeting)
 
         try:
             # Prefer file path so we do not keep a second full PCM copy in RAM.
