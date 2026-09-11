@@ -198,6 +198,7 @@ def health():
     payload = {
         "status": "ok",
         "version": __version__,
+        "python_executable": __import__("sys").executable,
         "asr_engine": asr.engine_name(),
         "whisper_available": whisper_ok,
         "redis_available": redis_ok,

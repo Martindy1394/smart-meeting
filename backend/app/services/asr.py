@@ -76,10 +76,7 @@ def transcribe_pcm(
     finalization model is used (same quality as file transcription).
     """
     if not is_available():
-        raise ASRUnavailable(
-            "Whisper ASR is not installed. Install backend ML deps: "
-            "pip install -r requirements-ml.txt"
-        )
+        raise ASRUnavailable(transcription.missing_faster_whisper_message())
     if pcm is None or len(pcm) == 0:
         return ASRResult(text="", segments=[], engine="whisper", language=language)
 
@@ -114,10 +111,7 @@ def transcribe_file(
 ) -> ASRResult:
     """Run full-accuracy Whisper ASR on a stored audio file (WAV path)."""
     if not is_available():
-        raise ASRUnavailable(
-            "Whisper ASR is not installed. Install backend ML deps: "
-            "pip install -r requirements-ml.txt"
-        )
+        raise ASRUnavailable(transcription.missing_faster_whisper_message())
     samples = audio.load_audio_float32(path)
     return transcribe_pcm(samples, language, live=False, extra_terms=extra_terms)
 

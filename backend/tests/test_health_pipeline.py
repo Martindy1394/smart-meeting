@@ -27,6 +27,7 @@ class HealthPipelineTests(unittest.TestCase):
             res = client.get("/api/health")
         self.assertEqual(res.status_code, 200)
         data = res.json()
+        self.assertIn("python_executable", data)
         self.assertIn("pipeline", data)
         pipe = data["pipeline"]
         self.assertEqual(pipe["whisper"]["role"], "asr")

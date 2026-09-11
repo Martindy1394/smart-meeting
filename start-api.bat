@@ -4,7 +4,7 @@ cd /d "%~dp0backend"
 
 if not exist "app\main.py" (
   echo Could not find backend\app\main.py.
-  echo Keep start-api.bat in the Technical repo root.
+  echo Keep start-api.bat in the repo root.
   pause
   exit /b 1
 )
@@ -14,6 +14,10 @@ if not exist ".env" if exist ".env.example" (
   echo Created backend\.env from .env.example
 )
 
+set "PYEXE="
+if exist ".venv\Scripts\python.exe" set "PYEXE=.venv\Scripts\python.exe"
+if not defined PYEXE if exist "..\.venv\Scripts\python.exe" set "PYEXE=..\.venv\Scripts\python.exe"
+
 title Smart Meeting API
 echo.
 echo Starting API at http://127.0.0.1:8000
@@ -22,11 +26,24 @@ echo Docs:   http://127.0.0.1:8000/docs
 echo Leave this window open.
 echo.
 
-if exist ".venv\Scripts\python.exe" (
-  ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
-) else if exist "..\.venv\Scripts\python.exe" (
-  "..\.venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+echo Checking faster-whisper in this Python...
+if defined PYEXE (
+  "%PYEXE%" "scripts\ensure_faster_whisper.py"
+  if errorlevel 1 (
+    echo Failed to install faster-whisper into "%PYEXE%".
+    pause
+    exit /b 1
+  )
+  echo.
+  "%PYEXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
 ) else (
+  py -3 "scripts\ensure_faster_whisper.py"
+  if errorlevel 1 (
+    echo Failed to install faster-whisper. Install Python 3 and retry.
+    pause
+    exit /b 1
+  )
+  echo.
   py -3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
 )
 

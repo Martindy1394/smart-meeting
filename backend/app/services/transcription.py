@@ -179,8 +179,7 @@ class _ModelCache:
             from faster_whisper import WhisperModel  # type: ignore
         except Exception as exc:  # pragma: no cover
             raise TranscriptionUnavailable(
-                "faster-whisper is not installed. Install backend ML deps: "
-                "pip install -r requirements-ml.txt"
+                missing_faster_whisper_message(what="faster-whisper")
             ) from exc
 
         with self._lock:
@@ -288,6 +287,19 @@ def set_model_cache(cache: _ModelCache | None) -> _ModelCache:
     global _cache
     _cache = cache if cache is not None else _ModelCache()
     return _cache
+
+
+FASTER_WHISPER_PIP = "faster-whisper==1.1.0"
+
+
+def missing_faster_whisper_message(*, what: str = "Whisper ASR") -> str:
+    """Actionable install hint for the interpreter that is running the API."""
+    import sys
+
+    return (
+        f"{what} is not installed in this API process. "
+        f'Install with: "{sys.executable}" -m pip install {FASTER_WHISPER_PIP}'
+    )
 
 
 def is_available() -> bool:
