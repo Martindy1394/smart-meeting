@@ -102,7 +102,7 @@ issues.
 
 | Stage | Default | Hardware posture in code | Notes |
 |---|---|---|---|
-| Whisper live | faster-whisper `small` | CPU or CUDA via `WHISPER_DEVICE` / `COMPUTE_TYPE` | ~10s window / 5s hop; optional Tagalog RNN-T for lower live latency |
+| Whisper live | faster-whisper `small` | `WHISPER_DEVICE=auto` → CUDA+float16 if GPU else CPU+int8 | ~10s window / 5s hop; CTranslate2; GPU INT8 via `WHISPER_COMPUTE_TYPE=int8` |
 | Whisper final | `medium` or HF PH (`auto`) | Same device settings; chunked (~600s) for long meetings | Stronger than live; dominates stop-recording wait |
 | NLLB PH→EN | `nllb-200-distilled-600M` | Loaded on demand in `llm.py` | Preferred PH→EN path |
 | mBART | `mbart-large-50-many-to-many-mmt` | Loaded on demand | Fallback PH→EN; primary for non-EN |

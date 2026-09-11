@@ -34,6 +34,61 @@ from ..config import settings
 
 logger = logging.getLogger("smart_meeting.transcription")
 
+
+def resolve_whisper_device() -> str:
+    """Resolve Whisper device: prefer CUDA when ``auto`` and a GPU is present."""
+    raw = (settings.whisper_device or "auto").strip().lower() or "auto"
+    if raw not in {"auto", "cuda", "cpu"}:
+        logger.warning("Unknown WHISPER_DEVICE=%r — using auto", settings.whisper_device)
+        raw = "auto"
+
+    def _cuda_available() -> bool:
+        try:
+            import torch  # type: ignore
+
+            if torch.cuda.is_available():
+                return True
+        except Exception:
+            pass
+        try:
+            import ctranslate2  # type: ignore
+
+            return int(ctranslate2.get_cuda_device_count() or 0) > 0
+        except Exception:
+            return False
+
+    if raw == "cpu":
+        return "cpu"
+    if raw == "cuda":
+        if _cuda_available():
+            return "cuda"
+        logger.warning(
+            "WHISPER_DEVICE=cuda but no CUDA GPU detected — falling back to CPU"
+        )
+        return "cpu"
+    return "cuda" if _cuda_available() else "cpu"
+
+
+def resolve_whisper_compute_type(device: str | None = None) -> str:
+    """faster-whisper compute type: FP16 on GPU, INT8 on CPU (or GPU INT8)."""
+    raw = (settings.whisper_compute_type or "auto").strip().lower() or "auto"
+    if raw in {"fp16", "float16"}:
+        raw = "float16"
+    elif raw in {"fp32", "float32"}:
+        raw = "float32"
+    elif raw in {"int8_float16", "int8-float16"}:
+        raw = "int8_float16"
+    dev = (device or resolve_whisper_device()).strip().lower()
+    if raw in {"", "auto"}:
+        return "float16" if dev == "cuda" else "int8"
+    # CTranslate2 GPU INT8 uses int8_float16 (quantized weights, FP16 compute).
+    if raw == "int8" and dev == "cuda":
+        return "int8_float16"
+    if raw == "int8_float16" and dev == "cpu":
+        return "int8"
+    return raw
+
+
 # Soft VAD only used when explicitly enabled for the final path.
 _FINAL_VAD_PARAMS = {
     "onset": 0.25,
@@ -190,16 +245,34 @@ class _ModelCache:
 
         # Load outside the cache lock so concurrent warmups for different
         # models do not serialize on download / mmap.
+        device = resolve_whisper_device()
+        compute_type = resolve_whisper_compute_type(device)
         logger.info(
-            "Loading faster-whisper model '%s' (device=%s)",
+            "Loading faster-whisper model '%s' (device=%s compute_type=%s)",
             model_size,
-            settings.whisper_device,
+            device,
+            compute_type,
         )
-        model = WhisperModel(
-            model_size,
-            device=settings.whisper_device,
-            compute_type=settings.whisper_compute_type,
-        )
+        try:
+            model = WhisperModel(
+                model_size,
+                device=device,
+                compute_type=compute_type,
+            )
+        except Exception:
+            if device == "cuda":
+                logger.warning(
+                    "faster-whisper CUDA load failed (compute_type=%s); retrying CPU int8",
+                    compute_type,
+                    exc_info=True,
+                )
+                model = WhisperModel(
+                    model_size,
+                    device="cpu",
+                    compute_type="int8",
+                )
+            else:
+                raise
         with self._lock:
             existing = self._fw_models.get(model_size)
             if existing is not None:
@@ -235,7 +308,8 @@ class _ModelCache:
                 self._touch("hf", model_id)
                 return self._hf_pipelines[model_id]
 
-        device = 0 if settings.whisper_device == "cuda" and torch.cuda.is_available() else -1
+        resolved = resolve_whisper_device()
+        device = 0 if resolved == "cuda" else -1
         dtype = torch.float16 if device >= 0 else torch.float32
         logger.info(
             "Loading fine-tuned Whisper ASR '%s' via transformers (device=%s)",

@@ -219,6 +219,9 @@ See `backend/.env.example`. Key variables:
 | `JWT_SECRET_KEY` | dev value | **Change in production.** |
 | `DATABASE_URL` | `sqlite:///./smart_meeting.db` | Use a PostgreSQL DSN in prod. |
 | `WHISPER_LIVE_MODEL` | `small` | Fast live-caption Whisper model. |
+| `WHISPER_DEVICE` | `auto` | `auto` = CUDA when a GPU is on this API host, else CPU. |
+| `WHISPER_COMPUTE_TYPE` | `auto` | `auto` = float16 on CUDA, int8 on CPU. GPU int8 → `int8_float16`. |
+| `MBART_DEVICE` | `auto` | Place mBART on CUDA when available. |
 | `WHISPER_FINAL_MODEL` | `medium` | faster-whisper fallback if HF final model fails. |
 | `WHISPER_FINAL_BACKEND` | `auto` | `auto` prefers HF Tagalog/Hiligaynon candidates, then FW. |
 | `WHISPER_HILIGAYNON_FINE_TUNED_MODEL` | _(empty)_ | Your Hiligaynon fine-tune (HF/local); tried first. |

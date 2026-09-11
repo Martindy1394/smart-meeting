@@ -100,10 +100,11 @@ meeting never migrates onto the Tagalog path mid-session.
 LoRA train/merge scripts exist (`scripts/hiligaynon_asr/finetune_whisper_lora.py`)
 but nothing is wired into env yet.
 
-### 5. Live captions = stock `small` + CPU `int8`
+### 5. Live captions = stock `small` + auto device
 
-No PH/Tagalog CT2 live models → weak live words for both languages. Finalize can
-keep live text when final is short.
+Live still uses faster-whisper `small` unless a CT2 PH/Tagalog fine-tune is
+configured. Device is `WHISPER_DEVICE=auto` (CUDA+float16 when a GPU is on the
+API host, else CPU+int8).
 
 ### 6. Tagalog HF primary is `whisper-small` (unstable)
 
