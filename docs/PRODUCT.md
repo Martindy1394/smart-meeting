@@ -30,7 +30,7 @@ accuracy or security.
 | Speaker diarization | **Partial** — anonymous Voice 1–3 labels on live and refined segments (spectral clustering; not named enrollment) |
 | English translation | **Ships** — NLLB (PH→EN default) + mBART many-to-many |
 | Verbatim original + English + structured minutes | **Ships** — transcript, English translation, BART bullets/numbered (Discussion / Decisions / Action items) |
-| Timestamped text | **Ships** — `TranscriptSegment` start/end in the meeting room and in exports |
+| Timestamped text | **Partial** — times stay on stored segments; the meeting room and exports lead with **Voice 1–3** labels instead of clock stamps |
 | Searchable keywords | **Ships** — history search over title, venue, attendees, transcript, summary, and translation; find-in-transcript on the meeting room |
 | Export PDF / DOCX | **Ships** — meeting export API + UI (`txt` / `docx` / `pdf`) |
 | Offline processing | **Partial** — models run locally when installed (`requirements-ml.txt`); no cloud LLM required |
