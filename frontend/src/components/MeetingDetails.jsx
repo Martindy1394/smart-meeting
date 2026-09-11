@@ -69,6 +69,9 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   const [presidingOffice, setPresidingOffice] = useState(
     meeting.presiding_office || ""
   );
+  const [presidingOfficer, setPresidingOfficer] = useState(
+    meeting.presiding_officer || ""
+  );
   const [dateTime, setDateTime] = useState(() =>
     isFreshMeeting(meeting)
       ? nowLocalInput()
@@ -89,6 +92,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     setTitle(meeting.title || "");
     setVenue(meeting.venue || "");
     setPresidingOffice(meeting.presiding_office || "");
+    setPresidingOfficer(meeting.presiding_officer || "");
     // New meetings always open on the current local date & time.
     setDateTime(
       isFreshMeeting(meeting)
@@ -126,6 +130,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       title.trim() !== (meeting.title || "").trim() ||
       venue.trim() !== (meeting.venue || "").trim() ||
       presidingOffice.trim() !== (meeting.presiding_office || "").trim() ||
+      presidingOfficer.trim() !== (meeting.presiding_officer || "").trim() ||
       dateTime !== savedDateTime ||
       !sameAttendees(currentAttendees, savedAttendees) ||
       customVocab.trim() !== (meeting.custom_vocab || "").trim()
@@ -167,6 +172,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         title: title.trim(),
         venue: venue.trim(),
         presiding_office: presidingOffice.trim(),
+        presiding_officer: presidingOfficer.trim(),
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
         language: "auto",
@@ -182,6 +188,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           title: title.trim(),
           venue: venue.trim(),
           presiding_office: presidingOffice.trim(),
+          presiding_officer: presidingOfficer.trim(),
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
           language: "auto",
@@ -202,7 +209,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOffice, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [title, venue, presidingOffice, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   // Debounced autosave whenever required fields are complete and dirty.
   useEffect(() => {
@@ -218,7 +225,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOffice, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
+  }, [title, venue, presidingOffice, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
 
   useEffect(() => {
     if (!onAutosaveStatus) return;
@@ -230,7 +237,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ready: isComplete(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, savedAt, error, title, venue, presidingOffice, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [saving, savedAt, error, title, venue, presidingOffice, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   useEffect(() => {
     return () => {
@@ -328,6 +335,18 @@ const MeetingDetails = forwardRef(function MeetingDetails(
             value={presidingOffice}
             onChange={(e) => setPresidingOffice(e.target.value)}
             autoComplete="organization"
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="presiding-officer">Presiding officer</label>
+          <input
+            id="presiding-officer"
+            type="text"
+            placeholder="e.g. Chair / Dean / Presiding Officer"
+            value={presidingOfficer}
+            onChange={(e) => setPresidingOfficer(e.target.value)}
+            autoComplete="name"
           />
         </div>
 

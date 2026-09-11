@@ -67,6 +67,7 @@ export interface MeetingSummary {
   language_detection?: LanguageDetectionInfo | null;
   venue?: string;
   presiding_office?: string;
+  presiding_officer?: string;
   meeting_date?: string | null;
   duration_seconds: number;
   created_at: string;
@@ -91,6 +92,7 @@ export interface MeetingDetail {
   language_detection?: LanguageDetectionInfo | null;
   venue: string;
   presiding_office?: string;
+  presiding_officer?: string;
   meeting_date?: string | null;
   /** Always a string array on the API (DB stores JSON text). */
   attendees: string[];
@@ -126,6 +128,7 @@ export interface MeetingCreate {
   language?: string;
   venue?: string;
   presiding_office?: string;
+  presiding_officer?: string;
   meeting_date?: string | null;
   attendees?: string[];
   custom_vocab?: string;
@@ -140,6 +143,7 @@ export interface MeetingUpdate {
   title?: string | null;
   venue?: string | null;
   presiding_office?: string | null;
+  presiding_officer?: string | null;
   meeting_date?: string | null;
   attendees?: string[] | null;
   language?: string | null;
