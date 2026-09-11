@@ -505,8 +505,8 @@ def initial_prompt(
 ) -> str | None:
     """Language-aware short prompt (avoid long prompts — Whisper may echo them).
 
-    ``extra_terms`` are optional meeting proper nouns (attendees / org terms)
-    appended as a short custom vocabulary hint.
+    ``extra_terms`` are optional meeting proper nouns (attendee / officer names)
+    appended as a short Whisper prompt hint.
     """
     lang = effective_asr_language(language)
     if is_hiligaynon_language(lang):
@@ -529,8 +529,8 @@ def initial_prompt(
     return prompt or None
 
 
-def parse_custom_vocab(raw) -> list[str]:
-    """Parse meeting custom_vocab (JSON list, newlines, or commas)."""
+def parse_prompt_terms(raw) -> list[str]:
+    """Normalize proper-noun hints for Whisper ``initial_prompt``."""
     if raw is None or raw == "":
         return []
     if isinstance(raw, list):
@@ -562,6 +562,17 @@ def parse_custom_vocab(raw) -> list[str]:
         seen.add(key)
         out.append(term)
     return out[:24]
+
+
+def meeting_prompt_terms(meeting) -> list[str]:
+    """Attendee and presiding-officer names used as Whisper proper-noun hints."""
+    from .attendees import load_attendees
+
+    names = list(load_attendees(getattr(meeting, "attendees", None)))
+    officer = (getattr(meeting, "presiding_officer", None) or "").strip()
+    if officer:
+        names.append(officer)
+    return parse_prompt_terms(names)
 
 
 def _segment_from_whisper(s, *, text: str) -> Segment | None:

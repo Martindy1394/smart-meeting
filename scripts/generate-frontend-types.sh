@@ -34,7 +34,6 @@ const required = [
   "low_confidence",
   "extractive_fallback",
   "faithfulness",
-  "custom_vocab",
   "action_items",
 ];
 for (const key of required) {

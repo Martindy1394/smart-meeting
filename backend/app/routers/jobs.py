@@ -55,9 +55,7 @@ def _register_handlers() -> None:
             meeting = db.get(Meeting, meeting_id)
             if meeting is None or not meeting.audio_path:
                 raise RuntimeError("Meeting audio not available for retranscribe.")
-            extra = transcription_svc.parse_custom_vocab(
-                getattr(meeting, "custom_vocab", "") or ""
-            )
+            extra = transcription_svc.meeting_prompt_terms(meeting)
             lang = transcription_svc.effective_asr_language(meeting.language)
             # Idempotent: persist_transcript deletes prior segment rows first.
             result = asr.transcribe_file(

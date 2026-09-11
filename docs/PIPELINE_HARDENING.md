@@ -10,7 +10,7 @@ Diarization and client E2E encryption remain out of scope.
 | VAD gate | `services/vad.py` — webrtcvad when installed, else energy+ZCR. Called before live and final Whisper. |
 | Session language lock | WS caches detection after ~8s of speech in Redis + `Meeting.language_locked`. Never forces Hiligaynon→`tl`. |
 | Confidence filtering | `avg_logprob` / `no_speech_prob` / `low_confidence` on `TranscriptSegment`. Hard-drop high `no_speech_prob`; flag low logprob. |
-| Custom vocabulary | `Meeting.custom_vocab` (+ attendees) appended to Whisper `initial_prompt`. |
+| Name hints | Attendee and presiding-officer names appended to Whisper `initial_prompt`. |
 
 ## Tier 2 — Translation & minutes
 
@@ -38,4 +38,4 @@ Diarization and client E2E encryption remain out of scope.
 
 ## Tests
 
-`backend/tests/test_pipeline_hardening.py` — silence VAD, confidence drop/flag, glossary spelling, translation faithfulness, action-item extraction, custom vocab prompt.
+`backend/tests/test_pipeline_hardening.py` — silence VAD, confidence drop/flag, glossary spelling, translation faithfulness, action-item extraction, name-hint prompt.

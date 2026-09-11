@@ -148,8 +148,6 @@ class MeetingCreate(BaseModel):
     presiding_officer: str = Field(default="", max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)
-    # Proper nouns for Whisper initial_prompt (JSON list or newline text).
-    custom_vocab: str = ""
     translation_glossary_json: str = "[]"
 
     @field_validator("attendees", mode="before")
@@ -169,7 +167,6 @@ class MeetingUpdate(BaseModel):
     attendees: list[str] | None = None
     # Kept for API compatibility; product UI always sends ``auto``.
     language: str | None = Field(default=None, max_length=16)
-    custom_vocab: str | None = None
     translation_glossary_json: str | None = None
 
     @field_validator("attendees", mode="before")
@@ -294,7 +291,6 @@ class MeetingDetail(BaseModel):
     extractive_fallback: bool = False
     faithfulness: FaithfulnessReport | None = None
     translation_faithfulness: FaithfulnessReport | None = None
-    custom_vocab: str = ""
     translation_glossary_json: str = "[]"
     action_items: list[ActionItem] = Field(default_factory=list)
     language_locked: bool = False

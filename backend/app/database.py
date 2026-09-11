@@ -81,7 +81,6 @@ def _apply_lightweight_migrations() -> None:
         "language_detected_by": "VARCHAR(32) DEFAULT ''",
         "extractive_fallback": "BOOLEAN DEFAULT 0",
         "faithfulness_json": "TEXT DEFAULT ''",
-        "custom_vocab": "TEXT DEFAULT ''",
         "translation_glossary_json": "TEXT DEFAULT '[]'",
         "action_items_json": "TEXT DEFAULT '[]'",
         "language_locked": "BOOLEAN DEFAULT 0",
@@ -104,6 +103,13 @@ def _apply_lightweight_migrations() -> None:
             for name, ddl in meeting_columns.items():
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE meetings ADD COLUMN {name} {ddl}"))
+            # Removed product fields — drop leftover SQLite columns when possible.
+            for name in ("custom_vocab",):
+                if name in existing:
+                    try:
+                        conn.execute(text(f"ALTER TABLE meetings DROP COLUMN {name}"))
+                    except Exception:
+                        pass
 
     # Segment confidence columns (Tier 1).
     segment_columns = {
