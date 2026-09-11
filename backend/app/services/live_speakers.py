@@ -194,6 +194,57 @@ def label_float32(
     return idx, voice_label(idx)
 
 
+def _seg_text(seg) -> str:
+    if isinstance(seg, dict):
+        return (seg.get("text") or "").strip()
+    return (getattr(seg, "text", None) or "").strip()
+
+
+def _set_voice(seg, index: int, label: str) -> None:
+    if isinstance(seg, dict):
+        seg["speaker_index"] = int(index)
+        seg["speaker_label"] = label
+        return
+    try:
+        seg.speaker_index = int(index)
+        seg.speaker_label = label
+    except Exception:
+        pass
+
+
+def label_segments(
+    meeting_id: str,
+    segments: list,
+    samples: np.ndarray | None = None,
+    *,
+    sample_rate: int | None = None,
+) -> list:
+    """Assign Voice 1…N from each segment's audio slice (or Voice 1 fallback).
+
+    Used after Whisper so the transcript is speaker-labeled, not timestamp-led.
+    """
+    if not segments:
+        return []
+    reset_meeting(meeting_id)
+    sr = int(sample_rate or getattr(settings, "audio_sample_rate", 16000) or 16000)
+    from .segment_times import coerce_times
+
+    n = int(getattr(samples, "size", 0) or 0)
+    for seg in segments:
+        if not _seg_text(seg):
+            _set_voice(seg, 1, voice_label(1))
+            continue
+        start, end = coerce_times(seg)
+        if samples is not None and n > 0 and end > start:
+            i0 = max(0, int(start * sr))
+            i1 = min(n, max(i0 + 1, int(end * sr)))
+            idx, lab = label_float32(meeting_id, samples[i0:i1], sample_rate=sr)
+        else:
+            idx, lab = 1, voice_label(1)
+        _set_voice(seg, idx, lab)
+    return segments
+
+
 def prefix_text(label: str, text: str) -> str:
     raw = (text or "").strip()
     if not raw:

@@ -150,8 +150,29 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     """Write Whisper ASR segments + full text onto a meeting row.
 
     Clears stale summary/translation because they were derived from older text.
+    Voice-labels every segment from the saved WAV (Voice 1 / 2 / 3).
     """
+    import os
+
+    from ..config import settings
     from ..models import TranscriptSegment
+    from . import live_speakers
+
+    samples = None
+    path = getattr(meeting, "audio_path", None) or ""
+    if path and os.path.isfile(path) and bool(getattr(settings, "live_speaker_labels", True)):
+        try:
+            samples = audio.load_audio_float32(path)
+        except Exception:
+            logger.exception("Could not load WAV for voice labels meeting=%s", meeting.id)
+            samples = None
+        result.segments = live_speakers.label_segments(
+            meeting.id, list(result.segments or []), samples
+        )
+    elif bool(getattr(settings, "live_speaker_labels", True)):
+        result.segments = live_speakers.label_segments(
+            meeting.id, list(result.segments or []), None
+        )
 
     db.query(TranscriptSegment).filter(
         TranscriptSegment.meeting_id == meeting.id
@@ -175,7 +196,6 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
                 speaker_label=str(getattr(seg, "speaker_label", "") or ""),
             )
         )
-    from . import live_speakers
 
     labeled = live_speakers.format_transcript(result.segments)
     meeting.final_transcript = labeled or result.text

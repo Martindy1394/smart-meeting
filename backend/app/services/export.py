@@ -1,7 +1,7 @@
 """Multi-format meeting export (TXT / DOCX / PDF).
 
 Bundles original transcript, English translation, structured summary, and
-timestamped segments when available — see docs/PRODUCT.md.
+voice-labeled turns when available — see docs/PRODUCT.md.
 """
 from __future__ import annotations
 
@@ -19,20 +19,6 @@ def _safe_filename(title: str, fmt: str) -> str:
     base = re.sub(r"[^\w\-]+", "_", base).strip("_") or "meeting"
     base = re.sub(r"_+", "_", base)[:80]
     return f"{base}_smart_meeting.{fmt}"
-
-
-def _fmt_ts(seconds: float | None) -> str:
-    if seconds is None:
-        return ""
-    try:
-        s = max(0.0, float(seconds))
-    except (TypeError, ValueError):
-        return ""
-    m, sec = divmod(int(s), 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h:d}:{m:02d}:{sec:02d}"
-    return f"{m:d}:{sec:02d}"
 
 
 def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
@@ -66,8 +52,6 @@ def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
 
     segments = list(getattr(meeting, "segments", None) or [])
     if segments:
-        from .segment_times import coerce_times
-
         lines: list[str] = []
         for seg in segments:
             if isinstance(seg, dict):
@@ -78,14 +62,10 @@ def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
                 speaker = (getattr(seg, "speaker_label", None) or "").strip()
             if not text:
                 continue
-            start_s, end_s = coerce_times(seg)
-            start = _fmt_ts(start_s)
-            end = _fmt_ts(end_s)
-            stamp = f"[{start}–{end}] " if start or end else ""
-            voice = f"{speaker}: " if speaker else ""
-            lines.append(f"{stamp}{voice}{text}")
+            voice = speaker or "Voice 1"
+            lines.append(f"{voice}: {text}")
         if lines:
-            sections.append(("Timestamped segments", "\n".join(lines)))
+            sections.append(("Voice-labeled transcript", "\n".join(lines)))
 
     translation = (getattr(meeting, "translation", None) or "").strip()
     tlang = (getattr(meeting, "translation_language", None) or "English").strip()

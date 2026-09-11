@@ -45,10 +45,11 @@ class ExportServiceTests(unittest.TestCase):
         self.assertIn("English translation", data)
         self.assertIn("Good morning", data)
         self.assertIn("Structured summary", data)
-        self.assertIn("Timestamped segments", data)
+        self.assertIn("Voice-labeled transcript", data)
         self.assertIn("Voice 1:", data)
         self.assertIn("Attendees: Ada, Bob", data)
-        self.assertIn("[0:01–0:03]", data)
+        self.assertNotIn("Timestamped segments", data)
+        self.assertNotIn("[0:01–0:03]", data)
 
     def test_docx_and_pdf_nonempty(self):
         meeting = _sample_meeting()

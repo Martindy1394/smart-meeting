@@ -41,28 +41,47 @@ function speakerTone(index) {
   return `speaker-tone-${((n - 1) % 3) + 1}`;
 }
 
-function fmtStamp(sec) {
-  if (sec == null || sec === "") return "";
-  const n = Number(sec);
-  if (!Number.isFinite(n)) return "";
-  const total = Math.max(0, Math.floor(n));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
 function segmentHaystack(seg) {
   return `${seg?.speaker_label || ""} ${seg?.text || ""}`.toLowerCase();
+}
+
+function groupByVoice(segments) {
+  const out = [];
+  for (const seg of segments) {
+    const raw = (seg?.text || "").trim();
+    if (!raw) continue;
+    let label = (seg.speaker_label || "").trim();
+    let idx = Number(seg.speaker_index) || 0;
+    if (!label) {
+      label = "Voice 1";
+      idx = 1;
+    }
+    if (!idx) {
+      idx = Number((label.match(/\d+/) || ["1"])[0]) || 1;
+    }
+    let body = raw;
+    if (body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
+      body = body.slice(label.length + 1).trim();
+    }
+    const last = out[out.length - 1];
+    if (last && last.speaker_label === label) {
+      last.text = `${last.text} ${body}`.trim();
+      continue;
+    }
+    out.push({
+      ...seg,
+      speaker_label: label,
+      speaker_index: idx,
+      text: body,
+    });
+  }
+  return out;
 }
 
 function TranscriptTurns({ segments, fallbackText, keyword = "" }) {
   const kw = (keyword || "").trim().toLowerCase();
   const segs = Array.isArray(segments) ? segments.filter((s) => (s?.text || "").trim()) : [];
-  const filtered = kw ? segs.filter((s) => segmentHaystack(s).includes(kw)) : segs;
+  let filtered = groupByVoice(kw ? segs.filter((s) => segmentHaystack(s).includes(kw)) : segs);
   if (!filtered.length) {
     const text = (fallbackText || "").trim();
     if (!text) {
@@ -78,37 +97,24 @@ function TranscriptTurns({ segments, fallbackText, keyword = "" }) {
     const parsed = lines.map((ln, i) => {
       const m = ln.match(/^(Voice\s+\d+)\s*:\s*(.*)$/i);
       if (m) {
-        const idx = Number((m[1].match(/\d+/) || ["0"])[0]);
+        const idx = Number((m[1].match(/\d+/) || ["1"])[0]);
         return { id: `line-${i}`, speaker_label: m[1], speaker_index: idx, text: m[2] };
       }
-      return { id: `line-${i}`, speaker_label: "", speaker_index: 0, text: ln };
+      return { id: `line-${i}`, speaker_label: "Voice 1", speaker_index: 1, text: ln };
     });
-    if (parsed.some((p) => p.speaker_label)) {
-      return <TranscriptTurns segments={parsed} fallbackText="" keyword={keyword} />;
-    }
-    return text;
+    return <TranscriptTurns segments={parsed} fallbackText="" keyword={keyword} />;
   }
   return (
     <div className="transcript-turns">
       {filtered.map((seg, i) => {
-        const label = (seg.speaker_label || "").trim();
-        let body = (seg.text || "").trim();
-        if (label && body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
-          body = body.slice(label.length + 1).trim();
-        }
-        const start = fmtStamp(seg.start_time ?? seg.start);
-        const end = fmtStamp(seg.end_time ?? seg.end);
-        const stamp = start || end ? `${start}${end ? `–${end}` : ""}` : "";
+        const label = (seg.speaker_label || "Voice 1").trim();
         return (
           <p
-            key={seg.id || `${seg.seq || i}-${label}-${start}`}
+            key={seg.id || `${seg.seq || i}-${label}`}
             className={seg.low_confidence ? "transcript-seg-low transcript-turn" : "transcript-turn"}
           >
-            {stamp ? <span className="seg-time">{stamp}</span> : null}
-            {label ? (
-              <span className={`speaker-chip ${speakerTone(seg.speaker_index)}`}>{label}</span>
-            ) : null}
-            <span>{body}</span>
+            <span className={`speaker-chip ${speakerTone(seg.speaker_index)}`}>{label}</span>
+            <span>{seg.text}</span>
           </p>
         );
       })}
