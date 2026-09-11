@@ -66,6 +66,9 @@ const MeetingDetails = forwardRef(function MeetingDetails(
 ) {
   const [title, setTitle] = useState(meeting.title || "");
   const [venue, setVenue] = useState(meeting.venue || "");
+  const [presidingOffice, setPresidingOffice] = useState(
+    meeting.presiding_office || ""
+  );
   const [dateTime, setDateTime] = useState(() =>
     isFreshMeeting(meeting)
       ? nowLocalInput()
@@ -85,6 +88,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     skipAutosave.current = true;
     setTitle(meeting.title || "");
     setVenue(meeting.venue || "");
+    setPresidingOffice(meeting.presiding_office || "");
     // New meetings always open on the current local date & time.
     setDateTime(
       isFreshMeeting(meeting)
@@ -121,6 +125,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     return (
       title.trim() !== (meeting.title || "").trim() ||
       venue.trim() !== (meeting.venue || "").trim() ||
+      presidingOffice.trim() !== (meeting.presiding_office || "").trim() ||
       dateTime !== savedDateTime ||
       !sameAttendees(currentAttendees, savedAttendees) ||
       customVocab.trim() !== (meeting.custom_vocab || "").trim()
@@ -161,6 +166,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       await api.updateMeeting(meeting.id, {
         title: title.trim(),
         venue: venue.trim(),
+        presiding_office: presidingOffice.trim(),
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
         language: "auto",
@@ -175,6 +181,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           ...meeting,
           title: title.trim(),
           venue: venue.trim(),
+          presiding_office: presidingOffice.trim(),
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
           language: "auto",
@@ -195,7 +202,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [title, venue, presidingOffice, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   // Debounced autosave whenever required fields are complete and dirty.
   useEffect(() => {
@@ -211,7 +218,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
+  }, [title, venue, presidingOffice, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
 
   useEffect(() => {
     if (!onAutosaveStatus) return;
@@ -223,7 +230,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ready: isComplete(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, savedAt, error, title, venue, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [saving, savedAt, error, title, venue, presidingOffice, dateTime, attendees, attendeeInput, customVocab, meeting]);
 
   useEffect(() => {
     return () => {
@@ -309,6 +316,18 @@ const MeetingDetails = forwardRef(function MeetingDetails(
             value={venue}
             onChange={(e) => setVenue(e.target.value)}
             required
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="presiding-office">Presiding office</label>
+          <input
+            id="presiding-office"
+            type="text"
+            placeholder="e.g. Office of the Chair / Dean"
+            value={presidingOffice}
+            onChange={(e) => setPresidingOffice(e.target.value)}
+            autoComplete="organization"
           />
         </div>
 
