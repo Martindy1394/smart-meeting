@@ -233,6 +233,9 @@ class Settings(BaseSettings):
     asr_language_lock_seconds: float = 8.0
     asr_language_relock_no_speech_prob: float = 0.85
     asr_language_min_confidence: float = 0.45
+    # Live / final transcript Voice 1, Voice 2, Voice 3 labels (spectral clustering).
+    live_speaker_labels: bool = True
+    live_max_voices: int = 3
 
     # --- Background jobs / retention -------------------------------------
     jobs_use_redis_queue: bool = True

@@ -108,6 +108,8 @@ def _apply_lightweight_migrations() -> None:
         "avg_logprob": "FLOAT NULL",
         "no_speech_prob": "FLOAT NULL",
         "low_confidence": "BOOLEAN DEFAULT 0",
+        "speaker_index": "INTEGER DEFAULT 0",
+        "speaker_label": "VARCHAR(32) DEFAULT ''",
     }
     if "transcript_segments" in tables:
         existing = {col["name"] for col in inspector.get_columns("transcript_segments")}

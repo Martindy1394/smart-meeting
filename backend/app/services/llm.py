@@ -27,7 +27,7 @@ logger = logging.getLogger("smart_meeting.llm")
 
 _MAX_CHUNK_CHARS = 3500
 _SPEAKER_TURN_RE = re.compile(
-    r"^(?:Speaker\s*\d+|[\w][\w .'-]{0,40})\s*:\s+(.+)$",
+    r"^(?:Voice\s*\d+|Speaker\s*\d+|[\w][\w .'-]{0,40})\s*:\s+(.+)$",
     re.IGNORECASE,
 )
 

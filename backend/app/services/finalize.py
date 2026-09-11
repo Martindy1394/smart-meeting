@@ -188,6 +188,38 @@ def finalize_meeting_recording(
         try:
             # Prefer file path so we do not keep a second full PCM copy in RAM.
             result = asr.transcribe_file(audio_path, lang, extra_terms=extra_terms)
+            if bool(getattr(settings, "live_speaker_labels", True)):
+                from . import live_speakers
+
+                live_speakers.reset_meeting(meeting_id)
+                sr = int(getattr(settings, "audio_sample_rate", 16000) or 16000)
+                labeled_segs = []
+                wav_samples = None
+                try:
+                    wav_samples = audio.load_audio_float32(audio_path)
+                except Exception:
+                    wav_samples = None
+                for seg in result.segments:
+                    start, end = 0.0, 0.0
+                    try:
+                        from .segment_times import coerce_times
+
+                        start, end = coerce_times(seg)
+                    except Exception:
+                        start = float(getattr(seg, "start", 0.0) or 0.0)
+                        end = float(getattr(seg, "end", 0.0) or 0.0)
+                    if wav_samples is not None and end > start:
+                        i0 = max(0, int(start * sr))
+                        i1 = min(len(wav_samples), max(i0 + 1, int(end * sr)))
+                        idx, lab = live_speakers.label_float32(
+                            meeting_id, wav_samples[i0:i1], sample_rate=sr
+                        )
+                    else:
+                        idx, lab = 1, live_speakers.voice_label(1)
+                    seg.speaker_index = idx
+                    seg.speaker_label = lab
+                    labeled_segs.append(seg)
+                result.segments = labeled_segs
         except asr.ASRUnavailable as exc:
             live = (live_caption or "").strip()
             if live:
@@ -258,6 +290,9 @@ def finalize_meeting_recording(
 
         redis_store.clear_meeting_audio(meeting_id, keep_wav=True)
         audio.delete_raw_pcm(meeting_id)
+        from . import live_speakers
+
+        live_speakers.reset_meeting(meeting_id)
         live_metrics.record_finalize(True)
 
         language_detection = None

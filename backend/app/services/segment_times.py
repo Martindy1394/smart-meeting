@@ -71,6 +71,8 @@ def segment_wire_dict(
     avg_logprob: float | None = None,
     no_speech_prob: float | None = None,
     low_confidence: bool = False,
+    speaker_index: int | None = None,
+    speaker_label: str | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """Canonical segment payload with both wire and API timestamp keys."""
@@ -89,6 +91,8 @@ def segment_wire_dict(
         "avg_logprob": avg_logprob,
         "no_speech_prob": no_speech_prob,
         "low_confidence": bool(low_confidence),
+        "speaker_index": int(speaker_index or 0),
+        "speaker_label": speaker_label or "",
     }
     if seq is not None:
         out["seq"] = int(seq)
@@ -122,6 +126,16 @@ def segments_from_asr(segments: list[Any]) -> list[dict[str, Any]]:
                     getattr(seg, "low_confidence", False)
                     if not isinstance(seg, Mapping)
                     else seg.get("low_confidence", False)
+                ),
+                speaker_index=(
+                    getattr(seg, "speaker_index", 0)
+                    if not isinstance(seg, Mapping)
+                    else seg.get("speaker_index", 0)
+                ),
+                speaker_label=(
+                    getattr(seg, "speaker_label", "")
+                    if not isinstance(seg, Mapping)
+                    else seg.get("speaker_label") or ""
                 ),
             )
         )

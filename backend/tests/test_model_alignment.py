@@ -92,6 +92,8 @@ class TranscriptSegmentSchemaTests(unittest.TestCase):
         self.assertEqual(dumped["start"], 1.25)
         self.assertEqual(dumped["end_time"], 2.5)
         self.assertEqual(dumped["end"], 2.5)
+        self.assertEqual(dumped.get("speaker_label", ""), "")
+        self.assertEqual(dumped.get("speaker_index", 0), 0)
 
 
 class AiQualityPersistenceTests(unittest.TestCase):

@@ -68,7 +68,8 @@ def _build_pipeline_status() -> dict:
             "hiligaynon_decode": "auto-detect (never tl)",
             "hardware_hint": (
                 f"device={device}; compute_type={settings.whisper_compute_type}; "
-                "live favors latency (small), final favors accuracy (medium/HF PH)"
+                "live favors latency (small), final favors accuracy (medium/HF PH); "
+                f"live_speaker_labels={bool(getattr(settings, 'live_speaker_labels', True))}"
             ),
             "metrics_status": "WER/latency/cost TBD — see docs/MODELS.md",
         },

@@ -123,6 +123,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const [status, setStatus] = useState("idle"); // idle|starting|recording|paused|finalizing|error
   const [liveText, setLiveText] = useState("");
   const [liveLowConfidence, setLiveLowConfidence] = useState(false);
+  const [liveSpeakerLabel, setLiveSpeakerLabel] = useState("");
+  const [liveSpeakerIndex, setLiveSpeakerIndex] = useState(0);
   const [message, setMessage] = useState("");
   const [transcriptionAvailable, setTranscriptionAvailable] = useState(true);
   const [elapsed, setElapsed] = useState(0);
@@ -260,6 +262,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
       liveSegmentsRef.current = {};
       setLiveText("");
       setLiveLowConfidence(false);
+      setLiveSpeakerLabel("");
+      setLiveSpeakerIndex(0);
       setRecording(false);
       setStatus("idle");
       if (meetingIdRef.current) {
@@ -500,6 +504,10 @@ export function useRecorder({ onFinalTranscript } = {}) {
           if (typeof data.low_confidence === "boolean") {
             setLiveLowConfidence(data.low_confidence);
           }
+          if (data.speaker_label) {
+            setLiveSpeakerLabel(String(data.speaker_label));
+            setLiveSpeakerIndex(Number(data.speaker_index) || 0);
+          }
           setLiveText((prev) => {
             const current = (prev || "").trim();
             if (!current) return incoming;
@@ -530,6 +538,10 @@ export function useRecorder({ onFinalTranscript } = {}) {
           liveSegmentsRef.current[data.seq] = data.text;
           if (data.low_confidence) {
             setLiveLowConfidence(true);
+          }
+          if (data.speaker_label) {
+            setLiveSpeakerLabel(String(data.speaker_label));
+            setLiveSpeakerIndex(Number(data.speaker_index) || 0);
           }
           // Only fall back to composed chunks if we have not received live_caption yet.
           setLiveText((prev) => prev || composeLive());
@@ -1014,6 +1026,8 @@ export function useRecorder({ onFinalTranscript } = {}) {
     status,
     liveText,
     liveLowConfidence,
+    liveSpeakerLabel,
+    liveSpeakerIndex,
     message,
     transcriptionAvailable,
     elapsed,

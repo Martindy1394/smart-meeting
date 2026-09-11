@@ -39,6 +39,9 @@ export interface TranscriptSegment {
   no_speech_prob?: number | null;
   /** Soft flag — UI may underline / badge low-confidence captions. */
   low_confidence?: boolean;
+  /** Anonymous clustered voice for this fragment (Voice 1 …). */
+  speaker_index?: number;
+  speaker_label?: string;
 }
 
 /** Structured action item from BART Action Items (or persisted JSON). */
@@ -175,4 +178,6 @@ export interface WireSegment {
   avg_logprob?: number | null;
   no_speech_prob?: number | null;
   low_confidence?: boolean;
+  speaker_index?: number;
+  speaker_label?: string;
 }

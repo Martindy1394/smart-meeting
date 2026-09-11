@@ -1321,6 +1321,37 @@ button {
   color: var(--danger);
   vertical-align: middle;
 }
+.transcript-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.transcript-turn {
+  margin: 0;
+  line-height: 1.45;
+}
+.speaker-chip {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+.speaker-tone-1 {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.speaker-tone-2 {
+  background: #dcfce7;
+  color: #166534;
+}
+.speaker-tone-3 {
+  background: #ffedd5;
+  color: #9a3412;
+}
 .transcript-seg-low {
   text-decoration: underline wavy;
   text-decoration-color: var(--danger);

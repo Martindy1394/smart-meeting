@@ -78,6 +78,18 @@ async def _emit_live_window(
         # Keep previous_window so the next speech hop still merges cleanly.
         return live_caption, previous_window, None
 
+    speaker_index, speaker_label = 0, ""
+    try:
+        from ..services import live_speakers
+
+        speaker_index, speaker_label = live_speakers.label_pcm(
+            meeting_id,
+            chunk,
+            sample_rate=settings.audio_sample_rate,
+        )
+    except Exception:
+        logger.debug("live speaker label skipped", exc_info=True)
+
     result = await asyncio.to_thread(
         asr.transcribe_pcm,
         samples,
@@ -126,13 +138,23 @@ async def _emit_live_window(
         if len(merged.split()) < len((live_caption or "").split()):
             merged = live_caption
     if merged != live_caption:
+        display = merged
+        if speaker_label:
+            try:
+                from ..services import live_speakers
+
+                display = live_speakers.prefix_text(speaker_label, merged)
+            except Exception:
+                display = merged
         await _send(
             websocket,
             {
                 "type": "live_caption",
                 "seq": seq,
-                "text": merged,
+                "text": display,
                 "engine": "whisper",
+                "speaker_index": speaker_index,
+                "speaker_label": speaker_label,
             },
         )
         # Also keep legacy live_segment for older clients / persistence.
@@ -157,6 +179,8 @@ async def _emit_live_window(
             avg_logprob=getattr(first, "avg_logprob", None) if first else None,
             no_speech_prob=getattr(first, "no_speech_prob", None) if first else None,
             low_confidence=bool(getattr(first, "low_confidence", False)) if first else False,
+            speaker_index=speaker_index,
+            speaker_label=speaker_label,
         )
         await _send(
             websocket,
@@ -178,6 +202,8 @@ async def _emit_live_window(
                 avg_logprob=getattr(first, "avg_logprob", None) if first else None,
                 no_speech_prob=getattr(first, "no_speech_prob", None) if first else None,
                 low_confidence=bool(getattr(first, "low_confidence", False)) if first else False,
+                speaker_index=speaker_index,
+                speaker_label=speaker_label,
             )
     detection = None
     if getattr(result, "language_confidence", None) is not None or getattr(result, "language", None):
@@ -975,6 +1001,8 @@ def _persist_live_segment(
     avg_logprob: float | None = None,
     no_speech_prob: float | None = None,
     low_confidence: bool = False,
+    speaker_index: int = 0,
+    speaker_label: str = "",
 ) -> None:
     db = SessionLocal()
     try:
@@ -989,6 +1017,8 @@ def _persist_live_segment(
                 avg_logprob=avg_logprob,
                 no_speech_prob=no_speech_prob,
                 low_confidence=bool(low_confidence),
+                speaker_index=int(speaker_index or 0),
+                speaker_label=speaker_label or "",
             )
         )
         db.commit()

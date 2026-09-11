@@ -35,6 +35,55 @@ function MiniIcon({ children }) {
   );
 }
 
+function speakerTone(index) {
+  const n = Number(index) || 0;
+  return `speaker-tone-${((n - 1) % 3) + 1}`;
+}
+
+function TranscriptTurns({ segments, fallbackText }) {
+  const segs = Array.isArray(segments) ? segments.filter((s) => (s?.text || "").trim()) : [];
+  if (!segs.length) {
+    const text = (fallbackText || "").trim();
+    if (!text) return null;
+    const lines = text.split(/\n+/).map((ln) => ln.trim()).filter(Boolean);
+    const parsed = lines.map((ln, i) => {
+      const m = ln.match(/^(Voice\s+\d+)\s*:\s*(.*)$/i);
+      if (m) {
+        const idx = Number((m[1].match(/\d+/) || ["0"])[0]);
+        return { id: `line-${i}`, speaker_label: m[1], speaker_index: idx, text: m[2] };
+      }
+      return { id: `line-${i}`, speaker_label: "", speaker_index: 0, text: ln };
+    });
+    if (parsed.some((p) => p.speaker_label)) {
+      return <TranscriptTurns segments={parsed} fallbackText="" />;
+    }
+    return text;
+  }
+  return (
+    <div className="transcript-turns">
+      {segs.map((seg, i) => {
+        const label = (seg.speaker_label || "").trim();
+        let body = (seg.text || "").trim();
+        if (label && body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
+          body = body.slice(label.length + 1).trim();
+        }
+        return (
+          <p
+            key={seg.id || `${seg.seq || i}-${label}`}
+            className={seg.low_confidence ? "transcript-seg-low transcript-turn" : "transcript-turn"}
+          >
+            {label ? (
+              <span className={`speaker-chip ${speakerTone(seg.speaker_index)}`}>{label}</span>
+            ) : null}
+            <span>{body}</span>
+            {i < segs.length - 1 ? " " : ""}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function MeetingRoom({
   meeting,
   onMeetingUpdated,
@@ -677,6 +726,13 @@ export default function MeetingRoom({
             {asrError && <div className="error-banner">{asrError}</div>}
             {showLive && recorder.liveText ? (
               <span className="transcript-live">
+                {recorder.liveSpeakerLabel ? (
+                  <span
+                    className={`speaker-chip ${speakerTone(recorder.liveSpeakerIndex)}`}
+                  >
+                    {recorder.liveSpeakerLabel}
+                  </span>
+                ) : null}
                 <span
                   className={
                     recorder.liveLowConfidence ? "caption-low-confidence" : undefined
@@ -692,29 +748,10 @@ export default function MeetingRoom({
               </span>
             ) : hasTranscript &&
               Array.isArray(meeting.segments) &&
-              meeting.segments.some((s) => s.low_confidence) ? (
-              <span className="transcript-final-segs">
-                {meeting.segments.map((seg, i) => (
-                  <span
-                    key={seg.id || seg.seq || i}
-                    className={seg.low_confidence ? "transcript-seg-low" : undefined}
-                    title={
-                      seg.low_confidence
-                        ? `Low confidence${
-                            seg.avg_logprob != null
-                              ? ` (avg_logprob ${Number(seg.avg_logprob).toFixed(2)})`
-                              : ""
-                          }`
-                        : undefined
-                    }
-                  >
-                    {seg.text}
-                    {i < meeting.segments.length - 1 ? " " : ""}
-                  </span>
-                ))}
-              </span>
+              meeting.segments.some((s) => (s.speaker_label || "").trim() || s.low_confidence) ? (
+              <TranscriptTurns segments={meeting.segments} fallbackText={finalTranscript} />
             ) : hasTranscript ? (
-              finalTranscript
+              <TranscriptTurns segments={[]} fallbackText={finalTranscript} />
             ) : showLive ? (
               <span className="transcript-live">
                 {isStarting

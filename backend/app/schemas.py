@@ -193,6 +193,8 @@ class TranscriptSegmentResponse(BaseModel):
     avg_logprob: float | None = None
     no_speech_prob: float | None = None
     low_confidence: bool = False
+    speaker_index: int = 0
+    speaker_label: str = ""
 
     class Config:
         from_attributes = True

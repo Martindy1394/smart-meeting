@@ -148,6 +148,9 @@ class TranscriptSegment(Base):
     avg_logprob: Mapped[float | None] = mapped_column(Float, nullable=True)
     no_speech_prob: Mapped[float | None] = mapped_column(Float, nullable=True)
     low_confidence: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Anonymous live voice cluster: 1 → "Voice 1" (not enrolled identity).
+    speaker_index: Mapped[int] = mapped_column(Integer, default=0)
+    speaker_label: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     meeting: Mapped["Meeting"] = relationship(back_populates="segments")

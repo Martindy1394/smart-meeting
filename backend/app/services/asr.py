@@ -171,14 +171,19 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
                 avg_logprob=getattr(seg, "avg_logprob", None),
                 no_speech_prob=getattr(seg, "no_speech_prob", None),
                 low_confidence=bool(getattr(seg, "low_confidence", False)),
+                speaker_index=int(getattr(seg, "speaker_index", 0) or 0),
+                speaker_label=str(getattr(seg, "speaker_label", "") or ""),
             )
         )
-    meeting.final_transcript = result.text
+    from . import live_speakers
+
+    labeled = live_speakers.format_transcript(result.segments)
+    meeting.final_transcript = labeled or result.text
     # Final safety net: collapse any residual Whisper repetition loops.
     try:
         from .transcription import _collapse_hallucinations
 
-        meeting.final_transcript = _collapse_hallucinations(result.text)
+        meeting.final_transcript = _collapse_hallucinations(meeting.final_transcript or result.text)
     except Exception:
         pass
     meeting.summary = ""
