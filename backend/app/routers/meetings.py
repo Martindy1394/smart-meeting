@@ -389,7 +389,6 @@ def list_meetings(
                 Meeting.summary.ilike(pattern),
                 Meeting.translation.ilike(pattern),
                 Meeting.venue.ilike(pattern),
-                Meeting.presiding_office.ilike(pattern),
                 Meeting.presiding_officer.ilike(pattern),
                 # Attendees are JSON text via TypeDecorator — cast so ILIKE
                 # works on SQLite and PostgreSQL.

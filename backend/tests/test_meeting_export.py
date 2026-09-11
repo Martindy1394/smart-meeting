@@ -24,7 +24,6 @@ def _sample_meeting():
     return SimpleNamespace(
         title="Board huddle",
         venue="Iloilo Hall",
-        presiding_office="Office of the Chair",
         presiding_officer="Maria Santos",
         attendees=["Ada", "Bob"],
         language="hil",
@@ -50,8 +49,8 @@ class ExportServiceTests(unittest.TestCase):
         self.assertIn("Voice-labeled transcript", data)
         self.assertIn("Voice 1:", data)
         self.assertIn("Attendees: Ada, Bob", data)
-        self.assertIn("Presiding office: Office of the Chair", data)
         self.assertIn("Presiding officer: Maria Santos", data)
+        self.assertNotIn("Presiding office:", data)
         self.assertNotIn("Timestamped segments", data)
         self.assertNotIn("[0:01–0:03]", data)
 
