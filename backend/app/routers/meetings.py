@@ -218,6 +218,7 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         language_detection=_language_detection_info(m),
         venue=m.venue or "",
         presiding_office=getattr(m, "presiding_office", None) or "",
+        presiding_officer=getattr(m, "presiding_officer", None) or "",
         meeting_date=m.meeting_date,
         duration_seconds=m.duration_seconds,
         created_at=m.created_at,
@@ -389,6 +390,7 @@ def list_meetings(
                 Meeting.translation.ilike(pattern),
                 Meeting.venue.ilike(pattern),
                 Meeting.presiding_office.ilike(pattern),
+                Meeting.presiding_officer.ilike(pattern),
                 # Attendees are JSON text via TypeDecorator — cast so ILIKE
                 # works on SQLite and PostgreSQL.
                 cast(Meeting.attendees, String).ilike(pattern),
@@ -415,6 +417,7 @@ def create_meeting(
         language=_normalize_meeting_language_label(payload.language),
         venue=payload.venue.strip(),
         presiding_office=(payload.presiding_office or "").strip(),
+        presiding_officer=(payload.presiding_officer or "").strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
         custom_vocab=(payload.custom_vocab or "").strip(),
@@ -651,6 +654,8 @@ def update_meeting(
         meeting.venue = payload.venue.strip()
     if payload.presiding_office is not None:
         meeting.presiding_office = payload.presiding_office.strip()
+    if payload.presiding_officer is not None:
+        meeting.presiding_officer = payload.presiding_officer.strip()
     if payload.meeting_date is not None:
         meeting.meeting_date = payload.meeting_date
     if payload.attendees is not None:

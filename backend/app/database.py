@@ -74,6 +74,7 @@ def _apply_lightweight_migrations() -> None:
     meeting_columns = {
         "venue": "VARCHAR(255) DEFAULT ''",
         "presiding_office": "VARCHAR(255) DEFAULT ''",
+        "presiding_officer": "VARCHAR(255) DEFAULT ''",
         "meeting_date": "TIMESTAMP NULL",
         "attendees": "TEXT DEFAULT '[]'",
         "language_confidence": "FLOAT NULL",

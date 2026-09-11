@@ -33,6 +33,7 @@ def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
         f"Title: {(meeting.title or 'Untitled meeting').strip()}",
         f"Venue: {(meeting.venue or '').strip() or '—'}",
         f"Presiding office: {(getattr(meeting, 'presiding_office', None) or '').strip() or '—'}",
+        f"Presiding officer: {(getattr(meeting, 'presiding_officer', None) or '').strip() or '—'}",
         f"Attendees: {attendee_s}",
         f"Language: {(meeting.language or 'auto').strip()}",
         f"Status: {(meeting.status or '').strip() or '—'}",
