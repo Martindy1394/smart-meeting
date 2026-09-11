@@ -180,7 +180,11 @@ def finalize_meeting_recording(
             from .attendees import load_attendees
 
             extra_terms = transcription_svc.parse_custom_vocab(
-                list(extra_terms) + load_attendees(meeting.attendees)
+                list(extra_terms)
+                + load_attendees(meeting.attendees)
+                + [
+                    (getattr(meeting, "presiding_office", None) or "").strip()
+                ]
             )
         except Exception:
             pass

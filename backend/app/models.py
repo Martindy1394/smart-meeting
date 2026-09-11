@@ -68,6 +68,7 @@ class Meeting(Base):
 
     # Meeting details.
     venue: Mapped[str] = mapped_column(String(255), default="")
+    presiding_office: Mapped[str] = mapped_column(String(255), default="")
     # Scheduled date/time of the meeting (distinct from created_at).
     meeting_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
