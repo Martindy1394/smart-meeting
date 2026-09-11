@@ -36,15 +36,44 @@ function MiniIcon({ children }) {
 }
 
 function speakerTone(index) {
-  const n = Number(index) || 0;
+  const n = Number(index);
+  if (!Number.isFinite(n) || n < 1) return "speaker-tone-1";
   return `speaker-tone-${((n - 1) % 3) + 1}`;
 }
 
-function TranscriptTurns({ segments, fallbackText }) {
+function fmtStamp(sec) {
+  if (sec == null || sec === "") return "";
+  const n = Number(sec);
+  if (!Number.isFinite(n)) return "";
+  const total = Math.max(0, Math.floor(n));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function segmentHaystack(seg) {
+  return `${seg?.speaker_label || ""} ${seg?.text || ""}`.toLowerCase();
+}
+
+function TranscriptTurns({ segments, fallbackText, keyword = "" }) {
+  const kw = (keyword || "").trim().toLowerCase();
   const segs = Array.isArray(segments) ? segments.filter((s) => (s?.text || "").trim()) : [];
-  if (!segs.length) {
+  const filtered = kw ? segs.filter((s) => segmentHaystack(s).includes(kw)) : segs;
+  if (!filtered.length) {
     const text = (fallbackText || "").trim();
-    if (!text) return null;
+    if (!text) {
+      if (kw && segs.length) {
+        return <span className="transcript-find-empty">No transcript lines match “{keyword}”.</span>;
+      }
+      return null;
+    }
+    if (kw && !text.toLowerCase().includes(kw)) {
+      return <span className="transcript-find-empty">No transcript lines match “{keyword}”.</span>;
+    }
     const lines = text.split(/\n+/).map((ln) => ln.trim()).filter(Boolean);
     const parsed = lines.map((ln, i) => {
       const m = ln.match(/^(Voice\s+\d+)\s*:\s*(.*)$/i);
@@ -55,28 +84,31 @@ function TranscriptTurns({ segments, fallbackText }) {
       return { id: `line-${i}`, speaker_label: "", speaker_index: 0, text: ln };
     });
     if (parsed.some((p) => p.speaker_label)) {
-      return <TranscriptTurns segments={parsed} fallbackText="" />;
+      return <TranscriptTurns segments={parsed} fallbackText="" keyword={keyword} />;
     }
     return text;
   }
   return (
     <div className="transcript-turns">
-      {segs.map((seg, i) => {
+      {filtered.map((seg, i) => {
         const label = (seg.speaker_label || "").trim();
         let body = (seg.text || "").trim();
         if (label && body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
           body = body.slice(label.length + 1).trim();
         }
+        const start = fmtStamp(seg.start_time ?? seg.start);
+        const end = fmtStamp(seg.end_time ?? seg.end);
+        const stamp = start || end ? `${start}${end ? `–${end}` : ""}` : "";
         return (
           <p
-            key={seg.id || `${seg.seq || i}-${label}`}
+            key={seg.id || `${seg.seq || i}-${label}-${start}`}
             className={seg.low_confidence ? "transcript-seg-low transcript-turn" : "transcript-turn"}
           >
+            {stamp ? <span className="seg-time">{stamp}</span> : null}
             {label ? (
               <span className={`speaker-chip ${speakerTone(seg.speaker_index)}`}>{label}</span>
             ) : null}
             <span>{body}</span>
-            {i < segs.length - 1 ? " " : ""}
           </p>
         );
       })}
@@ -96,6 +128,10 @@ export default function MeetingRoom({
   const [savingDetails, setSavingDetails] = useState(false);
 
   const [finalTranscript, setFinalTranscript] = useState(meeting.final_transcript || "");
+  const [transcriptSegments, setTranscriptSegments] = useState(
+    Array.isArray(meeting.segments) ? meeting.segments : []
+  );
+  const [transcriptQuery, setTranscriptQuery] = useState("");
   const [status, setStatus] = useState(meeting.status);
 
   // Summary state
@@ -241,6 +277,9 @@ export default function MeetingRoom({
         detailOrPayload.text ||
         "";
       setFinalTranscript(text);
+      setTranscriptSegments(
+        Array.isArray(detailOrPayload.segments) ? detailOrPayload.segments : []
+      );
       setStatus(detailOrPayload.status || "finalized");
       setHasAudio(Boolean(detailOrPayload.has_audio || text || audioUrl));
       setAsrError("");
@@ -347,6 +386,8 @@ export default function MeetingRoom({
   // Reset local state when the selected meeting changes.
   useEffect(() => {
     setFinalTranscript(meeting.final_transcript || "");
+    setTranscriptSegments(Array.isArray(meeting.segments) ? meeting.segments : []);
+    setTranscriptQuery("");
     setStatus(meeting.status);
     setSummary(meeting.summary || "");
     setSummaryFormat(meeting.summary_format || "bullets");
@@ -371,6 +412,12 @@ export default function MeetingRoom({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
+
+  useEffect(() => {
+    if (Array.isArray(meeting.segments) && meeting.segments.length) {
+      setTranscriptSegments(meeting.segments);
+    }
+  }, [meeting.segments]);
 
   useEffect(() => {
     return () => revokeAudioUrl();
@@ -634,6 +681,16 @@ export default function MeetingRoom({
               )}
             </h3>
             <div className="transcript-head-meta">
+              {hasTranscript && !showLive && (
+                <input
+                  className="transcript-find"
+                  type="search"
+                  placeholder="Find in transcript…"
+                  value={transcriptQuery}
+                  onChange={(e) => setTranscriptQuery(e.target.value)}
+                  aria-label="Find in transcript"
+                />
+              )}
               {/* On saved-meeting pages, actions live in the top toolbar. */}
               {!historyView && (hasTranscript || hasAudio) && (
                 <div className="transcript-actions">
@@ -724,7 +781,13 @@ export default function MeetingRoom({
           </div>
           <div className="card-body">
             {asrError && <div className="error-banner">{asrError}</div>}
-            {showLive && recorder.liveText ? (
+            {showLive && (recorder.liveTurns?.length || recorder.liveText) ? (
+              recorder.liveTurns?.length ? (
+                <TranscriptTurns
+                  segments={recorder.liveTurns}
+                  fallbackText={recorder.liveText}
+                />
+              ) : (
               <span className="transcript-live">
                 {recorder.liveSpeakerLabel ? (
                   <span
@@ -746,12 +809,17 @@ export default function MeetingRoom({
                   </span>
                 )}
               </span>
-            ) : hasTranscript &&
-              Array.isArray(meeting.segments) &&
-              meeting.segments.some((s) => (s.speaker_label || "").trim() || s.low_confidence) ? (
-              <TranscriptTurns segments={meeting.segments} fallbackText={finalTranscript} />
+              )
             ) : hasTranscript ? (
-              <TranscriptTurns segments={[]} fallbackText={finalTranscript} />
+              <TranscriptTurns
+                segments={
+                  transcriptSegments.length
+                    ? transcriptSegments
+                    : meeting.segments || []
+                }
+                fallbackText={finalTranscript}
+                keyword={transcriptQuery}
+              />
             ) : showLive ? (
               <span className="transcript-live">
                 {isStarting

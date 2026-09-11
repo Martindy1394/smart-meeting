@@ -27,11 +27,11 @@ accuracy or security.
 | Tagalog + Hiligaynon recognition | **Ships (biased)** — Hiligaynon-first defaults; Tagalog `tl` + optional RNN-T live; PH dialect HF models; PLD fine-tune path for Hiligaynon |
 | Dialects / colloquialisms / code-switching | **Partial** — PH Whisper + prompts; code-switch aware language modes; quality improves with PLD / Tagalog fine-tunes |
 | Noise filtering | **Partial** — energy gates, AGC/loudness handling, optional VAD on final pass |
-| Speaker diarization | **Roadmap** — not implemented yet (segments are timed, not speaker-labeled) |
+| Speaker diarization | **Partial** — anonymous Voice 1–3 labels on live and refined segments (spectral clustering; not named enrollment) |
 | English translation | **Ships** — NLLB (PH→EN default) + mBART many-to-many |
 | Verbatim original + English + structured minutes | **Ships** — transcript, English translation, BART bullets/numbered (Discussion / Decisions / Action items) |
-| Timestamped text | **Ships** — `TranscriptSegment` start/end; included in exports when present |
-| Searchable keywords | **Ships** — history search over title, transcript, summary, and translation |
+| Timestamped text | **Ships** — `TranscriptSegment` start/end in the meeting room and in exports |
+| Searchable keywords | **Ships** — history search over title, venue, attendees, transcript, summary, and translation; find-in-transcript on the meeting room |
 | Export PDF / DOCX | **Ships** — meeting export API + UI (`txt` / `docx` / `pdf`) |
 | Offline processing | **Partial** — models run locally when installed (`requirements-ml.txt`); no cloud LLM required |
 | End-to-end encryption | **Roadmap** — auth is short-lived JWT + refresh revocation; audio encryption-at-rest via `DATA_ENCRYPTION_KEY` (see [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md)). True client E2E is not built yet |

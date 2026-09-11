@@ -39,9 +39,14 @@ def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
     """Return ordered (heading, body) sections for export."""
     sections: list[tuple[str, str]] = []
 
+    attendees = getattr(meeting, "attendees", None) or []
+    if isinstance(attendees, str):
+        attendees = [attendees]
+    attendee_s = ", ".join(str(n).strip() for n in attendees if str(n).strip()) or "—"
     meta_lines = [
         f"Title: {(meeting.title or 'Untitled meeting').strip()}",
         f"Venue: {(meeting.venue or '').strip() or '—'}",
+        f"Attendees: {attendee_s}",
         f"Language: {(meeting.language or 'auto').strip()}",
         f"Status: {(meeting.status or '').strip() or '—'}",
     ]
@@ -61,15 +66,24 @@ def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
 
     segments = list(getattr(meeting, "segments", None) or [])
     if segments:
+        from .segment_times import coerce_times
+
         lines: list[str] = []
         for seg in segments:
-            text = (getattr(seg, "text", None) or "").strip()
+            if isinstance(seg, dict):
+                text = (seg.get("text") or "").strip()
+                speaker = (seg.get("speaker_label") or "").strip()
+            else:
+                text = (getattr(seg, "text", None) or "").strip()
+                speaker = (getattr(seg, "speaker_label", None) or "").strip()
             if not text:
                 continue
-            start = _fmt_ts(getattr(seg, "start_time", None))
-            end = _fmt_ts(getattr(seg, "end_time", None))
+            start_s, end_s = coerce_times(seg)
+            start = _fmt_ts(start_s)
+            end = _fmt_ts(end_s)
             stamp = f"[{start}–{end}] " if start or end else ""
-            lines.append(f"{stamp}{text}")
+            voice = f"{speaker}: " if speaker else ""
+            lines.append(f"{stamp}{voice}{text}")
         if lines:
             sections.append(("Timestamped segments", "\n".join(lines)))
 

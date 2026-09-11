@@ -25,6 +25,7 @@ export default function Workspace() {
   const [historyView, setHistoryView] = useState(false);
   const searchTimer = useRef(null);
 
+  const [createError, setCreateError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
@@ -86,6 +87,7 @@ export default function Workspace() {
   }, []);
 
   const createMeeting = useCallback(async () => {
+    setCreateError("");
     try {
       const detail = await api.createMeeting({
         title: "",
@@ -100,8 +102,8 @@ export default function Workspace() {
       setActiveMeeting(detail);
       setLoadingMeeting(false);
       Promise.resolve().then(() => loadMeetings(search));
-    } catch {
-      /* ignore */
+    } catch (err) {
+      setCreateError(err?.message || "Could not create a meeting.");
     }
   }, [loadMeetings, search]);
 
@@ -222,6 +224,12 @@ export default function Workspace() {
           title="This panel failed to render"
           onRetry={() => loadMeetings(search)}
         >
+          {createError ? (
+            <div className="list-load-error" role="alert">
+              <strong>Could not start a meeting</strong>
+              <p>{createError}</p>
+            </div>
+          ) : null}
           {showDashboard ? (
             <DashboardPanel
               meetings={meetings}

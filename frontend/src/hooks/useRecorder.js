@@ -136,6 +136,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
   const sourceRef = useRef(null);
   const streamRef = useRef(null);
   const liveSegmentsRef = useRef({});
+  const [liveTurns, setLiveTurns] = useState([]);
   const timerRef = useRef(null);
   const startedAtRef = useRef(null);
   const pausedTotalMsRef = useRef(0);
@@ -171,11 +172,25 @@ export function useRecorder({ onFinalTranscript } = {}) {
     onFinalRef.current = onFinalTranscript;
   }, [onFinalTranscript]);
 
+  const publishLiveTurns = useCallback(() => {
+    const keys = Object.keys(liveSegmentsRef.current)
+      .map(Number)
+      .sort((a, b) => a - b);
+    setLiveTurns(keys.map((k) => liveSegmentsRef.current[k]).filter(Boolean));
+  }, []);
+
   const composeLive = useCallback(() => {
     const keys = Object.keys(liveSegmentsRef.current)
       .map(Number)
       .sort((a, b) => a - b);
-    return keys.map((k) => liveSegmentsRef.current[k]).join(" ");
+    return keys
+      .map((k) => {
+        const row = liveSegmentsRef.current[k];
+        if (!row) return "";
+        return typeof row === "string" ? row : row.text || "";
+      })
+      .filter(Boolean)
+      .join(" ");
   }, []);
 
   const cleanupAudio = useCallback(() => {
@@ -260,6 +275,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
       reconnectRef.current.active = false;
       if (reconnectRef.current.timer) clearTimeout(reconnectRef.current.timer);
       liveSegmentsRef.current = {};
+      setLiveTurns([]);
       setLiveText("");
       setLiveLowConfidence(false);
       setLiveSpeakerLabel("");
@@ -534,8 +550,19 @@ export function useRecorder({ onFinalTranscript } = {}) {
           setMessage("");
           setStatus((s) => (s === "starting" ? "recording" : s));
         } else if (data.type === "live_segment") {
-          // Legacy per-chunk segments (kept for compatibility / persistence).
-          liveSegmentsRef.current[data.seq] = data.text;
+          const seqKey = data.seq != null ? data.seq : Object.keys(liveSegmentsRef.current).length;
+          liveSegmentsRef.current[seqKey] = {
+            text: data.text || "",
+            start: data.start ?? data.start_time ?? 0,
+            end: data.end ?? data.end_time ?? 0,
+            start_time: data.start_time ?? data.start ?? 0,
+            end_time: data.end_time ?? data.end ?? 0,
+            seq: seqKey,
+            speaker_label: data.speaker_label || "",
+            speaker_index: Number(data.speaker_index) || 0,
+            low_confidence: Boolean(data.low_confidence),
+          };
+          publishLiveTurns();
           if (data.low_confidence) {
             setLiveLowConfidence(true);
           }
@@ -653,13 +680,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
         // onclose handles reconnection logic.
       };
     },
-    [armFinalizeWatchdog, buildWsUrl, composeLive, finalizeViaRest, markFinalized]
+    [armFinalizeWatchdog, buildWsUrl, composeLive, finalizeViaRest, markFinalized, publishLiveTurns]
   );
 
   const start = useCallback(
     async (meetingId) => {
       setLiveText("");
       liveSegmentsRef.current = {};
+      setLiveTurns([]);
       meetingIdRef.current = meetingId;
       stoppingRef.current = false;
       stopSentOverWsRef.current = false;
@@ -1025,6 +1053,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
     paused,
     status,
     liveText,
+    liveTurns,
     liveLowConfidence,
     liveSpeakerLabel,
     liveSpeakerIndex,

@@ -1330,6 +1330,28 @@ button {
   margin: 0;
   line-height: 1.45;
 }
+.seg-time {
+  display: inline-block;
+  margin-right: 8px;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.transcript-find {
+  min-width: 160px;
+  max-width: 220px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+}
+.transcript-find-empty {
+  color: var(--text-dim);
+  font-size: 14px;
+}
 .speaker-chip {
   display: inline-block;
   margin-right: 8px;
