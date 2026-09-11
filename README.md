@@ -139,6 +139,19 @@ frontend/        React + Vite SPA
 
 ## Quick start (development)
 
+### Windows (double-click)
+
+From the repo root (`Technical`):
+
+| File | What it starts |
+| --- | --- |
+| `start-api.bat` | FastAPI on http://127.0.0.1:8000 |
+| `start-frontend.bat` | Vite UI on http://127.0.0.1:5173 |
+| `start-all.bat` | Both, in two windows |
+
+Leave the API and UI windows open. Open the app at http://127.0.0.1:5173.
+First-time API setup still needs `pip install -r backend\requirements.txt` (and Whisper via `faster-whisper` in that same Python). The UI script runs `npm install` once if `frontend\node_modules` is missing.
+
 ### 1. Backend
 
 ```bash
