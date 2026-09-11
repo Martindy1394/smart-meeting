@@ -58,6 +58,21 @@ function sameAttendees(a, b) {
   return a.every((name, i) => name === b[i]);
 }
 
+function matchDirectory(query, names, exclude = []) {
+  const q = (query || "").trim().toLowerCase();
+  const skip = new Set((exclude || []).map((n) => String(n).toLowerCase()));
+  const out = [];
+  for (const raw of names || []) {
+    const name = String(raw || "").trim();
+    if (!name || skip.has(name.toLowerCase())) continue;
+    if (q && name.toLowerCase() === q) continue;
+    if (q && !name.toLowerCase().includes(q)) continue;
+    out.push(name);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
 const AUTOSAVE_MS = 750;
 
 const MeetingDetails = forwardRef(function MeetingDetails(
@@ -77,6 +92,10 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
   const [customVocab, setCustomVocab] = useState(meeting.custom_vocab || "");
+  const [directory, setDirectory] = useState({
+    presiding_officers: [],
+    attendees: [],
+  });
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   const [error, setError] = useState("");
@@ -106,6 +125,27 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     }, 0);
     return () => clearTimeout(t);
   }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.meetingSuggestions();
+        if (cancelled || !data) return;
+        setDirectory({
+          presiding_officers: Array.isArray(data.presiding_officers)
+            ? data.presiding_officers
+            : [],
+          attendees: Array.isArray(data.attendees) ? data.attendees : [],
+        });
+      } catch {
+        /* suggestions are optional */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const isComplete = () => {
     const names = resolveAttendees(attendees, attendeeInput);
@@ -327,8 +367,31 @@ const MeetingDetails = forwardRef(function MeetingDetails(
             placeholder="e.g. Chair / Dean / Presiding Officer"
             value={presidingOfficer}
             onChange={(e) => setPresidingOfficer(e.target.value)}
-            autoComplete="name"
+            autoComplete="off"
+            list="presiding-officer-directory"
           />
+          <datalist id="presiding-officer-directory">
+            {directory.presiding_officers.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          {matchDirectory(presidingOfficer, directory.presiding_officers).length >
+            0 && (
+            <div className="name-suggestions" role="listbox" aria-label="Past presiding officers">
+              {matchDirectory(presidingOfficer, directory.presiding_officers).map(
+                (name) => (
+                  <button
+                    type="button"
+                    key={name}
+                    className="name-suggestion"
+                    onClick={() => setPresidingOfficer(name)}
+                  >
+                    {name}
+                  </button>
+                )
+              )}
+            </div>
+          )}
         </div>
 
         <div className="field">
@@ -379,7 +442,21 @@ const MeetingDetails = forwardRef(function MeetingDetails(
                 value={attendeeInput}
                 onChange={(e) => setAttendeeInput(e.target.value)}
                 onKeyDown={onAttendeeKeyDown}
+                autoComplete="off"
+                list="attendee-directory"
               />
+              <datalist id="attendee-directory">
+                {directory.attendees
+                  .filter(
+                    (name) =>
+                      !attendees.some(
+                        (a) => a.toLowerCase() === name.toLowerCase()
+                      )
+                  )
+                  .map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+              </datalist>
               <button
                 type="button"
                 className="btn secondary"
@@ -389,6 +466,30 @@ const MeetingDetails = forwardRef(function MeetingDetails(
                 + Add
               </button>
             </div>
+            {matchDirectory(attendeeInput, directory.attendees, attendees).length >
+              0 && (
+              <div className="name-suggestions" role="listbox" aria-label="Past attendees">
+                {matchDirectory(attendeeInput, directory.attendees, attendees).map(
+                  (name) => (
+                    <button
+                      type="button"
+                      key={name}
+                      className="name-suggestion"
+                      onClick={() => {
+                        setAttendees((prev) =>
+                          prev.some((a) => a.toLowerCase() === name.toLowerCase())
+                            ? prev
+                            : [...prev, name]
+                        );
+                        setAttendeeInput("");
+                      }}
+                    >
+                      {name}
+                    </button>
+                  )
+                )}
+              </div>
+            )}
           </div>
 
           <div className="field custom-vocab-field">

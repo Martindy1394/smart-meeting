@@ -1615,6 +1615,26 @@ select.inline {
 .attendee-input-row .btn {
   white-space: nowrap;
 }
+.name-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.name-suggestion {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.name-suggestion:hover,
+.name-suggestion:focus {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #1d4ed8);
+}
 @media (max-width: 620px) {
   .details-grid {
     grid-template-columns: 1fr;

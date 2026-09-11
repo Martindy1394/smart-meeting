@@ -33,6 +33,28 @@ class AttendeesBridgeTests(unittest.TestCase):
         self.assertEqual(col.process_result_value(bound, None), ["Ann", "Bee"])
 
 
+class NameDirectoryTests(unittest.TestCase):
+    def test_newest_first_unique_casefold(self):
+        from types import SimpleNamespace
+
+        from app.services.attendees import collect_name_directory
+
+        meetings = [
+            SimpleNamespace(
+                presiding_officer="Maria Santos",
+                attendees=["Ada", "Bob"],
+            ),
+            SimpleNamespace(
+                presiding_officer="maria santos",
+                attendees=["ada", "Carol"],
+            ),
+            SimpleNamespace(presiding_officer="  ", attendees=[]),
+        ]
+        out = collect_name_directory(meetings)
+        self.assertEqual(out["presiding_officers"], ["Maria Santos"])
+        self.assertEqual(out["attendees"], ["Ada", "Bob", "Carol"])
+
+
 class SegmentTimesTests(unittest.TestCase):
     def test_coerce_either_key_pair(self):
         from app.services.segment_times import coerce_times, segment_wire_dict, segments_from_asr
