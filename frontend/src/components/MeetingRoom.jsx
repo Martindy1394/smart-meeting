@@ -41,6 +41,13 @@ function speakerTone(index) {
   return `speaker-tone-${((n - 1) % 3) + 1}`;
 }
 
+function voiceAccuracyTitle(index) {
+  const n = Number(index);
+  if (n === 1) return "Highest transcription accuracy";
+  if (n === 2) return "Second-highest transcription accuracy";
+  return "Lower transcription accuracy";
+}
+
 function segmentHaystack(seg) {
   return `${seg?.speaker_label || ""} ${seg?.text || ""}`.toLowerCase();
 }
@@ -113,7 +120,12 @@ function TranscriptTurns({ segments, fallbackText, keyword = "" }) {
             key={seg.id || `${seg.seq || i}-${label}`}
             className={seg.low_confidence ? "transcript-seg-low transcript-turn" : "transcript-turn"}
           >
-            <span className={`speaker-chip ${speakerTone(seg.speaker_index)}`}>{label}</span>
+            <span
+              className={`speaker-chip ${speakerTone(seg.speaker_index)}`}
+              title={voiceAccuracyTitle(seg.speaker_index)}
+            >
+              {label}
+            </span>
             <span>{seg.text}</span>
           </p>
         );
@@ -798,6 +810,7 @@ export default function MeetingRoom({
                 {recorder.liveSpeakerLabel ? (
                   <span
                     className={`speaker-chip ${speakerTone(recorder.liveSpeakerIndex)}`}
+                    title={voiceAccuracyTitle(recorder.liveSpeakerIndex)}
                   >
                     {recorder.liveSpeakerLabel}
                   </span>

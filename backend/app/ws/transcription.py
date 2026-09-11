@@ -97,6 +97,15 @@ async def _emit_live_window(
         live=True,
         extra_terms=extra_terms,
     )
+    if speaker_index:
+        try:
+            from ..services import live_speakers
+
+            speaker_index, speaker_label = live_speakers.bind_asr_accuracy(
+                meeting_id, speaker_index, result
+            )
+        except Exception:
+            logger.debug("live speaker accuracy rank skipped", exc_info=True)
     window_text = result.text
     logger.info(
         "live.window meeting=%s seq=%d bytes=%d dur=%.2fs rms_i16=%.1f "

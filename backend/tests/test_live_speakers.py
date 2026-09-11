@@ -1,4 +1,4 @@
-"""Live Voice 1 / Voice 2 clustering (no extra ML library)."""
+"""Live Voice labels: cluster talkers, then rank Voice 1 by ASR accuracy."""
 from __future__ import annotations
 
 import sys
@@ -91,6 +91,61 @@ class LiveSpeakerTests(unittest.TestCase):
         self.assertTrue(out[0].speaker_label.startswith("Voice"))
         self.assertTrue(out[1].speaker_label.startswith("Voice"))
         self.assertNotEqual(out[0].speaker_index, out[1].speaker_index)
+
+    def test_labels_rank_by_asr_accuracy(self):
+        sr = 16000
+        live_speakers.reset_meeting("meet-acc")
+        low = np.frombuffer(_tone(90.0, seconds=1.0), dtype="<i2").astype(np.float32) / 32768.0
+        high = np.frombuffer(_tone(280.0, seconds=1.0), dtype="<i2").astype(np.float32) / 32768.0
+        wav = np.concatenate([low, high])
+
+        class Seg:
+            def __init__(self, text, start, end, avg_logprob, no_speech_prob=0.1):
+                self.text = text
+                self.start = start
+                self.end = end
+                self.avg_logprob = avg_logprob
+                self.no_speech_prob = no_speech_prob
+                self.low_confidence = False
+                self.speaker_label = ""
+                self.speaker_index = 0
+
+        # First talker is less accurate; second talker should become Voice 1.
+        segs = [
+            Seg("hello", 0.0, 1.0, avg_logprob=-0.9),
+            Seg("board", 1.0, 2.0, avg_logprob=-0.1),
+        ]
+        out = live_speakers.label_segments("meet-acc", segs, wav, sample_rate=sr)
+        self.assertEqual(out[1].speaker_label, "Voice 1")
+        self.assertEqual(out[0].speaker_label, "Voice 2")
+        self.assertEqual(out[1].speaker_index, 1)
+        self.assertEqual(out[0].speaker_index, 2)
+
+    def test_bind_asr_accuracy_promotes_best_cluster(self):
+        live_speakers.reset_meeting("meet-live-acc")
+        low = _tone(90.0)
+        high = _tone(280.0)
+        i1, _ = live_speakers.label_pcm("meet-live-acc", low)
+        i2, _ = live_speakers.label_pcm("meet-live-acc", high)
+        self.assertNotEqual(i1, i2)
+
+        class Result:
+            def __init__(self, lp):
+                self.segments = [type("S", (), {"avg_logprob": lp, "no_speech_prob": 0.05, "low_confidence": False})()]
+                self.language_confidence = None
+
+        live_speakers.bind_asr_accuracy("meet-live-acc", i1, Result(-0.95))
+        live_speakers.bind_asr_accuracy("meet-live-acc", i2, Result(-0.05))
+        d1, l1 = live_speakers.bind_asr_accuracy("meet-live-acc", i1)
+        d2, l2 = live_speakers.bind_asr_accuracy("meet-live-acc", i2)
+        self.assertEqual(l2, "Voice 1")
+        self.assertEqual(d2, 1)
+        self.assertEqual(l1, "Voice 2")
+        self.assertEqual(d1, 2)
+
+    def test_rank_without_scores_keeps_first_seen_order(self):
+        mapping = live_speakers.rank_voice_ids([1, 2, 1], {})
+        self.assertEqual(mapping, {1: 1, 2: 2})
 
 
 if __name__ == "__main__":

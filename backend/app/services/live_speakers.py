@@ -1,8 +1,10 @@
 """Lightweight live speaker labeling (Voice 1, Voice 2, Voice 3).
 
-Does **not** replace Whisper. Each live PCM window (and optional final-pass
-segment) is given an anonymous voice id by clustering a short spectral
-fingerprint. Labels are per-meeting and are not enrolled names.
+Does **not** replace Whisper. PCM windows are clustered with a short spectral
+fingerprint so turns from the same talker stay grouped. Display labels are then
+**ranked by ASR accuracy**: Voice 1 is the cluster with the highest Whisper
+confidence, Voice 2 the next, and so on. Labels are per-meeting and are not
+enrolled names.
 """
 from __future__ import annotations
 
@@ -108,10 +110,84 @@ def _dist(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     return float(math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b))))
 
 
+def segment_accuracy(seg) -> float | None:
+    """0–1 Whisper confidence for a segment (higher = more accurate)."""
+    if isinstance(seg, dict):
+        lp = seg.get("avg_logprob")
+        nsp = seg.get("no_speech_prob")
+        low = bool(seg.get("low_confidence", False))
+    else:
+        lp = getattr(seg, "avg_logprob", None)
+        nsp = getattr(seg, "no_speech_prob", None)
+        low = bool(getattr(seg, "low_confidence", False))
+    parts: list[float] = []
+    try:
+        if lp is not None:
+            # Typical Whisper avg_logprob is about -1.2 (poor) to 0 (strong).
+            parts.append(max(0.0, min(1.0, (float(lp) + 1.2) / 1.2)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        if nsp is not None:
+            parts.append(max(0.0, min(1.0, 1.0 - float(nsp))))
+    except (TypeError, ValueError):
+        pass
+    if not parts:
+        return None
+    score = sum(parts) / len(parts)
+    if low:
+        score *= 0.8
+    return score
+
+
+def asr_accuracy(result) -> float | None:
+    """Mean segment accuracy for a live/final Whisper result."""
+    segs = getattr(result, "segments", None) or []
+    scores = [s for s in (segment_accuracy(seg) for seg in segs) if s is not None]
+    if scores:
+        return sum(scores) / len(scores)
+    conf = getattr(result, "language_confidence", None)
+    try:
+        if conf is not None:
+            return max(0.0, min(1.0, float(conf)))
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def rank_voice_ids(
+    cluster_ids: list[int],
+    scores: dict[int, float],
+) -> dict[int, int]:
+    """Map internal cluster ids → Voice N ranked by accuracy (Voice 1 = best)."""
+    unique: list[int] = []
+    seen: set[int] = set()
+    for cid in cluster_ids:
+        n = int(cid or 0)
+        if n < 1 or n in seen:
+            continue
+        seen.add(n)
+        unique.append(n)
+    if not unique:
+        return {}
+    order = list(range(len(unique)))
+
+    def sort_key(i: int) -> tuple:
+        cid = unique[i]
+        if cid in scores:
+            return (0, -float(scores[cid]), i)
+        return (1, i)
+
+    ranked = [unique[i] for i in sorted(order, key=sort_key)]
+    return {cid: pos + 1 for pos, cid in enumerate(ranked)}
+
+
 @dataclass
 class _VoiceSession:
     centroids: list[tuple[float, ...]] = field(default_factory=list)
     counts: list[int] = field(default_factory=list)
+    accuracies: list[float] = field(default_factory=list)
+    acc_counts: list[int] = field(default_factory=list)
     last_index: int = 1
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -122,6 +198,8 @@ class _VoiceSession:
             if not self.centroids:
                 self.centroids.append(feat)
                 self.counts.append(1)
+                self.accuracies.append(0.0)
+                self.acc_counts.append(0)
                 self.last_index = 1
                 return 1
             dists = [_dist(feat, c) for c in self.centroids]
@@ -133,6 +211,8 @@ class _VoiceSession:
             if new_voice and len(self.centroids) < max_v:
                 self.centroids.append(feat)
                 self.counts.append(1)
+                self.accuracies.append(0.0)
+                self.acc_counts.append(0)
                 self.last_index = len(self.centroids)
                 return self.last_index
             # EMA update of matched centroid.
@@ -145,6 +225,34 @@ class _VoiceSession:
             self.counts[best_i] = n + 1
             self.last_index = best_i + 1
             return self.last_index
+
+    def observe(self, cluster_id: int, score: float | None) -> None:
+        if score is None:
+            return
+        i = int(cluster_id) - 1
+        with self.lock:
+            if i < 0 or i >= len(self.centroids):
+                return
+            n = self.acc_counts[i]
+            prev = self.accuracies[i]
+            self.accuracies[i] = (prev * n + float(score)) / float(n + 1)
+            self.acc_counts[i] = n + 1
+
+    def ranked_index(self, cluster_id: int) -> int:
+        cid = int(cluster_id or 0)
+        if cid < 1:
+            return 1
+        with self.lock:
+            ids = list(range(1, len(self.centroids) + 1))
+            scores = {
+                i + 1: self.accuracies[i]
+                for i in range(len(self.centroids))
+                if self.acc_counts[i]
+            }
+        if not scores:
+            return cid
+        mapping = rank_voice_ids(ids, scores)
+        return int(mapping.get(cid, cid))
 
 
 def _session(meeting_id: str) -> _VoiceSession:
@@ -171,13 +279,33 @@ def label_pcm(
     *,
     sample_rate: int | None = None,
 ) -> tuple[int, str]:
-    """Return ``(voice_index, 'Voice N')`` for a live PCM window."""
+    """Return ``(cluster_index, 'Voice N')`` for a live PCM window.
+
+    ``cluster_index`` is the stable talker group (order of first appearance).
+    Call ``bind_asr_accuracy`` after Whisper so the displayed Voice N is ranked
+    by transcription accuracy.
+    """
     if not _enabled():
         return 1, voice_label(1)
     sr = int(sample_rate or getattr(settings, "audio_sample_rate", 16000) or 16000)
     feat = fingerprint_pcm16(pcm, sample_rate=sr)
     idx = _session(meeting_id).assign(feat)
     return idx, voice_label(idx)
+
+
+def bind_asr_accuracy(
+    meeting_id: str,
+    cluster_index: int,
+    result=None,
+    *,
+    score: float | None = None,
+) -> tuple[int, str]:
+    """Rank Voice N by running ASR accuracy; Voice 1 is the most accurate talker."""
+    sess = _session(meeting_id)
+    observed = score if score is not None else asr_accuracy(result)
+    sess.observe(int(cluster_index or 0), observed)
+    display = sess.ranked_index(int(cluster_index or 1))
+    return display, voice_label(display)
 
 
 def label_float32(
@@ -219,9 +347,10 @@ def label_segments(
     *,
     sample_rate: int | None = None,
 ) -> list:
-    """Assign Voice 1…N from each segment's audio slice (or Voice 1 fallback).
+    """Assign Voice 1…N from each segment's audio slice, ranked by ASR accuracy.
 
-    Used after Whisper so the transcript is speaker-labeled, not timestamp-led.
+    Clustering groups the same talker; Voice 1 is the cluster with the highest
+    Whisper confidence. Without confidence scores, labels keep first-seen order.
     """
     if not segments:
         return []
@@ -230,18 +359,33 @@ def label_segments(
     from .segment_times import coerce_times
 
     n = int(getattr(samples, "size", 0) or 0)
+    cluster_ids: list[int] = []
     for seg in segments:
         if not _seg_text(seg):
-            _set_voice(seg, 1, voice_label(1))
+            cluster_ids.append(1)
             continue
         start, end = coerce_times(seg)
         if samples is not None and n > 0 and end > start:
             i0 = max(0, int(start * sr))
             i1 = min(n, max(i0 + 1, int(end * sr)))
-            idx, lab = label_float32(meeting_id, samples[i0:i1], sample_rate=sr)
+            idx, _lab = label_float32(meeting_id, samples[i0:i1], sample_rate=sr)
         else:
-            idx, lab = 1, voice_label(1)
-        _set_voice(seg, idx, lab)
+            idx = 1
+        cluster_ids.append(int(idx or 1))
+
+    score_sum: dict[int, float] = {}
+    score_n: dict[int, int] = {}
+    for seg, cid in zip(segments, cluster_ids):
+        sc = segment_accuracy(seg)
+        if sc is None:
+            continue
+        score_sum[cid] = score_sum.get(cid, 0.0) + sc
+        score_n[cid] = score_n.get(cid, 0) + 1
+    scores = {cid: score_sum[cid] / score_n[cid] for cid in score_n}
+    ranking = rank_voice_ids(cluster_ids, scores)
+    for seg, cid in zip(segments, cluster_ids):
+        display = int(ranking.get(cid, cid) or 1)
+        _set_voice(seg, display, voice_label(display))
     return segments
 
 

@@ -27,7 +27,7 @@ accuracy or security.
 | Tagalog + Hiligaynon recognition | **Ships (biased)** — Hiligaynon-first defaults; Tagalog `tl` + optional RNN-T live; PH dialect HF models; PLD fine-tune path for Hiligaynon |
 | Dialects / colloquialisms / code-switching | **Partial** — PH Whisper + prompts; code-switch aware language modes; quality improves with PLD / Tagalog fine-tunes |
 | Noise filtering | **Partial** — energy gates, AGC/loudness handling, optional VAD on final pass |
-| Speaker diarization | **Partial** — anonymous Voice 1–3 labels on live and refined segments (spectral clustering; not named enrollment) |
+| Speaker diarization | **Partial** — anonymous Voice 1–3 labels (spectral clusters ranked by Whisper accuracy; Voice 1 = most accurate; not named enrollment) |
 | English translation | **Ships** — NLLB (PH→EN default) + mBART many-to-many |
 | Verbatim original + English + structured minutes | **Ships** — transcript, English translation, BART bullets/numbered (Discussion / Decisions / Action items) |
 | Timestamped text | **Partial** — times stay on stored segments; the meeting room and exports lead with **Voice 1–3** labels instead of clock stamps |
