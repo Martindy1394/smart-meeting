@@ -72,6 +72,43 @@ def load_attendees(raw: Any) -> list[str]:
     return []
 
 
+def collect_name_directory(
+    meetings: Iterable[Any],
+    *,
+    max_officers: int = 80,
+    max_attendees: int = 120,
+) -> dict[str, list[str]]:
+    """Unique presiding officers and attendees, newest meetings first."""
+    officers: list[str] = []
+    attendees: list[str] = []
+    seen_off: set[str] = set()
+    seen_att: set[str] = set()
+    for meeting in meetings or []:
+        officer = getattr(meeting, "presiding_officer", None)
+        if isinstance(meeting, dict):
+            officer = meeting.get("presiding_officer", officer)
+        name = normalize_attendee_name(officer) if isinstance(officer, str) else None
+        if name:
+            key = name.casefold()
+            if key not in seen_off:
+                seen_off.add(key)
+                officers.append(name)
+        raw_att = getattr(meeting, "attendees", None)
+        if isinstance(meeting, dict):
+            raw_att = meeting.get("attendees", raw_att)
+        for attendee in load_attendees(raw_att):
+            key = attendee.casefold()
+            if key not in seen_att:
+                seen_att.add(key)
+                attendees.append(attendee)
+        if len(officers) >= max_officers and len(attendees) >= max_attendees:
+            break
+    return {
+        "presiding_officers": officers[:max_officers],
+        "attendees": attendees[:max_attendees],
+    }
+
+
 class AttendeesJSON(TypeDecorator):
     """SQLAlchemy column type: Python ``list[str]`` ↔ JSON text in the DB."""
 

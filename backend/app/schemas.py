@@ -260,6 +260,13 @@ class MeetingSummary(BaseModel):
         from_attributes = True
 
 
+class MeetingDirectory(BaseModel):
+    """Distinct names from the owner's prior meetings (newest first)."""
+
+    presiding_officers: list[str] = Field(default_factory=list)
+    attendees: list[str] = Field(default_factory=list)
+
+
 class ActionItem(BaseModel):
     text: str
     owner: str | None = None

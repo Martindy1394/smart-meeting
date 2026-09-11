@@ -19,6 +19,7 @@ from ..schemas import (
     FaithfulnessReport,
     MeetingCreate,
     MeetingDetail,
+    MeetingDirectory,
     MeetingSummary,
     MeetingUpdate,
 )
@@ -402,6 +403,23 @@ def list_meetings(
     elif has_audio is False:
         summaries = [s for s in summaries if not s.has_audio]
     return summaries
+
+
+@router.get("/suggestions", response_model=MeetingDirectory)
+def meeting_name_suggestions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Presiding officer and attendee names from this user's saved meetings."""
+    from ..services.attendees import collect_name_directory
+
+    meetings = (
+        db.query(Meeting)
+        .filter(Meeting.owner_id == current_user.id)
+        .order_by(Meeting.created_at.desc())
+        .all()
+    )
+    return MeetingDirectory.model_validate(collect_name_directory(meetings))
 
 
 @router.post("", response_model=MeetingDetail, status_code=status.HTTP_201_CREATED)

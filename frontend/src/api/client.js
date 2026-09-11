@@ -269,6 +269,7 @@ export const api = {
     const qs = params.toString();
     return request(`/meetings${qs ? `?${qs}` : ""}`);
   },
+  meetingSuggestions: () => request("/meetings/suggestions"),
   createMeeting: (payload) => request("/meetings", { method: "POST", body: payload }),
   getMeeting: (id) => request(`/meetings/${id}`),
   updateMeeting: (id, payload) => request(`/meetings/${id}`, { method: "PATCH", body: payload }),
