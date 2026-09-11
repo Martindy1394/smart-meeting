@@ -120,8 +120,11 @@ class Settings(BaseSettings):
     whisper_live_backend: str = "auto"
     # NeMo .nemo path or HF repo for live RNN-T (Tagalog FastConformer-Hybrid).
     rnnt_live_model: str = "NCSpeech/stt_tl_fastconformer_hybrid_large"
-    whisper_device: str = "cpu"
-    whisper_compute_type: str = "int8"
+    # auto = CUDA when a GPU is present, else CPU. faster-whisper / CTranslate2.
+    whisper_device: str = "auto"
+    # auto = float16 on CUDA (Tensor Cores), int8 on CPU.
+    # On GPU, int8 is mapped to CTranslate2 int8_float16 (quantized weights).
+    whisper_compute_type: str = "auto"
     # Meeting language label is always ``auto`` in the product UI. This setting
     # is the ASR bias used when resolving ``auto`` (Hiligaynon prompts + PH
     # models). Hiligaynon uses Whisper auto-detect — never forced Tagalog.
@@ -183,6 +186,8 @@ class Settings(BaseSettings):
     # --- LLM (BART / mBART) ---------------------------------------------
     bart_model: str = "facebook/bart-large-cnn"
     mbart_model: str = "facebook/mbart-large-50-many-to-many-mmt"
+    # auto = CUDA when a GPU is present, else CPU.
+    mbart_device: str = "auto"
     # Optional LoRA-merged mBART checkpoint fine-tuned for Tagalog/Hiligaynon→EN.
     # Train on native ``tl_XX`` (see docs/FINE_TUNE_MBART_PH.md). Hiligaynon has
     # no mBART token — fine-tune can only proxy it under ``tl_XX``.
