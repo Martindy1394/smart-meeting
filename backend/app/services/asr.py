@@ -150,7 +150,7 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     """Write Whisper ASR segments + full text onto a meeting row.
 
     Clears stale summary/translation because they were derived from older text.
-    Voice-labels every segment from the saved WAV (Voice 1 / 2 / 3).
+    Voice-labels every segment from the saved WAV (Voice 1 = highest ASR accuracy).
     """
     import os
 
