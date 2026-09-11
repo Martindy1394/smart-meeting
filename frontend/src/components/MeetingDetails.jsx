@@ -91,7 +91,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   );
   const [attendees, setAttendees] = useState(meeting.attendees || []);
   const [attendeeInput, setAttendeeInput] = useState("");
-  const [customVocab, setCustomVocab] = useState(meeting.custom_vocab || "");
   const [directory, setDirectory] = useState({
     presiding_officers: [],
     attendees: [],
@@ -116,7 +115,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     );
     setAttendees(meeting.attendees || []);
     setAttendeeInput("");
-    setCustomVocab(meeting.custom_vocab || "");
     setError("");
     setSavedAt(0);
     // Allow the next edit cycle to autosave after state settles.
@@ -167,8 +165,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       venue.trim() !== (meeting.venue || "").trim() ||
       presidingOfficer.trim() !== (meeting.presiding_officer || "").trim() ||
       dateTime !== savedDateTime ||
-      !sameAttendees(currentAttendees, savedAttendees) ||
-      customVocab.trim() !== (meeting.custom_vocab || "").trim()
+      !sameAttendees(currentAttendees, savedAttendees)
     );
   };
 
@@ -210,7 +207,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
         meeting_date: meetingDateIso,
         attendees: finalAttendees,
         language: "auto",
-        custom_vocab: customVocab.trim(),
       });
       if (seq !== saveSeq.current) return false;
       setAttendees(finalAttendees);
@@ -225,7 +221,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
           meeting_date: meetingDateIso,
           attendees: finalAttendees,
           language: "auto",
-          custom_vocab: customVocab.trim(),
         });
       }
       return true;
@@ -242,7 +237,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     if (onValidityChange) onValidityChange(isComplete());
     if (onDirtyChange) onDirtyChange(isDirty());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, meeting]);
 
   // Debounced autosave whenever required fields are complete and dirty.
   useEffect(() => {
@@ -258,7 +253,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting, saving]);
+  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, meeting, saving]);
 
   useEffect(() => {
     if (!onAutosaveStatus) return;
@@ -270,7 +265,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ready: isComplete(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, savedAt, error, title, venue, presidingOfficer, dateTime, attendees, attendeeInput, customVocab, meeting]);
+  }, [saving, savedAt, error, title, venue, presidingOfficer, dateTime, attendees, attendeeInput, meeting]);
 
   useEffect(() => {
     return () => {
@@ -490,20 +485,6 @@ const MeetingDetails = forwardRef(function MeetingDetails(
                 )}
               </div>
             )}
-          </div>
-
-          <div className="field custom-vocab-field">
-            <label htmlFor="custom-vocab">
-              Custom vocabulary{" "}
-              <span className="optional-hint">(optional)</span>
-            </label>
-            <textarea
-              id="custom-vocab"
-              rows={3}
-              placeholder="Proper nouns, one per line (e.g. company or place names)"
-              value={customVocab}
-              onChange={(e) => setCustomVocab(e.target.value)}
-            />
           </div>
         </div>
       </div>
