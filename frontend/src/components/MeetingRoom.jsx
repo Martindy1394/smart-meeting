@@ -618,7 +618,8 @@ export default function MeetingRoom({
           onAutosaveStatus={onAutosaveStatus}
         />
 
-        <div className="card transcript-card">
+        <div className="transcript-slot">
+          <div className="card transcript-card">
           <div className="card-head">
             <h3>
               Transcript
@@ -781,6 +782,7 @@ export default function MeetingRoom({
                 automatically. Meeting details autosave as you edit.
               </div>
             )}
+          </div>
           </div>
         </div>
       </div>
