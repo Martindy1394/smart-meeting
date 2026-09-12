@@ -14,15 +14,25 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let cancelled = false;
+    const AUTH_BOOTSTRAP_MS = 12_000;
     async function bootstrap() {
       if (!getToken()) {
         setLoading(false);
         return;
       }
       try {
-        const me = await api.me();
+        const me = await Promise.race([
+          api.me(),
+          new Promise((_, reject) => {
+            setTimeout(
+              () => reject(new Error("Timed out checking the signed-in session.")),
+              AUTH_BOOTSTRAP_MS
+            );
+          }),
+        ]);
         if (!cancelled) setUser(me);
       } catch (err) {
+        console.error("Auth bootstrap failed", err);
         // Keep the session on network blips; only drop tokens on auth rejection.
         if (err?.status === 401 || err?.status === 403) {
           clearSessionTokens();

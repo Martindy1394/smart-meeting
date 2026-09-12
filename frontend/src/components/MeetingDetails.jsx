@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { api } from "../api/client";
+import { listAttendees } from "../lib/voiceLabels.js";
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -39,23 +40,24 @@ function toIsoFromLocalInput(local) {
 
 function isFreshMeeting(meeting) {
   return (
-    meeting.status !== "finalized" &&
-    !(meeting.final_transcript || "").trim() &&
-    !(meeting.title || "").trim() &&
-    !(meeting.venue || "").trim()
+    meeting?.status !== "finalized" &&
+    !(meeting?.final_transcript || "").trim() &&
+    !(meeting?.title || "").trim() &&
+    !(meeting?.venue || "").trim()
   );
 }
 
 function resolveAttendees(attendees, attendeeInput) {
-  const pending = attendeeInput.trim();
-  return pending
-    ? Array.from(new Set([...attendees, pending]))
-    : attendees;
+  const base = Array.isArray(attendees) ? attendees : listAttendees({ attendees });
+  const pending = String(attendeeInput || "").trim();
+  return pending ? Array.from(new Set([...base, pending])) : base;
 }
 
 function sameAttendees(a, b) {
-  if (a.length !== b.length) return false;
-  return a.every((name, i) => name === b[i]);
+  const left = Array.isArray(a) ? a : [];
+  const right = Array.isArray(b) ? b : [];
+  if (left.length !== right.length) return false;
+  return left.every((name, i) => name === right[i]);
 }
 
 function matchDirectory(query, names, exclude = []) {
@@ -79,17 +81,17 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   { meeting, onUpdated, onValidityChange, onDirtyChange, onAutosaveStatus },
   ref
 ) {
-  const [title, setTitle] = useState(meeting.title || "");
-  const [venue, setVenue] = useState(meeting.venue || "");
+  const [title, setTitle] = useState(meeting?.title || "");
+  const [venue, setVenue] = useState(meeting?.venue || "");
   const [presidingOfficer, setPresidingOfficer] = useState(
-    meeting.presiding_officer || ""
+    meeting?.presiding_officer || ""
   );
   const [dateTime, setDateTime] = useState(() =>
     isFreshMeeting(meeting)
       ? nowLocalInput()
-      : toLocalInput(meeting.meeting_date) || nowLocalInput()
+      : toLocalInput(meeting?.meeting_date) || nowLocalInput()
   );
-  const [attendees, setAttendees] = useState(meeting.attendees || []);
+  const [attendees, setAttendees] = useState(() => listAttendees(meeting));
   const [attendeeInput, setAttendeeInput] = useState("");
   const [directory, setDirectory] = useState({
     presiding_officers: [],
@@ -104,16 +106,16 @@ const MeetingDetails = forwardRef(function MeetingDetails(
 
   useEffect(() => {
     skipAutosave.current = true;
-    setTitle(meeting.title || "");
-    setVenue(meeting.venue || "");
-    setPresidingOfficer(meeting.presiding_officer || "");
+    setTitle(meeting?.title || "");
+    setVenue(meeting?.venue || "");
+    setPresidingOfficer(meeting?.presiding_officer || "");
     // New meetings always open on the current local date & time.
     setDateTime(
       isFreshMeeting(meeting)
         ? nowLocalInput()
-        : toLocalInput(meeting.meeting_date) || nowLocalInput()
+        : toLocalInput(meeting?.meeting_date) || nowLocalInput()
     );
-    setAttendees(meeting.attendees || []);
+    setAttendees(listAttendees(meeting));
     setAttendeeInput("");
     setError("");
     setSavedAt(0);
@@ -122,7 +124,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       skipAutosave.current = false;
     }, 0);
     return () => clearTimeout(t);
-  }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [meeting?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;
@@ -154,16 +156,14 @@ const MeetingDetails = forwardRef(function MeetingDetails(
 
   const isDirty = () => {
     const currentAttendees = resolveAttendees(attendees, attendeeInput);
-    const savedAttendees = Array.isArray(meeting.attendees)
-      ? meeting.attendees
-      : [];
-    const savedDateTime = meeting.meeting_date
+    const savedAttendees = listAttendees(meeting);
+    const savedDateTime = meeting?.meeting_date
       ? toLocalInput(meeting.meeting_date)
       : "";
     return (
-      title.trim() !== (meeting.title || "").trim() ||
-      venue.trim() !== (meeting.venue || "").trim() ||
-      presidingOfficer.trim() !== (meeting.presiding_officer || "").trim() ||
+      title.trim() !== (meeting?.title || "").trim() ||
+      venue.trim() !== (meeting?.venue || "").trim() ||
+      presidingOfficer.trim() !== (meeting?.presiding_officer || "").trim() ||
       dateTime !== savedDateTime ||
       !sameAttendees(currentAttendees, savedAttendees)
     );
@@ -200,7 +200,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     setSaving(true);
     try {
       // Spoken language is not user-selected — always auto (Hiligaynon-biased).
-      await api.updateMeeting(meeting.id, {
+      await api.updateMeeting(meeting?.id, {
         title: title.trim(),
         venue: venue.trim(),
         presiding_officer: presidingOfficer.trim(),
@@ -225,6 +225,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       }
       return true;
     } catch (err) {
+      console.error("Meeting details save failed", err);
       if (seq !== saveSeq.current) return false;
       setError(err.message || "Could not autosave details.");
       return false;
@@ -233,17 +234,32 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     }
   }
 
+  const savedAttendeeKey = listAttendees(meeting).join("\n");
+  const savedOfficer = meeting?.presiding_officer || "";
+  const savedTitle = meeting?.title || "";
+  const savedVenue = meeting?.venue || "";
+  const savedDate = meeting?.meeting_date || "";
+
   useEffect(() => {
-    if (onValidityChange) onValidityChange(isComplete());
-    if (onDirtyChange) onDirtyChange(isDirty());
+    try {
+      if (onValidityChange) onValidityChange(isComplete());
+      if (onDirtyChange) onDirtyChange(isDirty());
+    } catch (err) {
+      console.error("Meeting details validity sync failed", err);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, meeting]);
+  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, savedTitle, savedVenue, savedOfficer, savedDate, savedAttendeeKey]);
 
   // Debounced autosave whenever required fields are complete and dirty.
   useEffect(() => {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     if (skipAutosave.current) return undefined;
-    if (!isDirty() || !isComplete() || saving) return undefined;
+    try {
+      if (!isDirty() || !isComplete() || saving) return undefined;
+    } catch (err) {
+      console.error("Meeting details dirty check failed", err);
+      return undefined;
+    }
 
     autosaveTimer.current = setTimeout(() => {
       void save({ silent: true });
@@ -253,7 +269,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, meeting, saving]);
+  }, [title, venue, presidingOfficer, dateTime, attendees, attendeeInput, savedTitle, savedVenue, savedOfficer, savedDate, savedAttendeeKey, saving]);
 
   useEffect(() => {
     if (!onAutosaveStatus) return;
@@ -265,7 +281,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       ready: isComplete(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, savedAt, error, title, venue, presidingOfficer, dateTime, attendees, attendeeInput, meeting]);
+  }, [saving, savedAt, error, title, venue, presidingOfficer, dateTime, attendees, attendeeInput, savedTitle, savedVenue, savedOfficer, savedDate, savedAttendeeKey]);
 
   useEffect(() => {
     return () => {
@@ -291,7 +307,10 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   function addAttendee() {
     const name = attendeeInput.trim();
     if (!name) return;
-    setAttendees((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    setAttendees((prev) => {
+      const list = Array.isArray(prev) ? prev : [];
+      return list.includes(name) ? list : [...list, name];
+    });
     setAttendeeInput("");
   }
 
@@ -303,7 +322,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   }
 
   function removeAttendee(name) {
-    setAttendees((prev) => prev.filter((n) => n !== name));
+    setAttendees((prev) => (Array.isArray(prev) ? prev : []).filter((n) => n !== name));
   }
 
   let statusLabel = "Autosave on";
@@ -366,7 +385,10 @@ const MeetingDetails = forwardRef(function MeetingDetails(
             list="presiding-officer-directory"
           />
           <datalist id="presiding-officer-directory">
-            {directory.presiding_officers.map((name) => (
+            {(Array.isArray(directory.presiding_officers)
+              ? directory.presiding_officers
+              : []
+            ).map((name) => (
               <option key={name} value={name} />
             ))}
           </datalist>
@@ -416,7 +438,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
               Attendees <span className="req">*</span>
             </label>
             <div className="chips">
-              {attendees.map((name) => (
+              {(Array.isArray(attendees) ? attendees : []).map((name) => (
                 <span className="chip" key={name}>
                   {name}
                   <button
@@ -444,7 +466,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
                 {directory.attendees
                   .filter(
                     (name) =>
-                      !attendees.some(
+                      !(Array.isArray(attendees) ? attendees : []).some(
                         (a) => a.toLowerCase() === name.toLowerCase()
                       )
                   )
@@ -471,11 +493,12 @@ const MeetingDetails = forwardRef(function MeetingDetails(
                       key={name}
                       className="name-suggestion"
                       onClick={() => {
-                        setAttendees((prev) =>
-                          prev.some((a) => a.toLowerCase() === name.toLowerCase())
-                            ? prev
-                            : [...prev, name]
-                        );
+                        setAttendees((prev) => {
+                          const list = Array.isArray(prev) ? prev : [];
+                          return list.some((a) => a.toLowerCase() === name.toLowerCase())
+                            ? list
+                            : [...list, name];
+                        });
                         setAttendeeInput("");
                       }}
                     >

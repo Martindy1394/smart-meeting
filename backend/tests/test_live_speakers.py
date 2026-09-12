@@ -190,6 +190,22 @@ class LiveSpeakerTests(unittest.TestCase):
         self.assertEqual(out[0].speaker_label, "Voice 1")
         self.assertEqual(out[1].speaker_label, "Voice 1")
 
+    def test_clamp_voice_index_keeps_extra_whisper_voices(self):
+        self.assertEqual(live_speakers.clamp_voice_index(7, registered_slots=2), 7)
+        self.assertEqual(live_speakers.clamp_voice_index(99, registered_slots=1), 32)
+        self.assertEqual(live_speakers.clamp_voice_index(0), 1)
+        self.assertEqual(live_speakers.voice_label(7), "Voice 7")
+
+    def test_registered_count_null_attendees(self):
+        from types import SimpleNamespace
+
+        self.assertEqual(
+            live_speakers.registered_speaker_count(
+                SimpleNamespace(attendees=None, presiding_officer=None)
+            ),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

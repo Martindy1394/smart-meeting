@@ -36,6 +36,7 @@ export default function Workspace() {
       const list = await api.listMeetings(q);
       setMeetings(Array.isArray(list) ? list : []);
     } catch (err) {
+      console.error("Failed to load meetings", err);
       // Do not pretend the workspace is empty — surface the failure.
       setListError(err?.message || "Could not load meetings.");
       setMeetings([]);
@@ -71,6 +72,7 @@ export default function Workspace() {
       const detail = await api.getMeeting(id);
       setActiveMeeting(detail);
     } catch (err) {
+      console.error("Failed to load meeting", err);
       setActiveMeeting(null);
       setMeetingLoadError(err?.message || "Could not load this meeting.");
     } finally {
@@ -103,7 +105,10 @@ export default function Workspace() {
       setLoadingMeeting(false);
       Promise.resolve().then(() => loadMeetings(search));
     } catch (err) {
+      console.error("Failed to create meeting", err);
       setCreateError(err?.message || "Could not create a meeting.");
+    } finally {
+      setLoadingMeeting(false);
     }
   }, [loadMeetings, search]);
 
@@ -222,7 +227,17 @@ export default function Workspace() {
 
         <PanelErrorBoundary
           title="This panel failed to render"
-          onRetry={() => loadMeetings(search)}
+          resetKey={`${section}-${activeId || ""}`}
+          onError={() => {
+            console.error("Workspace panel crashed; clearing loading flags");
+            setLoadingMeeting(false);
+            setLoadingList(false);
+          }}
+          onRetry={() => {
+            setLoadingMeeting(false);
+            setLoadingList(false);
+            loadMeetings(search);
+          }}
         >
           {createError ? (
             <div className="list-load-error" role="alert">
