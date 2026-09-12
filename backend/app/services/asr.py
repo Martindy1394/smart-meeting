@@ -160,6 +160,7 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
 
     samples = None
     path = getattr(meeting, "audio_path", None) or ""
+    slots = live_speakers.registered_speaker_count(meeting)
     if path and os.path.isfile(path) and bool(getattr(settings, "live_speaker_labels", True)):
         try:
             samples = audio.load_audio_float32(path)
@@ -170,12 +171,14 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
             meeting.id,
             list(result.segments or []),
             samples,
+            max_voices=slots,
         )
     elif bool(getattr(settings, "live_speaker_labels", True)):
         result.segments = live_speakers.label_segments(
             meeting.id,
             list(result.segments or []),
             None,
+            max_voices=slots,
         )
 
     db.query(TranscriptSegment).filter(

@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, isNetworkError, pingApi } from "../api/client";
 import { useRecorder } from "../hooks/useRecorder.js";
-import {
-  mapVoiceSlot,
-  registeredSpeakerCount,
-  resolveTranscriptTurns,
-  stripTranscriptMeta,
-  voiceLabelForSlot,
-} from "../lib/voiceLabels.js";
+import { registeredSpeakerCount } from "../lib/voiceLabels.js";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import MeetingDetails from "./MeetingDetails.jsx";
+import TranscriptTurn from "./TranscriptTurn.jsx";
+import TranscriptTurns from "./TranscriptTurns.jsx";
 
 function fmtTime(sec) {
   const total = Math.max(0, Math.floor(Number(sec) || 0));
@@ -40,77 +36,6 @@ function MiniIcon({ children }) {
       {children}
     </svg>
   );
-}
-
-function speakerTone(index) {
-  const n = Number(index);
-  if (!Number.isFinite(n) || n < 1) return "speaker-tone-1";
-  return `speaker-tone-${((n - 1) % 3) + 1}`;
-}
-
-function voiceAccuracyTitle(index) {
-  const n = Number(index);
-  if (n === 1) return "Highest transcription accuracy";
-  if (n === 2) return "Second-highest transcription accuracy";
-  return "Lower transcription accuracy";
-}
-
-function TranscriptTurns({
-  segments,
-  fallbackText,
-  keyword = "",
-  voiceSlots = 1,
-}) {
-  try {
-    const slots = Math.max(1, Number(voiceSlots) || 1);
-    const { turns, emptyMessage } = resolveTranscriptTurns({
-      segments,
-      fallbackText,
-      keyword,
-      voiceSlots: slots,
-    });
-    if (!turns.length) {
-      if (emptyMessage) {
-        return <span className="transcript-find-empty">{emptyMessage}</span>;
-      }
-      return null;
-    }
-    return (
-      <div className="transcript-turns">
-        {turns.map((seg, i) => {
-          const idx = mapVoiceSlot(seg.speaker_index, slots);
-          const label = voiceLabelForSlot(idx, slots);
-          return (
-            <div
-              key={seg.id || `${seg.seq || i}-${label}`}
-              className="transcript-turn"
-            >
-              <span
-                className={`speaker-chip ${speakerTone(idx)}`}
-                title={voiceAccuracyTitle(idx)}
-              >
-                {label}
-              </span>
-              <span
-                className={
-                  seg.low_confidence
-                    ? "transcript-words transcript-seg-low"
-                    : "transcript-words"
-                }
-              >
-                {seg.text}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    );
-  } catch (err) {
-    console.error("TranscriptTurns failed", err);
-    return (
-      <span className="transcript-find-empty">Could not render transcript.</span>
-    );
-  }
 }
 
 export default function MeetingRoom({
@@ -693,7 +618,8 @@ export default function MeetingRoom({
           onAutosaveStatus={onAutosaveStatus}
         />
 
-        <div className="card transcript-card">
+        <div className="transcript-slot">
+          <div className="card transcript-card">
           <div className="card-head">
             <h3>
               Transcript
@@ -813,30 +739,16 @@ export default function MeetingRoom({
                   voiceSlots={voiceSlots}
                 />
               ) : (
-              <div className="transcript-turn transcript-live">
-                {recorder.liveSpeakerLabel ? (
-                  <span
-                    className={`speaker-chip ${speakerTone(mapVoiceSlot(recorder.liveSpeakerIndex, voiceSlots))}`}
-                    title={voiceAccuracyTitle(mapVoiceSlot(recorder.liveSpeakerIndex, voiceSlots))}
-                  >
-                    {voiceLabelForSlot(recorder.liveSpeakerIndex, voiceSlots)}
-                  </span>
-                ) : null}
-                <span
-                  className={
-                    recorder.liveLowConfidence
-                      ? "transcript-words caption-low-confidence"
-                      : "transcript-words"
-                  }
-                >
-                  {stripTranscriptMeta(recorder.liveText)}
-                </span>
-                {recorder.liveLowConfidence && (
-                  <span className="caption-low-confidence-badge" title="ASR low confidence">
-                    Low confidence
-                  </span>
-                )}
-              </div>
+              <TranscriptTurn
+                live
+                voiceSlots={voiceSlots}
+                segment={{
+                  text: recorder.liveText,
+                  speaker_index: recorder.liveSpeakerIndex,
+                  speaker_label: recorder.liveSpeakerLabel,
+                  low_confidence: recorder.liveLowConfidence,
+                }}
+              />
               )
             ) : hasTranscript ? (
               <TranscriptTurns
@@ -870,6 +782,7 @@ export default function MeetingRoom({
                 automatically. Meeting details autosave as you edit.
               </div>
             )}
+          </div>
           </div>
         </div>
       </div>

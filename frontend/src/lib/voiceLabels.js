@@ -45,14 +45,18 @@ export function registeredSpeakerCount(meeting) {
 }
 
 /**
- * Map a Whisper speaker index to a display slot.
- * Extra voices (index > registered count) keep Voice N instead of indexing
- * into attendees or spinning while waiting for a matching name.
+ * Map a Whisper speaker index onto registered Voice 1…N slots.
+ * Extra clusters clamp to the last participant slot (never invent Voice N+1
+ * and never look up attendee names).
  */
-export function mapVoiceSlot(index, _registeredSlots = 1) {
+export function mapVoiceSlot(index, registeredSlots = 1) {
+  const slots = Math.max(
+    1,
+    Math.min(MAX_VOICE_INDEX, Number(registeredSlots) || 1)
+  );
   const i = Number(index);
   if (!Number.isFinite(i) || i < 1) return 1;
-  return Math.min(Math.floor(i), MAX_VOICE_INDEX);
+  return Math.min(Math.floor(i), slots);
 }
 
 export function voiceLabelForSlot(index, registeredSlots = 1) {
@@ -64,13 +68,18 @@ export function stripTranscriptMeta(text) {
   const original = String(text || "").trim();
   try {
     let body = original;
-    body = body.replace(/^(Voice\s+\d+)\s*:\s*/i, "");
-    body = body.replace(
-      /^\[(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?(?:\s*[–\-—]\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)?\]\s*/,
-      ""
-    );
-    body = body.replace(/^\[\d+(?:\.\d+)?\s*[–\-—]\s*\d+(?:\.\d+)?\]\s*/, "");
-    body = body.trim();
+    let prev = "";
+    while (body && body !== prev) {
+      prev = body;
+      body = body.replace(/^(Voice\s+\d+)\s*:\s*/i, "");
+      body = body.replace(
+        /^\[(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?(?:\s*[–\-—]\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)?\]\s*/,
+        ""
+      );
+      body = body.replace(/^\[\d+(?:\.\d+)?\s*[–\-—]\s*\d+(?:\.\d+)?\]\s*/, "");
+      body = body.replace(/^\[(?:start|end)?_?time[^\]]*\]\s*/i, "");
+      body = body.trim();
+    }
     // Revert isolation if it would hide the utterance.
     return body || original;
   } catch (err) {
@@ -124,9 +133,9 @@ export function groupByVoiceLegacy(segments) {
     if (!idx) {
       idx = Number((label.match(/\d+/) || ["1"])[0]) || 1;
     }
-    let body = raw;
-    if (body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
-      body = body.slice(label.length + 1).trim();
+    let body = stripTranscriptMeta(raw);
+    if (label && body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
+      body = body.slice(label.length + 1).trim() || body;
     }
     const last = out[out.length - 1];
     if (last && last.speaker_label === label) {
