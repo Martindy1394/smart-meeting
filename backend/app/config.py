@@ -238,8 +238,8 @@ class Settings(BaseSettings):
     asr_language_lock_seconds: float = 8.0
     asr_language_relock_no_speech_prob: float = 0.85
     asr_language_min_confidence: float = 0.45
-    # Live / final Voice N labels (default 3). Participant count is a UI hint
-    # only; clustering falls back to this cap when attendees are unknown.
+    # Live / final Voice N labels. Bound to registered participants when known:
+    # attendees.length + (1 if presiding_officer else 0). Unknown lists use this cap.
     live_speaker_labels: bool = True
     live_max_voices: int = 3
 

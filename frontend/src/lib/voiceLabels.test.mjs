@@ -30,10 +30,11 @@ test("optional attendees / officer never throw", () => {
   assert.equal(registeredSpeakerCount({ attendees: "Ada, Bob" }), 2);
 });
 
-test("extra Whisper voices keep Voice N instead of crashing", () => {
-  assert.equal(mapVoiceSlot(9, 2), 9);
-  assert.equal(voiceLabelForSlot(9, 2), "Voice 9");
-  assert.equal(mapVoiceSlot(99, 1), 32);
+test("extra Whisper voices map onto registered participant slots", () => {
+  assert.equal(mapVoiceSlot(9, 2), 2);
+  assert.equal(voiceLabelForSlot(9, 2), "Voice 2");
+  assert.equal(mapVoiceSlot(99, 1), 1);
+  assert.equal(mapVoiceSlot(3, 3), 3);
   const grouped = groupByVoice(
     [
       { speaker_index: 1, text: "hello" },
@@ -42,11 +43,13 @@ test("extra Whisper voices keep Voice N instead of crashing", () => {
     2
   );
   assert.equal(grouped.length, 2);
-  assert.equal(grouped[1].speaker_label, "Voice 7");
+  assert.equal(grouped[1].speaker_label, "Voice 2");
 });
 
-test("word isolation reverts to original text if it would go empty", () => {
+test("word isolation strips labels and timestamps from the word box", () => {
   assert.equal(stripTranscriptMeta("Voice 1: hello board"), "hello board");
+  assert.equal(stripTranscriptMeta("[00:01:02] hello"), "hello");
+  assert.equal(stripTranscriptMeta("Voice 2: [1.0 – 2.0] motion carries"), "motion carries");
   assert.equal(stripTranscriptMeta("Voice 1:"), "Voice 1:");
 });
 
@@ -65,7 +68,7 @@ test("resolveTranscriptTurns is one-pass (no recursive fallback)", () => {
     voiceSlots: 2,
   });
   assert.equal(a.turns.length, 2);
-  assert.equal(a.turns[1].speaker_label, "Voice 4");
+  assert.equal(a.turns[1].speaker_label, "Voice 2");
   const b = resolveTranscriptTurns({
     segments: [{ text: "  " }],
     fallbackText: "",

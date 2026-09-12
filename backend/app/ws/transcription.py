@@ -320,6 +320,12 @@ async def transcribe_ws(websocket: WebSocket):
                 if getattr(mrow, "language_locked", False) and (mrow.language or "").strip():
                     language_locked = True
                     locked_language = (mrow.language or "").strip()
+                from ..services import live_speakers
+
+                live_speakers.configure_meeting(
+                    meeting_id,
+                    max_voices=live_speakers.registered_speaker_count(mrow),
+                )
         finally:
             db2.close()
     except Exception:

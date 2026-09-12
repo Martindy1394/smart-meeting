@@ -36,16 +36,21 @@ def voice_label(index: int) -> str:
     return f"Voice {n}"
 
 
-def clamp_voice_index(index: int, registered_slots: int = 1) -> int:
-    """Keep extra Whisper voices as Voice N (capped), never index into attendees."""
-    del registered_slots  # display is not limited to the registered attendee count
+def clamp_voice_index(index: int, registered_slots: int | None = None) -> int:
+    """Clamp Whisper cluster ranks onto Voice 1…N participant slots."""
     try:
         i = int(index)
     except (TypeError, ValueError):
         return 1
     if i < 1:
         return 1
-    return min(i, _MAX_VOICES_HARD_CAP)
+    cap = _MAX_VOICES_HARD_CAP
+    if registered_slots is not None:
+        try:
+            cap = max(1, min(_MAX_VOICES_HARD_CAP, int(registered_slots)))
+        except (TypeError, ValueError):
+            cap = _max_voices()
+    return min(i, cap)
 
 
 def registered_speaker_count(
@@ -299,10 +304,10 @@ class _VoiceSession:
                 if self.acc_counts[i]
             }
         if not scores:
-            return clamp_voice_index(cid)
+            return clamp_voice_index(cid, self.cap())
         mapping = rank_voice_ids(ids, scores)
         display = int(mapping.get(cid, cid))
-        return clamp_voice_index(display)
+        return clamp_voice_index(display, self.cap())
 
 
 def _session(meeting_id: str) -> _VoiceSession:
@@ -413,10 +418,9 @@ def label_segments(
     """Assign Voice 1…N from each segment's audio slice, ranked by ASR accuracy.
 
     Clustering groups the same talker; Voice 1 is the cluster with the highest
-    Whisper confidence. Slot count defaults to ``live_max_voices`` (Voice 1–3)
-    unless ``max_voices`` is passed. Unknown attendee lists revert to that
-    default instead of collapsing onto Voice 1. Extra clusters keep Voice N
-    (hard-capped). Without confidence scores, labels keep first-seen order.
+    Whisper confidence. Slot count is ``max_voices`` when provided (the meeting's
+    registered participant count), otherwise ``live_max_voices`` (Voice 1–3).
+    Extra clusters are clamped onto Voice 1…N rather than creating Voice N+1.
     """
     if not segments:
         return []
@@ -472,8 +476,9 @@ def _label_segments_inner(
         score_n[cid] = score_n.get(cid, 0) + 1
     scores = {cid: score_sum[cid] / score_n[cid] for cid in score_n}
     ranking = rank_voice_ids(cluster_ids, scores)
+    cap = _session(meeting_id).cap()
     for seg, cid in zip(segments, cluster_ids):
-        display = clamp_voice_index(int(ranking.get(cid, cid) or 1))
+        display = clamp_voice_index(int(ranking.get(cid, cid) or 1), cap)
         _set_voice(seg, display, voice_label(display))
     return segments
 

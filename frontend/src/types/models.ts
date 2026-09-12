@@ -39,8 +39,9 @@ export interface TranscriptSegment {
   no_speech_prob?: number | null;
   /** Soft flag — UI may underline / badge low-confidence captions. */
   low_confidence?: boolean;
-  /** Anonymous clustered voice for this fragment (Voice 1 …). */
+  /** Anonymous clustered voice for this fragment (Voice 1 … N). */
   speaker_index?: number;
+  /** Display label; UI renders this outside the word container. */
   speaker_label?: string;
 }
 
@@ -92,7 +93,10 @@ export interface MeetingDetail {
   venue: string;
   presiding_officer?: string;
   meeting_date?: string | null;
-  /** Always a string array on the API (DB stores JSON text). */
+  /**
+   * Registered Voice slots = attendees.length + (presiding_officer ? 1 : 0).
+   * Labels stay anonymous (Voice 1…N); they are not enrolled names.
+   */
   attendees?: string[] | null;
   final_transcript: string;
   summary: string;

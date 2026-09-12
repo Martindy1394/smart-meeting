@@ -1336,6 +1336,8 @@ button {
 .transcript-words {
   flex: 1;
   min-width: 0;
+  font-style: normal;
+  font-weight: 400;
 }
 .seg-time {
   display: inline-block;
