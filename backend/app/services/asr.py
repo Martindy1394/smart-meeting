@@ -167,11 +167,17 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
             logger.exception("Could not load WAV for voice labels meeting=%s", meeting.id)
             samples = None
         result.segments = live_speakers.label_segments(
-            meeting.id, list(result.segments or []), samples
+            meeting.id,
+            list(result.segments or []),
+            samples,
+            max_voices=live_speakers.registered_speaker_count(meeting),
         )
     elif bool(getattr(settings, "live_speaker_labels", True)):
         result.segments = live_speakers.label_segments(
-            meeting.id, list(result.segments or []), None
+            meeting.id,
+            list(result.segments or []),
+            None,
+            max_voices=live_speakers.registered_speaker_count(meeting),
         )
 
     db.query(TranscriptSegment).filter(

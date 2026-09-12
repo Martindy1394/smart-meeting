@@ -238,7 +238,7 @@ class Settings(BaseSettings):
     asr_language_lock_seconds: float = 8.0
     asr_language_relock_no_speech_prob: float = 0.85
     asr_language_min_confidence: float = 0.45
-    # Live / final Voice 1–3 labels (cluster talkers; Voice 1 = highest ASR accuracy).
+    # Live / final Voice N labels (N = attendees + optional presiding officer).
     live_speaker_labels: bool = True
     live_max_voices: int = 3
 

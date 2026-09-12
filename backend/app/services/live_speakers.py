@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover — unit tests without pydantic
     settings = _Fallback()
 
 _MAX_VOICES_DEFAULT = 3
+_MAX_VOICES_HARD_CAP = 32
 _SESSION_LOCK = threading.Lock()
 _SESSIONS: dict[str, "_VoiceSession"] = {}
 
@@ -35,12 +36,39 @@ def voice_label(index: int) -> str:
     return f"Voice {n}"
 
 
+def registered_speaker_count(
+    meeting=None,
+    *,
+    attendees=None,
+    presiding_officer=None,
+) -> int:
+    """``len(attendees) + (1 if presiding_officer else 0)``, at least 1."""
+    if meeting is not None:
+        if attendees is None:
+            attendees = getattr(meeting, "attendees", None)
+        if presiding_officer is None:
+            presiding_officer = getattr(meeting, "presiding_officer", None)
+    try:
+        from .attendees import load_attendees
+
+        names = load_attendees(attendees)
+    except Exception:
+        names = [
+            str(n).strip()
+            for n in (attendees or [])
+            if isinstance(n, str) and str(n).strip()
+        ]
+    officer = (presiding_officer or "").strip() if isinstance(presiding_officer, str) else ""
+    n = len(names) + (1 if officer else 0)
+    return max(1, min(_MAX_VOICES_HARD_CAP, n))
+
+
 def _max_voices() -> int:
     try:
         n = int(getattr(settings, "live_max_voices", _MAX_VOICES_DEFAULT) or _MAX_VOICES_DEFAULT)
     except (TypeError, ValueError):
         n = _MAX_VOICES_DEFAULT
-    return max(1, min(8, n))
+    return max(1, min(_MAX_VOICES_HARD_CAP, n))
 
 
 def _enabled() -> bool:
@@ -188,8 +216,14 @@ class _VoiceSession:
     counts: list[int] = field(default_factory=list)
     accuracies: list[float] = field(default_factory=list)
     acc_counts: list[int] = field(default_factory=list)
+    max_voices: int = 0
     last_index: int = 1
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def cap(self) -> int:
+        if int(self.max_voices or 0) > 0:
+            return max(1, min(_MAX_VOICES_HARD_CAP, int(self.max_voices)))
+        return _max_voices()
 
     def assign(self, feat: tuple[float, ...]) -> int:
         if not feat:
@@ -204,7 +238,7 @@ class _VoiceSession:
                 return 1
             dists = [_dist(feat, c) for c in self.centroids]
             best_i = int(min(range(len(dists)), key=lambda i: dists[i]))
-            max_v = _max_voices()
+            max_v = self.cap()
             pitch_gap = abs(feat[0] - self.centroids[best_i][0]) if feat and self.centroids[best_i] else 0.0
             new_voice = dists[best_i] > 0.85 or pitch_gap > 0.18
             if new_voice and len(self.centroids) < max_v:
@@ -249,9 +283,14 @@ class _VoiceSession:
                 if self.acc_counts[i]
             }
         if not scores:
-            return cid
+            cap = self.cap()
+            return min(max(1, cid), cap)
         mapping = rank_voice_ids(ids, scores)
-        return int(mapping.get(cid, cid))
+        display = int(mapping.get(cid, cid))
+        cap = self.cap()
+        if display < 1:
+            return 1
+        return min(display, cap)
 
 
 def _session(meeting_id: str) -> _VoiceSession:
@@ -270,6 +309,18 @@ def reset_meeting(meeting_id: str) -> None:
         return
     with _SESSION_LOCK:
         _SESSIONS.pop(key, None)
+
+
+def configure_meeting(meeting_id: str, *, max_voices: int | None = None) -> None:
+    """Bind Voice 1…N slots to the meeting's registered participant count."""
+    sess = _session(meeting_id)
+    if max_voices is None:
+        return
+    try:
+        n = int(max_voices)
+    except (TypeError, ValueError):
+        n = 1
+    sess.max_voices = max(1, min(_MAX_VOICES_HARD_CAP, n))
 
 
 def label_pcm(
@@ -345,15 +396,19 @@ def label_segments(
     samples: np.ndarray | None = None,
     *,
     sample_rate: int | None = None,
+    max_voices: int | None = None,
 ) -> list:
     """Assign Voice 1…N from each segment's audio slice, ranked by ASR accuracy.
 
     Clustering groups the same talker; Voice 1 is the cluster with the highest
-    Whisper confidence. Without confidence scores, labels keep first-seen order.
+    Whisper confidence. Slot count is the registered participant count when
+    given. Without confidence scores, labels keep first-seen order.
     """
     if not segments:
         return []
     reset_meeting(meeting_id)
+    if max_voices is not None:
+        configure_meeting(meeting_id, max_voices=max_voices)
     sr = int(sample_rate or getattr(settings, "audio_sample_rate", 16000) or 16000)
     from .segment_times import coerce_times
 
@@ -382,8 +437,10 @@ def label_segments(
         score_n[cid] = score_n.get(cid, 0) + 1
     scores = {cid: score_sum[cid] / score_n[cid] for cid in score_n}
     ranking = rank_voice_ids(cluster_ids, scores)
+    cap = _session(meeting_id).cap()
     for seg, cid in zip(segments, cluster_ids):
         display = int(ranking.get(cid, cid) or 1)
+        display = min(max(1, display), cap)
         _set_voice(seg, display, voice_label(display))
     return segments
 

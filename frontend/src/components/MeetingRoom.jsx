@@ -48,47 +48,80 @@ function voiceAccuracyTitle(index) {
   return "Lower transcription accuracy";
 }
 
+/** attendees.length + (presiding_officer ? 1 : 0), at least 1. */
+function registeredSpeakerCount(meeting) {
+  const attendees = Array.isArray(meeting?.attendees)
+    ? meeting.attendees.filter((n) => String(n || "").trim())
+    : [];
+  const officer = String(meeting?.presiding_officer || "").trim();
+  return Math.max(1, attendees.length + (officer ? 1 : 0));
+}
+
+function mapVoiceSlot(index, slots) {
+  const n = Math.max(1, Number(slots) || 1);
+  const i = Number(index);
+  if (!Number.isFinite(i) || i < 1) return 1;
+  return Math.min(Math.floor(i), n);
+}
+
+function voiceLabelForSlot(index, slots) {
+  return `Voice ${mapVoiceSlot(index, slots)}`;
+}
+
+/** Strip Voice N prefixes and bracket timestamps so the word box is text-only. */
+function stripTranscriptMeta(text) {
+  let body = String(text || "").trim();
+  body = body.replace(/^(Voice\s+\d+)\s*:\s*/i, "");
+  body = body.replace(
+    /^\[(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?(?:\s*[–\-—]\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)?\]\s*/,
+    ""
+  );
+  body = body.replace(/^\[\d+(?:\.\d+)?\s*[–\-—]\s*\d+(?:\.\d+)?\]\s*/, "");
+  return body.trim();
+}
+
 function segmentHaystack(seg) {
   return `${seg?.speaker_label || ""} ${seg?.text || ""}`.toLowerCase();
 }
 
-function groupByVoice(segments) {
+function groupByVoice(segments, voiceSlots = 1) {
   const out = [];
+  const slots = Math.max(1, Number(voiceSlots) || 1);
   for (const seg of segments) {
-    const raw = (seg?.text || "").trim();
+    const raw = stripTranscriptMeta(seg?.text || "");
     if (!raw) continue;
-    let label = (seg.speaker_label || "").trim();
     let idx = Number(seg.speaker_index) || 0;
-    if (!label) {
-      label = "Voice 1";
-      idx = 1;
-    }
-    if (!idx) {
+    let label = (seg.speaker_label || "").trim();
+    if (!idx && label) {
       idx = Number((label.match(/\d+/) || ["1"])[0]) || 1;
     }
-    let body = raw;
-    if (body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
-      body = body.slice(label.length + 1).trim();
-    }
+    idx = mapVoiceSlot(idx || 1, slots);
+    label = voiceLabelForSlot(idx, slots);
     const last = out[out.length - 1];
-    if (last && last.speaker_label === label) {
-      last.text = `${last.text} ${body}`.trim();
+    if (last && last.speaker_index === idx) {
+      last.text = `${last.text} ${raw}`.trim();
       continue;
     }
     out.push({
       ...seg,
       speaker_label: label,
       speaker_index: idx,
-      text: body,
+      text: raw,
     });
   }
   return out;
 }
 
-function TranscriptTurns({ segments, fallbackText, keyword = "" }) {
+function TranscriptTurns({
+  segments,
+  fallbackText,
+  keyword = "",
+  voiceSlots = 1,
+}) {
   const kw = (keyword || "").trim().toLowerCase();
+  const slots = Math.max(1, Number(voiceSlots) || 1);
   const segs = Array.isArray(segments) ? segments.filter((s) => (s?.text || "").trim()) : [];
-  let filtered = groupByVoice(kw ? segs.filter((s) => segmentHaystack(s).includes(kw)) : segs);
+  let filtered = groupByVoice(kw ? segs.filter((s) => segmentHaystack(s).includes(kw)) : segs, slots);
   if (!filtered.length) {
     const text = (fallbackText || "").trim();
     if (!text) {
@@ -105,29 +138,55 @@ function TranscriptTurns({ segments, fallbackText, keyword = "" }) {
       const m = ln.match(/^(Voice\s+\d+)\s*:\s*(.*)$/i);
       if (m) {
         const idx = Number((m[1].match(/\d+/) || ["1"])[0]);
-        return { id: `line-${i}`, speaker_label: m[1], speaker_index: idx, text: m[2] };
+        return {
+          id: `line-${i}`,
+          speaker_label: voiceLabelForSlot(idx, slots),
+          speaker_index: mapVoiceSlot(idx, slots),
+          text: stripTranscriptMeta(m[2]),
+        };
       }
-      return { id: `line-${i}`, speaker_label: "Voice 1", speaker_index: 1, text: ln };
+      return {
+        id: `line-${i}`,
+        speaker_label: voiceLabelForSlot(1, slots),
+        speaker_index: 1,
+        text: stripTranscriptMeta(ln),
+      };
     });
-    return <TranscriptTurns segments={parsed} fallbackText="" keyword={keyword} />;
+    return (
+      <TranscriptTurns
+        segments={parsed}
+        fallbackText=""
+        keyword={keyword}
+        voiceSlots={slots}
+      />
+    );
   }
   return (
     <div className="transcript-turns">
       {filtered.map((seg, i) => {
-        const label = (seg.speaker_label || "Voice 1").trim();
+        const idx = mapVoiceSlot(seg.speaker_index, slots);
+        const label = voiceLabelForSlot(idx, slots);
         return (
-          <p
+          <div
             key={seg.id || `${seg.seq || i}-${label}`}
-            className={seg.low_confidence ? "transcript-seg-low transcript-turn" : "transcript-turn"}
+            className="transcript-turn"
           >
             <span
-              className={`speaker-chip ${speakerTone(seg.speaker_index)}`}
-              title={voiceAccuracyTitle(seg.speaker_index)}
+              className={`speaker-chip ${speakerTone(idx)}`}
+              title={voiceAccuracyTitle(idx)}
             >
               {label}
             </span>
-            <span>{seg.text}</span>
-          </p>
+            <span
+              className={
+                seg.low_confidence
+                  ? "transcript-words transcript-seg-low"
+                  : "transcript-words"
+              }
+            >
+              {seg.text}
+            </span>
+          </div>
         );
       })}
     </div>
@@ -151,6 +210,7 @@ export default function MeetingRoom({
   );
   const [transcriptQuery, setTranscriptQuery] = useState("");
   const [status, setStatus] = useState(meeting.status);
+  const voiceSlots = registeredSpeakerCount(meeting);
 
   // Summary state
   const [summaryFormat, setSummaryFormat] = useState(meeting.summary_format || "bullets");
@@ -804,30 +864,33 @@ export default function MeetingRoom({
                 <TranscriptTurns
                   segments={recorder.liveTurns}
                   fallbackText={recorder.liveText}
+                  voiceSlots={voiceSlots}
                 />
               ) : (
-              <span className="transcript-live">
+              <div className="transcript-turn transcript-live">
                 {recorder.liveSpeakerLabel ? (
                   <span
-                    className={`speaker-chip ${speakerTone(recorder.liveSpeakerIndex)}`}
-                    title={voiceAccuracyTitle(recorder.liveSpeakerIndex)}
+                    className={`speaker-chip ${speakerTone(mapVoiceSlot(recorder.liveSpeakerIndex, voiceSlots))}`}
+                    title={voiceAccuracyTitle(mapVoiceSlot(recorder.liveSpeakerIndex, voiceSlots))}
                   >
-                    {recorder.liveSpeakerLabel}
+                    {voiceLabelForSlot(recorder.liveSpeakerIndex, voiceSlots)}
                   </span>
                 ) : null}
                 <span
                   className={
-                    recorder.liveLowConfidence ? "caption-low-confidence" : undefined
+                    recorder.liveLowConfidence
+                      ? "transcript-words caption-low-confidence"
+                      : "transcript-words"
                   }
                 >
-                  {recorder.liveText}
+                  {stripTranscriptMeta(recorder.liveText)}
                 </span>
                 {recorder.liveLowConfidence && (
                   <span className="caption-low-confidence-badge" title="ASR low confidence">
                     Low confidence
                   </span>
                 )}
-              </span>
+              </div>
               )
             ) : hasTranscript ? (
               <TranscriptTurns
@@ -838,6 +901,7 @@ export default function MeetingRoom({
                 }
                 fallbackText={finalTranscript}
                 keyword={transcriptQuery}
+                voiceSlots={voiceSlots}
               />
             ) : showLive ? (
               <span className="transcript-live">
