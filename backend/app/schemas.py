@@ -144,7 +144,6 @@ class MeetingCreate(BaseModel):
     # ``whisper_default_language`` (no Spoken language UI).
     language: str = Field(default="auto", max_length=16)
     venue: str = Field(default="", max_length=255)
-    presiding_office: str = Field(default="", max_length=255)
     presiding_officer: str = Field(default="", max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)
@@ -161,7 +160,6 @@ class MeetingCreate(BaseModel):
 class MeetingUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     venue: str | None = Field(default=None, max_length=255)
-    presiding_office: str | None = Field(default=None, max_length=255)
     presiding_officer: str | None = Field(default=None, max_length=255)
     meeting_date: datetime | None = None
     attendees: list[str] | None = None
@@ -236,7 +234,6 @@ class MeetingSummary(BaseModel):
     language: str
     language_detection: LanguageDetectionInfo | None = None
     venue: str = ""
-    presiding_office: str = ""
     presiding_officer: str = ""
     meeting_date: datetime | None = None
     duration_seconds: float
@@ -279,7 +276,6 @@ class MeetingDetail(BaseModel):
     language: str
     language_detection: LanguageDetectionInfo | None = None
     venue: str = ""
-    presiding_office: str = ""
     presiding_officer: str = ""
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)

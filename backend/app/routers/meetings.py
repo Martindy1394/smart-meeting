@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
@@ -218,7 +218,6 @@ def _to_summary(m: Meeting) -> MeetingSummary:
         language=m.language,
         language_detection=_language_detection_info(m),
         venue=m.venue or "",
-        presiding_office=getattr(m, "presiding_office", None) or "",
         presiding_officer=getattr(m, "presiding_officer", None) or "",
         meeting_date=m.meeting_date,
         duration_seconds=m.duration_seconds,
@@ -432,7 +431,6 @@ def create_meeting(
         title=payload.title.strip(),
         language=_normalize_meeting_language_label(payload.language),
         venue=payload.venue.strip(),
-        presiding_office=(payload.presiding_office or "").strip(),
         presiding_officer=(payload.presiding_officer or "").strip(),
         meeting_date=payload.meeting_date or datetime.now(timezone.utc),
         attendees=_clean_attendees(payload.attendees),
@@ -667,8 +665,6 @@ def update_meeting(
         meeting.title = payload.title.strip() or meeting.title
     if payload.venue is not None:
         meeting.venue = payload.venue.strip()
-    if payload.presiding_office is not None:
-        meeting.presiding_office = payload.presiding_office.strip()
     if payload.presiding_officer is not None:
         meeting.presiding_officer = payload.presiding_officer.strip()
     if payload.meeting_date is not None:

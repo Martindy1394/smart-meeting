@@ -73,7 +73,6 @@ def _apply_lightweight_migrations() -> None:
     # column name -> SQL definition (with default) for the meetings table.
     meeting_columns = {
         "venue": "VARCHAR(255) DEFAULT ''",
-        "presiding_office": "VARCHAR(255) DEFAULT ''",
         "presiding_officer": "VARCHAR(255) DEFAULT ''",
         "meeting_date": "TIMESTAMP NULL",
         "attendees": "TEXT DEFAULT '[]'",
@@ -104,7 +103,7 @@ def _apply_lightweight_migrations() -> None:
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE meetings ADD COLUMN {name} {ddl}"))
             # Removed product fields — drop leftover SQLite columns when possible.
-            for name in ("custom_vocab",):
+            for name in ("custom_vocab", "presiding_office"):
                 if name in existing:
                     try:
                         conn.execute(text(f"ALTER TABLE meetings DROP COLUMN {name}"))

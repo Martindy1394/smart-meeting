@@ -317,7 +317,6 @@ async def transcribe_ws(websocket: WebSocket):
     extra_terms: list[str] = []
     language_locked = bool(meta.get("language_locked"))
     locked_language = (meta.get("locked_language") or "").strip() or None
-    lock_started_at = None
     try:
         db2 = SessionLocal()
         try:
