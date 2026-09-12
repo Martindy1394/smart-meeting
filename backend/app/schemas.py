@@ -236,7 +236,7 @@ class MeetingSummary(BaseModel):
     venue: str = ""
     presiding_officer: str = ""
     meeting_date: datetime | None = None
-    duration_seconds: float
+    duration_seconds: float = 0.0
     created_at: datetime
     updated_at: datetime
     # Full BART summary text (used by the Dashboard feed).
@@ -279,18 +279,18 @@ class MeetingDetail(BaseModel):
     presiding_officer: str = ""
     meeting_date: datetime | None = None
     attendees: list[str] = Field(default_factory=list)
-    final_transcript: str
-    summary: str
-    summary_format: str
-    translation: str
-    translation_language: str
+    final_transcript: str = ""
+    summary: str = ""
+    summary_format: str = ""
+    translation: str = ""
+    translation_language: str = ""
     extractive_fallback: bool = False
     faithfulness: FaithfulnessReport | None = None
     translation_faithfulness: FaithfulnessReport | None = None
     translation_glossary_json: str = "[]"
     action_items: list[ActionItem] = Field(default_factory=list)
     language_locked: bool = False
-    duration_seconds: float
+    duration_seconds: float = 0.0
     created_at: datetime
     updated_at: datetime
     has_audio: bool = False
@@ -298,6 +298,23 @@ class MeetingDetail(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_validator(
+        "title",
+        "status",
+        "language",
+        "venue",
+        "presiding_officer",
+        "final_transcript",
+        "summary",
+        "summary_format",
+        "translation",
+        "translation_language",
+        mode="before",
+    )
+    @classmethod
+    def _none_str_to_empty(cls, v):
+        return "" if v is None else v
 
     @field_validator("attendees", mode="before")
     @classmethod

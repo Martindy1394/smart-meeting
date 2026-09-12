@@ -93,7 +93,7 @@ export interface MeetingDetail {
   presiding_officer?: string;
   meeting_date?: string | null;
   /** Always a string array on the API (DB stores JSON text). */
-  attendees: string[];
+  attendees?: string[] | null;
   final_transcript: string;
   summary: string;
   summary_format: string;

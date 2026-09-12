@@ -7,16 +7,27 @@ import { Component } from "react";
 export default class PanelErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, resetKey: props.resetKey };
   }
 
   static getDerivedStateFromError(error) {
     return { error };
   }
 
+  static getDerivedStateFromProps(props, state) {
+    if (props.resetKey !== state.resetKey) {
+      return { error: null, resetKey: props.resetKey };
+    }
+    return null;
+  }
+
   componentDidCatch(error, info) {
-    // Keep console signal for ops; UI shows the user-facing panel below.
     console.error("PanelErrorBoundary caught", error, info?.componentStack);
+    try {
+      this.props.onError?.(error);
+    } catch (err) {
+      console.error("PanelErrorBoundary onError failed", err);
+    }
   }
 
   render() {

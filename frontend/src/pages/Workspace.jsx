@@ -8,6 +8,7 @@ import MeetingRoom from "../components/MeetingRoom.jsx";
 import PanelErrorBoundary from "../components/PanelErrorBoundary.jsx";
 import SettingsPanel from "../components/SettingsPanel.jsx";
 import Sidebar from "../components/Sidebar.jsx";
+import { normalizeMeeting, normalizeMeetingList } from "../lib/normalizeMeeting.js";
 
 export default function Workspace() {
   const [section, setSection] = useState("dashboard");
@@ -34,8 +35,9 @@ export default function Workspace() {
     setListError("");
     try {
       const list = await api.listMeetings(q);
-      setMeetings(Array.isArray(list) ? list : []);
+      setMeetings(normalizeMeetingList(list));
     } catch (err) {
+      console.error("Failed to load meetings", err);
       // Do not pretend the workspace is empty — surface the failure.
       setListError(err?.message || "Could not load meetings.");
       setMeetings([]);
@@ -68,9 +70,11 @@ export default function Workspace() {
     setLoadingMeeting(true);
     setMeetingLoadError("");
     try {
-      const detail = await api.getMeeting(id);
+      const detail = normalizeMeeting(await api.getMeeting(id));
+      if (!detail?.id) throw new Error("Meeting payload was empty.");
       setActiveMeeting(detail);
     } catch (err) {
+      console.error("Failed to load meeting", err);
       setActiveMeeting(null);
       setMeetingLoadError(err?.message || "Could not load this meeting.");
     } finally {
@@ -89,12 +93,13 @@ export default function Workspace() {
   const createMeeting = useCallback(async () => {
     setCreateError("");
     try {
-      const detail = await api.createMeeting({
+      const detail = normalizeMeeting(await api.createMeeting({
         title: "",
         language: "auto",
         // Always create with the current date/time (local → ISO).
         meeting_date: new Date().toISOString(),
-      });
+      }));
+      if (!detail?.id) throw new Error("Create meeting returned no id.");
       setSection("meeting");
       setAutosaveStatus(null);
       setHistoryView(false);
@@ -103,7 +108,10 @@ export default function Workspace() {
       setLoadingMeeting(false);
       Promise.resolve().then(() => loadMeetings(search));
     } catch (err) {
+      console.error("Failed to create meeting", err);
       setCreateError(err?.message || "Could not create a meeting.");
+    } finally {
+      setLoadingMeeting(false);
     }
   }, [loadMeetings, search]);
 
@@ -143,13 +151,13 @@ export default function Workspace() {
   const refreshActive = useCallback(
     async (updated) => {
       if (updated && updated.id) {
-        setActiveMeeting((m) => ({ ...m, ...updated }));
+        setActiveMeeting((m) => normalizeMeeting({ ...(m || {}), ...updated }));
       } else if (activeId) {
         try {
-          const detail = await api.getMeeting(activeId);
-          setActiveMeeting(detail);
-        } catch {
-          /* keep current */
+          const detail = normalizeMeeting(await api.getMeeting(activeId));
+          if (detail?.id) setActiveMeeting(detail);
+        } catch (err) {
+          console.error("Failed to refresh meeting", err);
         }
       }
       loadMeetings(search);
@@ -222,7 +230,17 @@ export default function Workspace() {
 
         <PanelErrorBoundary
           title="This panel failed to render"
-          onRetry={() => loadMeetings(search)}
+          resetKey={`${section}-${activeId || ""}`}
+          onError={() => {
+            console.error("Workspace panel crashed; clearing loading flags");
+            setLoadingMeeting(false);
+            setLoadingList(false);
+          }}
+          onRetry={() => {
+            setLoadingMeeting(false);
+            setLoadingList(false);
+            loadMeetings(search);
+          }}
         >
           {createError ? (
             <div className="list-load-error" role="alert">

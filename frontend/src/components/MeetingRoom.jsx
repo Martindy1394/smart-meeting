@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, isNetworkError, pingApi } from "../api/client";
 import { useRecorder } from "../hooks/useRecorder.js";
+import {
+  mapVoiceSlot,
+  registeredSpeakerCount,
+  resolveTranscriptTurns,
+  stripTranscriptMeta,
+  voiceLabelForSlot,
+} from "../lib/voiceLabels.js";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import MeetingDetails from "./MeetingDetails.jsx";
 
@@ -48,149 +55,62 @@ function voiceAccuracyTitle(index) {
   return "Lower transcription accuracy";
 }
 
-/** attendees.length + (presiding_officer ? 1 : 0), at least 1. */
-function registeredSpeakerCount(meeting) {
-  const attendees = Array.isArray(meeting?.attendees)
-    ? meeting.attendees.filter((n) => String(n || "").trim())
-    : [];
-  const officer = String(meeting?.presiding_officer || "").trim();
-  return Math.max(1, attendees.length + (officer ? 1 : 0));
-}
-
-function mapVoiceSlot(index, slots) {
-  const n = Math.max(1, Number(slots) || 1);
-  const i = Number(index);
-  if (!Number.isFinite(i) || i < 1) return 1;
-  return Math.min(Math.floor(i), n);
-}
-
-function voiceLabelForSlot(index, slots) {
-  return `Voice ${mapVoiceSlot(index, slots)}`;
-}
-
-/** Strip Voice N prefixes and bracket timestamps so the word box is text-only. */
-function stripTranscriptMeta(text) {
-  let body = String(text || "").trim();
-  body = body.replace(/^(Voice\s+\d+)\s*:\s*/i, "");
-  body = body.replace(
-    /^\[(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?(?:\s*[–\-—]\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)?\]\s*/,
-    ""
-  );
-  body = body.replace(/^\[\d+(?:\.\d+)?\s*[–\-—]\s*\d+(?:\.\d+)?\]\s*/, "");
-  return body.trim();
-}
-
-function segmentHaystack(seg) {
-  return `${seg?.speaker_label || ""} ${seg?.text || ""}`.toLowerCase();
-}
-
-function groupByVoice(segments, voiceSlots = 1) {
-  const out = [];
-  const slots = Math.max(1, Number(voiceSlots) || 1);
-  for (const seg of segments) {
-    const raw = stripTranscriptMeta(seg?.text || "");
-    if (!raw) continue;
-    let idx = Number(seg.speaker_index) || 0;
-    let label = (seg.speaker_label || "").trim();
-    if (!idx && label) {
-      idx = Number((label.match(/\d+/) || ["1"])[0]) || 1;
-    }
-    idx = mapVoiceSlot(idx || 1, slots);
-    label = voiceLabelForSlot(idx, slots);
-    const last = out[out.length - 1];
-    if (last && last.speaker_index === idx) {
-      last.text = `${last.text} ${raw}`.trim();
-      continue;
-    }
-    out.push({
-      ...seg,
-      speaker_label: label,
-      speaker_index: idx,
-      text: raw,
-    });
-  }
-  return out;
-}
-
 function TranscriptTurns({
   segments,
   fallbackText,
   keyword = "",
   voiceSlots = 1,
 }) {
-  const kw = (keyword || "").trim().toLowerCase();
-  const slots = Math.max(1, Number(voiceSlots) || 1);
-  const segs = Array.isArray(segments) ? segments.filter((s) => (s?.text || "").trim()) : [];
-  let filtered = groupByVoice(kw ? segs.filter((s) => segmentHaystack(s).includes(kw)) : segs, slots);
-  if (!filtered.length) {
-    const text = (fallbackText || "").trim();
-    if (!text) {
-      if (kw && segs.length) {
-        return <span className="transcript-find-empty">No transcript lines match “{keyword}”.</span>;
+  try {
+    const slots = Math.max(1, Number(voiceSlots) || 1);
+    const { turns, emptyMessage } = resolveTranscriptTurns({
+      segments,
+      fallbackText,
+      keyword,
+      voiceSlots: slots,
+    });
+    if (!turns.length) {
+      if (emptyMessage) {
+        return <span className="transcript-find-empty">{emptyMessage}</span>;
       }
       return null;
     }
-    if (kw && !text.toLowerCase().includes(kw)) {
-      return <span className="transcript-find-empty">No transcript lines match “{keyword}”.</span>;
-    }
-    const lines = text.split(/\n+/).map((ln) => ln.trim()).filter(Boolean);
-    const parsed = lines.map((ln, i) => {
-      const m = ln.match(/^(Voice\s+\d+)\s*:\s*(.*)$/i);
-      if (m) {
-        const idx = Number((m[1].match(/\d+/) || ["1"])[0]);
-        return {
-          id: `line-${i}`,
-          speaker_label: voiceLabelForSlot(idx, slots),
-          speaker_index: mapVoiceSlot(idx, slots),
-          text: stripTranscriptMeta(m[2]),
-        };
-      }
-      return {
-        id: `line-${i}`,
-        speaker_label: voiceLabelForSlot(1, slots),
-        speaker_index: 1,
-        text: stripTranscriptMeta(ln),
-      };
-    });
     return (
-      <TranscriptTurns
-        segments={parsed}
-        fallbackText=""
-        keyword={keyword}
-        voiceSlots={slots}
-      />
+      <div className="transcript-turns">
+        {turns.map((seg, i) => {
+          const idx = mapVoiceSlot(seg.speaker_index, slots);
+          const label = voiceLabelForSlot(idx, slots);
+          return (
+            <div
+              key={seg.id || `${seg.seq || i}-${label}`}
+              className="transcript-turn"
+            >
+              <span
+                className={`speaker-chip ${speakerTone(idx)}`}
+                title={voiceAccuracyTitle(idx)}
+              >
+                {label}
+              </span>
+              <span
+                className={
+                  seg.low_confidence
+                    ? "transcript-words transcript-seg-low"
+                    : "transcript-words"
+                }
+              >
+                {seg.text}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  } catch (err) {
+    console.error("TranscriptTurns failed", err);
+    return (
+      <span className="transcript-find-empty">Could not render transcript.</span>
     );
   }
-  return (
-    <div className="transcript-turns">
-      {filtered.map((seg, i) => {
-        const idx = mapVoiceSlot(seg.speaker_index, slots);
-        const label = voiceLabelForSlot(idx, slots);
-        return (
-          <div
-            key={seg.id || `${seg.seq || i}-${label}`}
-            className="transcript-turn"
-          >
-            <span
-              className={`speaker-chip ${speakerTone(idx)}`}
-              title={voiceAccuracyTitle(idx)}
-            >
-              {label}
-            </span>
-            <span
-              className={
-                seg.low_confidence
-                  ? "transcript-words transcript-seg-low"
-                  : "transcript-words"
-              }
-            >
-              {seg.text}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 export default function MeetingRoom({
@@ -204,31 +124,31 @@ export default function MeetingRoom({
   const [detailsReady, setDetailsReady] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
 
-  const [finalTranscript, setFinalTranscript] = useState(meeting.final_transcript || "");
+  const [finalTranscript, setFinalTranscript] = useState(meeting?.final_transcript || "");
   const [transcriptSegments, setTranscriptSegments] = useState(
-    Array.isArray(meeting.segments) ? meeting.segments : []
+    Array.isArray(meeting?.segments) ? meeting.segments : []
   );
   const [transcriptQuery, setTranscriptQuery] = useState("");
-  const [status, setStatus] = useState(meeting.status);
+  const [status, setStatus] = useState(meeting?.status);
   const voiceSlots = registeredSpeakerCount(meeting);
 
   // Summary state
-  const [summaryFormat, setSummaryFormat] = useState(meeting.summary_format || "bullets");
-  const [summary, setSummary] = useState(meeting.summary || "");
+  const [summaryFormat, setSummaryFormat] = useState(meeting?.summary_format || "bullets");
+  const [summary, setSummary] = useState(meeting?.summary || "");
   const [summaryEngine, setSummaryEngine] = useState("");
   const [extractiveFallback, setExtractiveFallback] = useState(false);
   const [faithfulness, setFaithfulness] = useState(null);
   const [translationFaithfulness, setTranslationFaithfulness] = useState(
-    meeting.translation_faithfulness || null
+    meeting?.translation_faithfulness || null
   );
   const [exportFormat, setExportFormat] = useState("pdf");
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState("");
 
   // Translation state — always auto-translates the transcript into English.
-  const [translation, setTranslation] = useState(meeting.translation || "");
+  const [translation, setTranslation] = useState(meeting?.translation || "");
   const [translationLang, setTranslationLang] = useState(
-    meeting.translation_language || "English"
+    meeting?.translation_language || "English"
   );
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState("");
@@ -239,7 +159,7 @@ export default function MeetingRoom({
   const [audioError, setAudioError] = useState("");
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrError, setAsrError] = useState("");
-  const [hasAudio, setHasAudio] = useState(Boolean(meeting.has_audio));
+  const [hasAudio, setHasAudio] = useState(Boolean(meeting?.has_audio));
   const [copyState, setCopyState] = useState("");
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const audioUrlRef = useRef(null);
@@ -289,12 +209,14 @@ export default function MeetingRoom({
 
   const summarizeFromTranscript = useCallback(
     async (format = summaryFormat, { forceRetranslate = false } = {}) => {
+      const meetingId = meeting?.id;
+      if (!meetingId) return;
       setSummarizing(true);
       setSummaryError("");
+      autoSummaryRef.current = `${meetingId}:${format}:pending`;
       try {
-        // Backend: full-transcript → English, then topic-aware BART (meeting kind).
         const res = await api.summarize({
-          meeting_id: meeting.id,
+          meeting_id: meetingId,
           output_format: format,
           force_retranslate: Boolean(forceRetranslate),
           source_kind: "meeting",
@@ -304,48 +226,51 @@ export default function MeetingRoom({
         setExtractiveFallback(Boolean(res.extractive_fallback));
         setFaithfulness(res.faithfulness || null);
         setTranslationFaithfulness(res.translation_faithfulness || null);
-        // Always refresh translation from this pass (clear if empty).
         setTranslation(res.translation || "");
         setTranslationLang(res.translation_language || "English");
         autoTranslateRef.current = (res.translation || "").trim()
           ? "synced"
           : "";
-        autoSummaryRef.current = `${meeting.id}:${format}`;
+        autoSummaryRef.current = `${meetingId}:${format}:ok`;
         if (onMeetingUpdated) onMeetingUpdated();
       } catch (err) {
+        console.error("Summarization failed", err);
+        autoSummaryRef.current = `${meetingId}:${format}:failed`;
         setSummaryError(err.message || "Summarization failed.");
       } finally {
         setSummarizing(false);
       }
     },
-    [meeting.id, onMeetingUpdated, summaryFormat]
+    [meeting?.id, onMeetingUpdated, summaryFormat]
   );
 
   const translateToEnglish = useCallback(
     async (transcriptText, { force = false } = {}) => {
+      const meetingId = meeting?.id;
       const text = (transcriptText || "").trim();
-      if (!text) return;
+      if (!meetingId || !text) return;
       if (!force && autoTranslateRef.current === text) return;
       autoTranslateRef.current = text;
       setTranslating(true);
       setTranslateError("");
       try {
         const res = await api.translate({
-          meeting_id: meeting.id,
+          meeting_id: meetingId,
           target_language: "en",
         });
-        setTranslation(res.translation);
+        setTranslation(res.translation || "");
         setTranslationLang(res.language_name || "English");
         setTranslationFaithfulness(res.translation_faithfulness || null);
         if (onMeetingUpdated) onMeetingUpdated();
       } catch (err) {
-        autoTranslateRef.current = "";
+        console.error("English translation failed", err);
+        autoTranslateRef.current = `failed:${meetingId}`;
         setTranslateError(err.message || "English translation failed.");
       } finally {
         setTranslating(false);
       }
     },
-    [meeting.id, onMeetingUpdated]
+    [meeting?.id, onMeetingUpdated]
   );
 
   const applyTranscriptResult = useCallback(
@@ -375,7 +300,7 @@ export default function MeetingRoom({
         await saveDetails({ silent: true });
       }
       if (onMeetingUpdated) onMeetingUpdated();
-      await loadAudio(meeting.id);
+      await loadAudio(meeting?.id);
       if (text.trim()) {
         // Force a fresh English translation of the new transcript, then summarize.
         await summarizeFromTranscript(summaryFormat, { forceRetranslate: true });
@@ -384,7 +309,7 @@ export default function MeetingRoom({
     [
       audioUrl,
       loadAudio,
-      meeting.id,
+      meeting?.id,
       onMeetingUpdated,
       saveDetails,
       summarizeFromTranscript,
@@ -424,7 +349,7 @@ export default function MeetingRoom({
       let detail = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          detail = await api.retranscribeMeeting(meeting.id);
+          detail = await api.retranscribeMeeting(meeting?.id);
           break;
         } catch (err) {
           if (!isNetworkError(err) || attempt === 2) throw err;
@@ -436,7 +361,7 @@ export default function MeetingRoom({
       while (detail?.status === "processing" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2500));
         try {
-          detail = await api.getMeeting(meeting.id);
+          detail = await api.getMeeting(meeting?.id);
         } catch (err) {
           // Keep polling through brief tunnel / reload blips.
           if (!isNetworkError(err)) throw err;
@@ -452,74 +377,95 @@ export default function MeetingRoom({
       }
       await applyTranscriptResult(detail);
     } catch (err) {
+      console.error("Whisper ASR failed", err);
       setAsrError(err.message || "Whisper ASR failed.");
-      setStatus(meeting.status || "finalized");
+      setStatus(meeting?.status || "finalized");
     } finally {
       setAsrBusy(false);
     }
-  }, [applyTranscriptResult, meeting.id, meeting.status]);
+  }, [applyTranscriptResult, meeting?.id, meeting?.status]);
 
   const recorder = useRecorder({ onFinalTranscript });
 
   // Reset local state when the selected meeting changes.
   useEffect(() => {
-    setFinalTranscript(meeting.final_transcript || "");
-    setTranscriptSegments(Array.isArray(meeting.segments) ? meeting.segments : []);
-    setTranscriptQuery("");
-    setStatus(meeting.status);
-    setSummary(meeting.summary || "");
-    setSummaryFormat(meeting.summary_format || "bullets");
-    setTranslation(meeting.translation || "");
-    setTranslationLang(meeting.translation_language || "English");
-    setSummaryError("");
-    setTranslateError("");
-    setAsrError("");
-    setAudioError("");
-    setSummaryEngine("");
-    setExtractiveFallback(Boolean(meeting.extractive_fallback));
-    setFaithfulness(meeting.faithfulness || null);
-    setTranslationFaithfulness(meeting.translation_faithfulness || null);
-    setHasAudio(Boolean(meeting.has_audio));
-    autoTranslateRef.current = meeting.translation ? meeting.final_transcript || "" : "";
-    autoSummaryRef.current = meeting.summary
-      ? `${meeting.id}:${meeting.summary_format || "bullets"}`
-      : "";
-    revokeAudioUrl();
-    if (meeting.has_audio || meeting.status === "finalized") {
-      loadAudio(meeting.id);
+    try {
+      setFinalTranscript(meeting?.final_transcript || "");
+      setTranscriptSegments(Array.isArray(meeting?.segments) ? meeting.segments : []);
+      setTranscriptQuery("");
+      setStatus(meeting?.status);
+      setSummary(meeting?.summary || "");
+      setSummaryFormat(meeting?.summary_format || "bullets");
+      setTranslation(meeting?.translation || "");
+      setTranslationLang(meeting?.translation_language || "English");
+      setSummaryError("");
+      setTranslateError("");
+      setAsrError("");
+      setAudioError("");
+      setSummaryEngine("");
+      setExtractiveFallback(Boolean(meeting?.extractive_fallback));
+      setFaithfulness(meeting?.faithfulness || null);
+      setTranslationFaithfulness(meeting?.translation_faithfulness || null);
+      setHasAudio(Boolean(meeting?.has_audio));
+      autoTranslateRef.current = meeting?.translation ? meeting?.final_transcript || "" : "";
+      autoSummaryRef.current = meeting?.summary
+        ? `${meeting?.id}:${meeting?.summary_format || "bullets"}`
+        : "";
+      revokeAudioUrl();
+      if (meeting?.has_audio || meeting?.status === "finalized") {
+        loadAudio(meeting?.id);
+      }
+    } catch (err) {
+      console.error("MeetingRoom reset failed", err);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id]);
+  }, [meeting?.id]);
 
+  const segmentCount = Array.isArray(meeting?.segments) ? meeting.segments.length : 0;
   useEffect(() => {
-    if (Array.isArray(meeting.segments) && meeting.segments.length) {
-      setTranscriptSegments(meeting.segments);
+    try {
+      if (Array.isArray(meeting?.segments) && meeting.segments.length) {
+        setTranscriptSegments(meeting.segments);
+      }
+    } catch (err) {
+      console.error("MeetingRoom segments sync failed", err);
     }
-  }, [meeting.segments]);
+  }, [meeting?.id, meeting?.updated_at, segmentCount]);
 
   useEffect(() => {
     return () => revokeAudioUrl();
   }, [revokeAudioUrl]);
 
+  const transcriptText = (meeting?.final_transcript || "").trim();
+  const summaryText = (meeting?.summary || "").trim();
+  const translationText = (meeting?.translation || "").trim();
+
   // Auto-summarize finalized transcripts (also produces English translation).
   useEffect(() => {
-    const text = (meeting.final_transcript || "").trim();
-    if (!text) return;
-    if (meeting.summary) return;
-    if (autoSummaryRef.current.startsWith(`${meeting.id}:`)) return;
-    summarizeFromTranscript(summaryFormat);
+    try {
+      if (!transcriptText) return;
+      if (summaryText) return;
+      if (autoSummaryRef.current.startsWith(`${meeting?.id}:`)) return;
+      summarizeFromTranscript(summaryFormat);
+    } catch (err) {
+      console.error("MeetingRoom auto-summarize failed", err);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, meeting.final_transcript, meeting.summary]);
+  }, [meeting?.id, transcriptText, summaryText]);
 
   // If a summary already exists but English translation is missing, translate only.
   useEffect(() => {
-    const text = (meeting.final_transcript || "").trim();
-    if (!text) return;
-    if (meeting.translation) return;
-    if (!meeting.summary) return; // summarize pipeline will create both
-    translateToEnglish(text);
+    try {
+      if (!transcriptText) return;
+      if (translationText) return;
+      if (!summaryText) return;
+      if (String(autoTranslateRef.current).startsWith("failed:")) return;
+      translateToEnglish(transcriptText);
+    } catch (err) {
+      console.error("MeetingRoom auto-translate failed", err);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, meeting.final_transcript, meeting.translation, meeting.summary]);
+  }, [meeting?.id, transcriptText, translationText, summaryText]);
 
   // Preload the AudioWorklet so Start recording does not wait on the network.
   useEffect(() => {
@@ -552,7 +498,7 @@ export default function MeetingRoom({
     try {
       // Stamp meeting date/time to the current moment when recording starts.
       detailsRef.current.useCurrentDateTime?.();
-      await recorder.start(meeting.id);
+      await recorder.start(meeting?.id);
       setStatus("recording");
     } catch {
       /* handled inside hook via message */
@@ -621,7 +567,7 @@ export default function MeetingRoom({
       return;
     }
     try {
-      const { blob, filename } = await api.exportMeeting(meeting.id, format);
+      const { blob, filename } = await api.exportMeeting(meeting?.id, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -656,7 +602,7 @@ export default function MeetingRoom({
           <div className="history-detail-heading">
             <span className="history-detail-kicker">Saved meeting</span>
             <h2 className="history-detail-title">
-              {meeting.title || "Untitled meeting"}
+              {meeting?.title || "Untitled meeting"}
             </h2>
           </div>
           <div className="history-detail-actions icon-actions">
@@ -895,9 +841,11 @@ export default function MeetingRoom({
             ) : hasTranscript ? (
               <TranscriptTurns
                 segments={
-                  transcriptSegments.length
+                  Array.isArray(transcriptSegments) && transcriptSegments.length
                     ? transcriptSegments
-                    : meeting.segments || []
+                    : Array.isArray(meeting?.segments)
+                      ? meeting.segments
+                      : []
                 }
                 fallbackText={finalTranscript}
                 keyword={transcriptQuery}

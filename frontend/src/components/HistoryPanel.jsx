@@ -142,7 +142,8 @@ export default function HistoryPanel({
   onDelete,
   onCreate,
 }) {
-  const count = meetings.length;
+  const list = Array.isArray(meetings) ? meetings : [];
+  const count = list.length;
 
   return (
     <div className="content history-panel">
@@ -212,7 +213,7 @@ export default function HistoryPanel({
                 </div>
               ) : (
                 <div className="history-list">
-                  {meetings.map((m) => (
+                  {list.map((m) => (
                     <HistoryRow
                       key={m.id}
                       meeting={m}

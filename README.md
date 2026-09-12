@@ -1,5 +1,7 @@
 # Smart Meeting — Online Minute-Making
 
+GitHub repository / Pages project name: **smartmeeting**.
+
 A full-stack platform that captures live meeting audio, transcribes it in
 real time with **Whisper** (two-pass pipeline, explicit **Hiligaynon** and
 **Tagalog** support), condenses it with **BART** summarization (bullet points

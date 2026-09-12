@@ -36,29 +36,45 @@ def voice_label(index: int) -> str:
     return f"Voice {n}"
 
 
+def clamp_voice_index(index: int, registered_slots: int = 1) -> int:
+    """Keep extra Whisper voices as Voice N (capped), never index into attendees."""
+    del registered_slots  # display is not limited to the registered attendee count
+    try:
+        i = int(index)
+    except (TypeError, ValueError):
+        return 1
+    if i < 1:
+        return 1
+    return min(i, _MAX_VOICES_HARD_CAP)
+
+
 def registered_speaker_count(
     meeting=None,
     *,
     attendees=None,
     presiding_officer=None,
 ) -> int:
-    """``len(attendees) + (1 if presiding_officer else 0)``, at least 1."""
+    """``len(attendees) + (1 if presiding_officer else 0)``.
+
+    When the attendee list is unknown (``None``), revert to ``live_max_voices``
+    (Voice 1–3) instead of collapsing every talker onto Voice 1.
+    """
+    raw_att = attendees
+    raw_off = presiding_officer
     if meeting is not None:
-        if attendees is None:
-            attendees = getattr(meeting, "attendees", None)
-        if presiding_officer is None:
-            presiding_officer = getattr(meeting, "presiding_officer", None)
+        if raw_att is None:
+            raw_att = getattr(meeting, "attendees", None)
+        if raw_off is None:
+            raw_off = getattr(meeting, "presiding_officer", None)
+    if raw_att is None:
+        return _max_voices()
     try:
         from .attendees import load_attendees
 
-        names = load_attendees(attendees)
+        names = load_attendees(raw_att)
     except Exception:
-        names = [
-            str(n).strip()
-            for n in (attendees or [])
-            if isinstance(n, str) and str(n).strip()
-        ]
-    officer = (presiding_officer or "").strip() if isinstance(presiding_officer, str) else ""
+        names = []
+    officer = (raw_off or "").strip() if isinstance(raw_off, str) else ""
     n = len(names) + (1 if officer else 0)
     return max(1, min(_MAX_VOICES_HARD_CAP, n))
 
@@ -283,14 +299,10 @@ class _VoiceSession:
                 if self.acc_counts[i]
             }
         if not scores:
-            cap = self.cap()
-            return min(max(1, cid), cap)
+            return clamp_voice_index(cid)
         mapping = rank_voice_ids(ids, scores)
         display = int(mapping.get(cid, cid))
-        cap = self.cap()
-        if display < 1:
-            return 1
-        return min(display, cap)
+        return clamp_voice_index(display)
 
 
 def _session(meeting_id: str) -> _VoiceSession:
@@ -401,11 +413,34 @@ def label_segments(
     """Assign Voice 1…N from each segment's audio slice, ranked by ASR accuracy.
 
     Clustering groups the same talker; Voice 1 is the cluster with the highest
-    Whisper confidence. Slot count is the registered participant count when
-    given. Without confidence scores, labels keep first-seen order.
+    Whisper confidence. Slot count defaults to ``live_max_voices`` (Voice 1–3)
+    unless ``max_voices`` is passed. Unknown attendee lists revert to that
+    default instead of collapsing onto Voice 1. Extra clusters keep Voice N
+    (hard-capped). Without confidence scores, labels keep first-seen order.
     """
     if not segments:
         return []
+    try:
+        return _label_segments_inner(
+            meeting_id, segments, samples, sample_rate=sample_rate, max_voices=max_voices
+        )
+    except Exception:
+        import logging
+
+        logging.exception("label_segments failed; falling back to Voice 1")
+        for seg in segments or []:
+            _set_voice(seg, 1, voice_label(1))
+        return segments
+
+
+def _label_segments_inner(
+    meeting_id: str,
+    segments: list,
+    samples: np.ndarray | None = None,
+    *,
+    sample_rate: int | None = None,
+    max_voices: int | None = None,
+) -> list:
     reset_meeting(meeting_id)
     if max_voices is not None:
         configure_meeting(meeting_id, max_voices=max_voices)
@@ -437,10 +472,8 @@ def label_segments(
         score_n[cid] = score_n.get(cid, 0) + 1
     scores = {cid: score_sum[cid] / score_n[cid] for cid in score_n}
     ranking = rank_voice_ids(cluster_ids, scores)
-    cap = _session(meeting_id).cap()
     for seg, cid in zip(segments, cluster_ids):
-        display = int(ranking.get(cid, cid) or 1)
-        display = min(max(1, display), cap)
+        display = clamp_voice_index(int(ranking.get(cid, cid) or 1))
         _set_voice(seg, display, voice_label(display))
     return segments
 

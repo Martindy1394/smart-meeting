@@ -317,12 +317,6 @@ async def transcribe_ws(websocket: WebSocket):
             mrow = db2.get(Meeting, meeting_id)
             if mrow is not None:
                 extra_terms = transcription_svc.meeting_prompt_terms(mrow)
-                from ..services import live_speakers
-
-                live_speakers.configure_meeting(
-                    meeting_id,
-                    max_voices=live_speakers.registered_speaker_count(mrow),
-                )
                 if getattr(mrow, "language_locked", False) and (mrow.language or "").strip():
                     language_locked = True
                     locked_language = (mrow.language or "").strip()
