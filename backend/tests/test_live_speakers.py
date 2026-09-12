@@ -147,6 +147,49 @@ class LiveSpeakerTests(unittest.TestCase):
         mapping = live_speakers.rank_voice_ids([1, 2, 1], {})
         self.assertEqual(mapping, {1: 1, 2: 2})
 
+    def test_registered_speaker_count(self):
+        from types import SimpleNamespace
+
+        self.assertEqual(
+            live_speakers.registered_speaker_count(
+                attendees=["Ada", "Bob"], presiding_officer="Chair"
+            ),
+            3,
+        )
+        self.assertEqual(
+            live_speakers.registered_speaker_count(
+                SimpleNamespace(attendees=["Ada"], presiding_officer="")
+            ),
+            1,
+        )
+        self.assertEqual(
+            live_speakers.registered_speaker_count(attendees=[], presiding_officer=""),
+            1,
+        )
+
+    def test_participant_count_caps_voice_slots(self):
+        sr = 16000
+        low = np.frombuffer(_tone(90.0, seconds=1.0), dtype="<i2").astype(np.float32) / 32768.0
+        high = np.frombuffer(_tone(280.0, seconds=1.0), dtype="<i2").astype(np.float32) / 32768.0
+        wav = np.concatenate([low, high])
+
+        class Seg:
+            def __init__(self, text, start, end):
+                self.text = text
+                self.start = start
+                self.end = end
+                self.speaker_label = ""
+                self.speaker_index = 0
+
+        segs = [Seg("hello", 0.0, 1.0), Seg("board", 1.0, 2.0)]
+        out = live_speakers.label_segments(
+            "meet-one-slot", segs, wav, sample_rate=sr, max_voices=1
+        )
+        self.assertEqual(out[0].speaker_index, 1)
+        self.assertEqual(out[1].speaker_index, 1)
+        self.assertEqual(out[0].speaker_label, "Voice 1")
+        self.assertEqual(out[1].speaker_label, "Voice 1")
+
 
 if __name__ == "__main__":
     unittest.main()

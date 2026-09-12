@@ -1327,8 +1327,15 @@ button {
   gap: 10px;
 }
 .transcript-turn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin: 0;
   line-height: 1.45;
+}
+.transcript-words {
+  flex: 1;
+  min-width: 0;
 }
 .seg-time {
   display: inline-block;
@@ -1354,7 +1361,8 @@ button {
 }
 .speaker-chip {
   display: inline-block;
-  margin-right: 8px;
+  flex-shrink: 0;
+  margin-right: 0;
   padding: 1px 8px;
   border-radius: 999px;
   font-size: 11px;

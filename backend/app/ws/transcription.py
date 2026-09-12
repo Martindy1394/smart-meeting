@@ -147,14 +147,8 @@ async def _emit_live_window(
         if len(merged.split()) < len((live_caption or "").split()):
             merged = live_caption
     if merged != live_caption:
+        # Words only on the wire — Voice N is speaker_label, not inlined in text.
         display = merged
-        if speaker_label:
-            try:
-                from ..services import live_speakers
-
-                display = live_speakers.prefix_text(speaker_label, merged)
-            except Exception:
-                display = merged
         await _send(
             websocket,
             {
@@ -323,6 +317,12 @@ async def transcribe_ws(websocket: WebSocket):
             mrow = db2.get(Meeting, meeting_id)
             if mrow is not None:
                 extra_terms = transcription_svc.meeting_prompt_terms(mrow)
+                from ..services import live_speakers
+
+                live_speakers.configure_meeting(
+                    meeting_id,
+                    max_voices=live_speakers.registered_speaker_count(mrow),
+                )
                 if getattr(mrow, "language_locked", False) and (mrow.language or "").strip():
                     language_locked = True
                     locked_language = (mrow.language or "").strip()
