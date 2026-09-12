@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Callable
+from typing import Callable
 
 from ..config import settings
 from . import pipeline_metrics, redis_store

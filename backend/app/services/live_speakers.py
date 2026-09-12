@@ -191,7 +191,7 @@ class _VoiceSession:
     last_index: int = 1
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def assign(self, feat: tuple[float, ...], *, threshold: float = 1.35) -> int:
+    def assign(self, feat: tuple[float, ...]) -> int:
         if not feat:
             return self.last_index
         with self.lock:
@@ -206,7 +206,6 @@ class _VoiceSession:
             best_i = int(min(range(len(dists)), key=lambda i: dists[i]))
             max_v = _max_voices()
             pitch_gap = abs(feat[0] - self.centroids[best_i][0]) if feat and self.centroids[best_i] else 0.0
-            spec_gap = _dist(feat[2:], self.centroids[best_i][2:]) if feat and self.centroids[best_i] else 0.0
             new_voice = dists[best_i] > 0.85 or pitch_gap > 0.18
             if new_voice and len(self.centroids) < max_v:
                 self.centroids.append(feat)
