@@ -109,19 +109,34 @@ function sleep(ms) {
  * Low-level fetch with retries for transient tunnel / uvicorn-reload failures.
  * Does not parse JSON — callers handle the Response.
  */
-async function fetchWithRetry(url, init = {}, { retries = 3 } = {}) {
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+async function fetchWithRetry(
+  url,
+  init = {},
+  { retries = 2, timeoutMs = DEFAULT_TIMEOUT_MS } = {}
+) {
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, init);
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timer);
+      return res;
     } catch (e) {
+      clearTimeout(timer);
       lastErr = e;
       if (attempt >= retries) break;
-      // 300ms, 800ms, 1600ms — covers brief --reload Whisper warmups.
       await sleep(300 * 2 ** attempt + 100);
     }
   }
-  throw new ApiError(NETWORK_HELP, 0);
+  throw new ApiError(
+    lastErr?.name === "AbortError"
+      ? "The API did not respond in time. Check that start-api.bat is running."
+      : NETWORK_HELP,
+    0
+  );
 }
 
 let refreshInFlight = null;
@@ -188,23 +203,33 @@ export async function pingApi() {
   }
 }
 
-async function request(path, { method = "GET", body, auth = true, _retry = true } = {}) {
+async function request(
+  path,
+  { method = "GET", body, auth = true, _retry = true, retries, timeoutMs } = {}
+) {
   const headers = { "Content-Type": "application/json" };
   if (auth) {
     const token = await ensureFreshAccessToken({ minValiditySeconds: 30 });
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetchWithRetry(apiUrl(`/api${path}`), {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const res = await fetchWithRetry(
+    apiUrl(`/api${path}`),
+    {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    },
+    {
+      retries: retries ?? 2,
+      timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    }
+  );
 
   if (res.status === 401 && auth && _retry && getRefreshToken()) {
     const next = await refreshAccessToken();
     if (next) {
-      return request(path, { method, body, auth, _retry: false });
+      return request(path, { method, body, auth, _retry: false, retries, timeoutMs });
     }
   }
 
@@ -257,7 +282,7 @@ export const api = {
     }
     clearSessionTokens();
   },
-  me: () => request("/auth/me"),
+  me: () => request("/auth/me", { retries: 1, timeoutMs: 8000 }),
   updateProfile: (payload) => request("/auth/me", { method: "PATCH", body: payload }),
 
   // Meetings
@@ -348,8 +373,10 @@ export const api = {
 
   // AI
   languages: () => request("/ai/languages"),
-  summarize: (payload) => request("/ai/summarize", { method: "POST", body: payload }),
-  translate: (payload) => request("/ai/translate", { method: "POST", body: payload }),
+  summarize: (payload) =>
+    request("/ai/summarize", { method: "POST", body: payload, timeoutMs: 120_000, retries: 0 }),
+  translate: (payload) =>
+    request("/ai/translate", { method: "POST", body: payload, timeoutMs: 120_000, retries: 0 }),
 
   health: () => request("/health", { auth: false }),
 };

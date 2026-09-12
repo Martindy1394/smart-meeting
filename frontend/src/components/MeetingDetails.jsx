@@ -53,6 +53,10 @@ function resolveAttendees(attendees, attendeeInput) {
   return pending ? Array.from(new Set([...base, pending])) : base;
 }
 
+function sameDateTimeLocal(a, b) {
+  return String(a || "").slice(0, 16) === String(b || "").slice(0, 16);
+}
+
 function sameAttendees(a, b) {
   const left = Array.isArray(a) ? a : [];
   const right = Array.isArray(b) ? b : [];
@@ -164,7 +168,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       title.trim() !== (meeting?.title || "").trim() ||
       venue.trim() !== (meeting?.venue || "").trim() ||
       presidingOfficer.trim() !== (meeting?.presiding_officer || "").trim() ||
-      dateTime !== savedDateTime ||
+      !sameDateTimeLocal(dateTime, savedDateTime) ||
       !sameAttendees(currentAttendees, savedAttendees)
     );
   };
@@ -196,6 +200,10 @@ const MeetingDetails = forwardRef(function MeetingDetails(
       return false;
     }
 
+    if (!meeting?.id) {
+      if (!silent) setError("Meeting is still loading.");
+      return false;
+    }
     const seq = ++saveSeq.current;
     setSaving(true);
     try {
@@ -463,7 +471,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
                 list="attendee-directory"
               />
               <datalist id="attendee-directory">
-                {directory.attendees
+                {(Array.isArray(directory.attendees) ? directory.attendees : [])
                   .filter(
                     (name) =>
                       !(Array.isArray(attendees) ? attendees : []).some(

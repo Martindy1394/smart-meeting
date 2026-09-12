@@ -209,12 +209,14 @@ export default function MeetingRoom({
 
   const summarizeFromTranscript = useCallback(
     async (format = summaryFormat, { forceRetranslate = false } = {}) => {
+      const meetingId = meeting?.id;
+      if (!meetingId) return;
       setSummarizing(true);
       setSummaryError("");
+      autoSummaryRef.current = `${meetingId}:${format}:pending`;
       try {
-        // Backend: full-transcript → English, then topic-aware BART (meeting kind).
         const res = await api.summarize({
-          meeting_id: meeting.id,
+          meeting_id: meetingId,
           output_format: format,
           force_retranslate: Boolean(forceRetranslate),
           source_kind: "meeting",
@@ -224,50 +226,51 @@ export default function MeetingRoom({
         setExtractiveFallback(Boolean(res.extractive_fallback));
         setFaithfulness(res.faithfulness || null);
         setTranslationFaithfulness(res.translation_faithfulness || null);
-        // Always refresh translation from this pass (clear if empty).
         setTranslation(res.translation || "");
         setTranslationLang(res.translation_language || "English");
         autoTranslateRef.current = (res.translation || "").trim()
           ? "synced"
           : "";
-        autoSummaryRef.current = `${meeting.id}:${format}`;
+        autoSummaryRef.current = `${meetingId}:${format}:ok`;
         if (onMeetingUpdated) onMeetingUpdated();
       } catch (err) {
         console.error("Summarization failed", err);
+        autoSummaryRef.current = `${meetingId}:${format}:failed`;
         setSummaryError(err.message || "Summarization failed.");
       } finally {
         setSummarizing(false);
       }
     },
-    [meeting.id, onMeetingUpdated, summaryFormat]
+    [meeting?.id, onMeetingUpdated, summaryFormat]
   );
 
   const translateToEnglish = useCallback(
     async (transcriptText, { force = false } = {}) => {
+      const meetingId = meeting?.id;
       const text = (transcriptText || "").trim();
-      if (!text) return;
+      if (!meetingId || !text) return;
       if (!force && autoTranslateRef.current === text) return;
       autoTranslateRef.current = text;
       setTranslating(true);
       setTranslateError("");
       try {
         const res = await api.translate({
-          meeting_id: meeting.id,
+          meeting_id: meetingId,
           target_language: "en",
         });
-        setTranslation(res.translation);
+        setTranslation(res.translation || "");
         setTranslationLang(res.language_name || "English");
         setTranslationFaithfulness(res.translation_faithfulness || null);
         if (onMeetingUpdated) onMeetingUpdated();
       } catch (err) {
         console.error("English translation failed", err);
-        autoTranslateRef.current = "";
+        autoTranslateRef.current = `failed:${meetingId}`;
         setTranslateError(err.message || "English translation failed.");
       } finally {
         setTranslating(false);
       }
     },
-    [meeting.id, onMeetingUpdated]
+    [meeting?.id, onMeetingUpdated]
   );
 
   const applyTranscriptResult = useCallback(
@@ -297,7 +300,7 @@ export default function MeetingRoom({
         await saveDetails({ silent: true });
       }
       if (onMeetingUpdated) onMeetingUpdated();
-      await loadAudio(meeting.id);
+      await loadAudio(meeting?.id);
       if (text.trim()) {
         // Force a fresh English translation of the new transcript, then summarize.
         await summarizeFromTranscript(summaryFormat, { forceRetranslate: true });
@@ -306,7 +309,7 @@ export default function MeetingRoom({
     [
       audioUrl,
       loadAudio,
-      meeting.id,
+      meeting?.id,
       onMeetingUpdated,
       saveDetails,
       summarizeFromTranscript,
@@ -346,7 +349,7 @@ export default function MeetingRoom({
       let detail = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          detail = await api.retranscribeMeeting(meeting.id);
+          detail = await api.retranscribeMeeting(meeting?.id);
           break;
         } catch (err) {
           if (!isNetworkError(err) || attempt === 2) throw err;
@@ -358,7 +361,7 @@ export default function MeetingRoom({
       while (detail?.status === "processing" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2500));
         try {
-          detail = await api.getMeeting(meeting.id);
+          detail = await api.getMeeting(meeting?.id);
         } catch (err) {
           // Keep polling through brief tunnel / reload blips.
           if (!isNetworkError(err)) throw err;
@@ -376,11 +379,11 @@ export default function MeetingRoom({
     } catch (err) {
       console.error("Whisper ASR failed", err);
       setAsrError(err.message || "Whisper ASR failed.");
-      setStatus(meeting.status || "finalized");
+      setStatus(meeting?.status || "finalized");
     } finally {
       setAsrBusy(false);
     }
-  }, [applyTranscriptResult, meeting.id, meeting.status]);
+  }, [applyTranscriptResult, meeting?.id, meeting?.status]);
 
   const recorder = useRecorder({ onFinalTranscript });
 
@@ -410,7 +413,7 @@ export default function MeetingRoom({
         : "";
       revokeAudioUrl();
       if (meeting?.has_audio || meeting?.status === "finalized") {
-        loadAudio(meeting.id);
+        loadAudio(meeting?.id);
       }
     } catch (err) {
       console.error("MeetingRoom reset failed", err);
@@ -433,33 +436,36 @@ export default function MeetingRoom({
     return () => revokeAudioUrl();
   }, [revokeAudioUrl]);
 
+  const transcriptText = (meeting?.final_transcript || "").trim();
+  const summaryText = (meeting?.summary || "").trim();
+  const translationText = (meeting?.translation || "").trim();
+
   // Auto-summarize finalized transcripts (also produces English translation).
   useEffect(() => {
     try {
-      const text = (meeting?.final_transcript || "").trim();
-      if (!text) return;
-      if (meeting?.summary) return;
+      if (!transcriptText) return;
+      if (summaryText) return;
       if (autoSummaryRef.current.startsWith(`${meeting?.id}:`)) return;
       summarizeFromTranscript(summaryFormat);
     } catch (err) {
       console.error("MeetingRoom auto-summarize failed", err);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting?.id, meeting?.final_transcript, meeting?.summary]);
+  }, [meeting?.id, transcriptText, summaryText]);
 
   // If a summary already exists but English translation is missing, translate only.
   useEffect(() => {
     try {
-      const text = (meeting?.final_transcript || "").trim();
-      if (!text) return;
-      if (meeting?.translation) return;
-      if (!meeting?.summary) return; // summarize pipeline will create both
-      translateToEnglish(text);
+      if (!transcriptText) return;
+      if (translationText) return;
+      if (!summaryText) return;
+      if (String(autoTranslateRef.current).startsWith("failed:")) return;
+      translateToEnglish(transcriptText);
     } catch (err) {
       console.error("MeetingRoom auto-translate failed", err);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting?.id, meeting?.final_transcript, meeting?.translation, meeting?.summary]);
+  }, [meeting?.id, transcriptText, translationText, summaryText]);
 
   // Preload the AudioWorklet so Start recording does not wait on the network.
   useEffect(() => {
@@ -492,7 +498,7 @@ export default function MeetingRoom({
     try {
       // Stamp meeting date/time to the current moment when recording starts.
       detailsRef.current.useCurrentDateTime?.();
-      await recorder.start(meeting.id);
+      await recorder.start(meeting?.id);
       setStatus("recording");
     } catch {
       /* handled inside hook via message */
@@ -561,7 +567,7 @@ export default function MeetingRoom({
       return;
     }
     try {
-      const { blob, filename } = await api.exportMeeting(meeting.id, format);
+      const { blob, filename } = await api.exportMeeting(meeting?.id, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

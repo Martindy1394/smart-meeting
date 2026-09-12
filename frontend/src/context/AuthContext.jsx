@@ -20,11 +20,12 @@ export function AuthProvider({ children }) {
         setLoading(false);
         return;
       }
+      let timer = 0;
       try {
         const me = await Promise.race([
           api.me(),
           new Promise((_, reject) => {
-            setTimeout(
+            timer = window.setTimeout(
               () => reject(new Error("Timed out checking the signed-in session.")),
               AUTH_BOOTSTRAP_MS
             );
@@ -38,6 +39,7 @@ export function AuthProvider({ children }) {
           clearSessionTokens();
         }
       } finally {
+        if (timer) window.clearTimeout(timer);
         if (!cancelled) setLoading(false);
       }
     }

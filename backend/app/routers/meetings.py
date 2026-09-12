@@ -239,7 +239,31 @@ def _to_detail(m: Meeting) -> MeetingDetail:
     from ..services.ai_quality import load_faithfulness
     import json
 
-    detail = MeetingDetail.model_validate(m)
+    try:
+        detail = MeetingDetail.model_validate(m)
+    except Exception:
+        logger.exception("MeetingDetail validate failed id=%s", getattr(m, "id", None))
+        from ..services.attendees import load_attendees
+
+        detail = MeetingDetail(
+            id=m.id,
+            title=m.title or "",
+            status=m.status or "recording",
+            language=m.language or "auto",
+            venue=getattr(m, "venue", None) or "",
+            presiding_officer=getattr(m, "presiding_officer", None) or "",
+            meeting_date=getattr(m, "meeting_date", None),
+            attendees=load_attendees(getattr(m, "attendees", None)),
+            final_transcript=m.final_transcript or "",
+            summary=m.summary or "",
+            summary_format=m.summary_format or "",
+            translation=m.translation or "",
+            translation_language=m.translation_language or "",
+            duration_seconds=float(m.duration_seconds or 0),
+            created_at=m.created_at,
+            updated_at=m.updated_at,
+            segments=list(getattr(m, "segments", None) or []),
+        )
     detail.has_audio = _has_audio(m)
     detail.language_detection = _language_detection_info(m)
     detail.extractive_fallback = bool(getattr(m, "extractive_fallback", False))

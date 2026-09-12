@@ -53,6 +53,7 @@ function hasTranslation(meeting) {
 }
 
 function buildStats(meetings) {
+  const list = Array.isArray(meetings) ? meetings : [];
   const weekStart = startOfWeek();
   let withTranslation = 0;
   let withTranscript = 0;
@@ -60,7 +61,7 @@ function buildStats(meetings) {
   let thisWeek = 0;
   let totalDuration = 0;
 
-  for (const m of meetings) {
+  for (const m of list) {
     if (hasTranslation(m)) withTranslation += 1;
     if (m.has_transcript || m.status === "finalized") withTranscript += 1;
     if (m.has_audio) withAudio += 1;
@@ -73,7 +74,7 @@ function buildStats(meetings) {
   }
 
   return {
-    total: meetings.length,
+    total: list.length,
     withTranslation,
     withTranscript,
     withAudio,
@@ -156,8 +157,9 @@ export default function DashboardPanel({
   onSelect,
   onCreate,
 }) {
-  const stats = buildStats(meetings);
-  const sorted = [...meetings].sort((a, b) => {
+  const list = Array.isArray(meetings) ? meetings : [];
+  const stats = buildStats(list);
+  const sorted = [...list].sort((a, b) => {
     const ta = new Date(meetingWhen(a) || 0).getTime();
     const tb = new Date(meetingWhen(b) || 0).getTime();
     return tb - ta;
@@ -237,7 +239,7 @@ export default function DashboardPanel({
               <span className="card-tag">
                 {withTranslations.length > 0
                   ? `${withTranslations.length} translated`
-                  : `${meetings.length} total`}
+                  : `${list.length} total`}
               </span>
             </div>
             <div className="card-body dash-card-body">
