@@ -1,6 +1,9 @@
 /** Highest Voice N we will render. Extra Whisper clusters stay labeled, never loop. */
 export const MAX_VOICE_INDEX = 32;
 
+/** Pre-slot-cap default (live_max_voices) used when participant data is missing. */
+export const LEGACY_MAX_VOICES = 3;
+
 function asNameList(value) {
   if (Array.isArray(value)) {
     return value.map((n) => String(n || "").trim()).filter(Boolean);
@@ -19,16 +22,26 @@ export function listAttendees(meeting) {
   return asNameList(meeting?.attendees);
 }
 
-/** attendees.length + (presiding_officer ? 1 : 0), at least 1. */
+/**
+ * attendees.length + (presiding_officer ? 1 : 0).
+ * When attendees are still loading/null, revert to the old Voice 1–3 default.
+ */
 export function registeredSpeakerCount(meeting) {
-  const attendees = listAttendees(meeting);
-  const officer = String(meeting?.presiding_officer || "").trim();
-  // `meeting?.attendees?.length ?? 0` is safe while loading; parsed names win if present.
-  const attendeeCount = attendees.length || (meeting?.attendees?.length ?? 0);
-  return Math.max(
-    1,
-    Math.min(MAX_VOICE_INDEX, attendeeCount + (officer ? 1 : 0))
-  );
+  try {
+    if (meeting == null || meeting.attendees == null) {
+      return LEGACY_MAX_VOICES;
+    }
+    const attendees = listAttendees(meeting);
+    const officer = String(meeting?.presiding_officer || "").trim();
+    const attendeeCount = attendees.length || (meeting?.attendees?.length ?? 0);
+    return Math.max(
+      1,
+      Math.min(MAX_VOICE_INDEX, attendeeCount + (officer ? 1 : 0))
+    );
+  } catch (err) {
+    console.error("registeredSpeakerCount failed; reverting to Voice 1–3", err);
+    return LEGACY_MAX_VOICES;
+  }
 }
 
 /**
@@ -48,14 +61,22 @@ export function voiceLabelForSlot(index, registeredSlots = 1) {
 
 /** Strip Voice N prefixes and bracket timestamps so the word box is text-only. */
 export function stripTranscriptMeta(text) {
-  let body = String(text || "").trim();
-  body = body.replace(/^(Voice\s+\d+)\s*:\s*/i, "");
-  body = body.replace(
-    /^\[(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?(?:\s*[–\-—]\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)?\]\s*/,
-    ""
-  );
-  body = body.replace(/^\[\d+(?:\.\d+)?\s*[–\-—]\s*\d+(?:\.\d+)?\]\s*/, "");
-  return body.trim();
+  const original = String(text || "").trim();
+  try {
+    let body = original;
+    body = body.replace(/^(Voice\s+\d+)\s*:\s*/i, "");
+    body = body.replace(
+      /^\[(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?(?:\s*[–\-—]\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)?\]\s*/,
+      ""
+    );
+    body = body.replace(/^\[\d+(?:\.\d+)?\s*[–\-—]\s*\d+(?:\.\d+)?\]\s*/, "");
+    body = body.trim();
+    // Revert isolation if it would hide the utterance.
+    return body || original;
+  } catch (err) {
+    console.error("stripTranscriptMeta failed; reverting to raw text", err);
+    return original;
+  }
 }
 
 export function segmentHaystack(seg) {
@@ -87,7 +108,42 @@ function parseFallbackLines(text, slots) {
   });
 }
 
-export function groupByVoice(segments, voiceSlots = 1) {
+/** Pre-voice-slot grouping: keep Whisper labels, do not remap onto attendee count. */
+export function groupByVoiceLegacy(segments) {
+  const out = [];
+  const list = Array.isArray(segments) ? segments : [];
+  for (const seg of list) {
+    const raw = String(seg?.text || "").trim();
+    if (!raw) continue;
+    let label = String(seg?.speaker_label || "").trim();
+    let idx = Number(seg?.speaker_index) || 0;
+    if (!label) {
+      label = "Voice 1";
+      idx = 1;
+    }
+    if (!idx) {
+      idx = Number((label.match(/\d+/) || ["1"])[0]) || 1;
+    }
+    let body = raw;
+    if (body.toLowerCase().startsWith(label.toLowerCase() + ":")) {
+      body = body.slice(label.length + 1).trim();
+    }
+    const last = out[out.length - 1];
+    if (last && last.speaker_label === label) {
+      last.text = `${last.text} ${body}`.trim();
+      continue;
+    }
+    out.push({
+      ...seg,
+      speaker_label: label,
+      speaker_index: idx,
+      text: body,
+    });
+  }
+  return out;
+}
+
+function groupByVoiceMapped(segments, voiceSlots = 1) {
   const out = [];
   const slots = Math.max(1, Number(voiceSlots) || 1);
   const list = Array.isArray(segments) ? segments : [];
@@ -116,6 +172,21 @@ export function groupByVoice(segments, voiceSlots = 1) {
   return out;
 }
 
+export function groupByVoice(segments, voiceSlots = 1) {
+  const list = Array.isArray(segments) ? segments : [];
+  try {
+    const mapped = groupByVoiceMapped(list, voiceSlots);
+    if (mapped.length || !list.some((s) => String(s?.text || "").trim())) {
+      return mapped;
+    }
+    console.warn("Voice mapping produced no turns; reverting to legacy grouping");
+    return groupByVoiceLegacy(list);
+  } catch (err) {
+    console.error("Voice mapping failed; reverting to legacy grouping", err);
+    return groupByVoiceLegacy(list);
+  }
+}
+
 /**
  * One-pass turn list. Do not recurse during React render — empty + fallback
  * used to re-enter TranscriptTurns and could blow the stack / look hung.
@@ -128,12 +199,12 @@ export function resolveTranscriptTurns({
 } = {}) {
   const kw = String(keyword || "").trim().toLowerCase();
   const slots = Math.max(1, Number(voiceSlots) || 1);
+  const segs = Array.isArray(segments)
+    ? segments.filter((s) => String(s?.text || "").trim())
+    : [];
+  const matchKw = (list) =>
+    kw ? list.filter((s) => segmentHaystack(s).includes(kw)) : list;
   try {
-    const segs = Array.isArray(segments)
-      ? segments.filter((s) => String(s?.text || "").trim())
-      : [];
-    const matchKw = (list) =>
-      kw ? list.filter((s) => segmentHaystack(s).includes(kw)) : list;
     let filtered = groupByVoice(matchKw(segs), slots);
     if (filtered.length) {
       return { turns: filtered, emptyMessage: null };
@@ -159,6 +230,10 @@ export function resolveTranscriptTurns({
     if (filtered.length) {
       return { turns: filtered, emptyMessage: null };
     }
+    const legacy = groupByVoiceLegacy(matchKw(parsed.length ? parsed : segs));
+    if (legacy.length) {
+      return { turns: legacy, emptyMessage: null };
+    }
     if (kw) {
       return {
         turns: [],
@@ -167,7 +242,17 @@ export function resolveTranscriptTurns({
     }
     return { turns: [], emptyMessage: null };
   } catch (err) {
-    console.error("resolveTranscriptTurns failed", err);
+    console.error("resolveTranscriptTurns failed; reverting to legacy turns", err);
+    try {
+      const text = String(fallbackText || "").trim();
+      const parsed = text ? parseFallbackLines(text, LEGACY_MAX_VOICES) : segs;
+      const legacy = groupByVoiceLegacy(matchKw(parsed));
+      if (legacy.length) {
+        return { turns: legacy, emptyMessage: null };
+      }
+    } catch (inner) {
+      console.error("Legacy transcript fallback failed", inner);
+    }
     return { turns: [], emptyMessage: "Could not render transcript." };
   }
 }

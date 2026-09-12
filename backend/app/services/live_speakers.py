@@ -54,19 +54,27 @@ def registered_speaker_count(
     attendees=None,
     presiding_officer=None,
 ) -> int:
-    """``len(attendees) + (1 if presiding_officer else 0)``, at least 1."""
+    """``len(attendees) + (1 if presiding_officer else 0)``.
+
+    When the attendee list is unknown (``None``), revert to ``live_max_voices``
+    (Voice 1–3) instead of collapsing every talker onto Voice 1.
+    """
+    raw_att = attendees
+    raw_off = presiding_officer
     if meeting is not None:
-        if attendees is None:
-            attendees = getattr(meeting, "attendees", None)
-        if presiding_officer is None:
-            presiding_officer = getattr(meeting, "presiding_officer", None)
+        if raw_att is None:
+            raw_att = getattr(meeting, "attendees", None)
+        if raw_off is None:
+            raw_off = getattr(meeting, "presiding_officer", None)
+    if raw_att is None:
+        return _max_voices()
     try:
         from .attendees import load_attendees
 
-        names = load_attendees(attendees)
+        names = load_attendees(raw_att)
     except Exception:
         names = []
-    officer = (presiding_officer or "").strip() if isinstance(presiding_officer, str) else ""
+    officer = (raw_off or "").strip() if isinstance(raw_off, str) else ""
     n = len(names) + (1 if officer else 0)
     return max(1, min(_MAX_VOICES_HARD_CAP, n))
 
@@ -405,8 +413,10 @@ def label_segments(
     """Assign Voice 1…N from each segment's audio slice, ranked by ASR accuracy.
 
     Clustering groups the same talker; Voice 1 is the cluster with the highest
-    Whisper confidence. Slot count is the registered participant count when
-    given. Without confidence scores, labels keep first-seen order.
+    Whisper confidence. Slot count defaults to ``live_max_voices`` (Voice 1–3)
+    unless ``max_voices`` is passed. Unknown attendee lists revert to that
+    default instead of collapsing onto Voice 1. Extra clusters keep Voice N
+    (hard-capped). Without confidence scores, labels keep first-seen order.
     """
     if not segments:
         return []

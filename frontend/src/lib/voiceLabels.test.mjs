@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  LEGACY_MAX_VOICES,
   groupByVoice,
+  groupByVoiceLegacy,
   listAttendees,
   mapVoiceSlot,
   registeredSpeakerCount,
   resolveTranscriptTurns,
+  stripTranscriptMeta,
   voiceLabelForSlot,
 } from "./voiceLabels.js";
 
@@ -14,8 +17,12 @@ test("optional attendees / officer never throw", () => {
   assert.deepEqual(listAttendees(undefined), []);
   assert.deepEqual(listAttendees({}), []);
   assert.deepEqual(listAttendees({ attendees: null }), []);
-  assert.equal(registeredSpeakerCount(null), 1);
-  assert.equal(registeredSpeakerCount({ attendees: null, presiding_officer: null }), 1);
+  assert.equal(registeredSpeakerCount(null), LEGACY_MAX_VOICES);
+  assert.equal(
+    registeredSpeakerCount({ attendees: null, presiding_officer: null }),
+    LEGACY_MAX_VOICES
+  );
+  assert.equal(registeredSpeakerCount({ attendees: [] }), 1);
   assert.equal(
     registeredSpeakerCount({ attendees: ["Ada", "Bob"], presiding_officer: "Chair" }),
     3
@@ -36,6 +43,19 @@ test("extra Whisper voices keep Voice N instead of crashing", () => {
   );
   assert.equal(grouped.length, 2);
   assert.equal(grouped[1].speaker_label, "Voice 7");
+});
+
+test("word isolation reverts to original text if it would go empty", () => {
+  assert.equal(stripTranscriptMeta("Voice 1: hello board"), "hello board");
+  assert.equal(stripTranscriptMeta("Voice 1:"), "Voice 1:");
+});
+
+test("legacy grouping is used when mapped grouping would drop text", () => {
+  const legacy = groupByVoiceLegacy([
+    { speaker_label: "Chair", speaker_index: 0, text: "Chair: the meeting is open" },
+  ]);
+  assert.equal(legacy[0].text, "the meeting is open");
+  assert.equal(legacy[0].speaker_label, "Chair");
 });
 
 test("resolveTranscriptTurns is one-pass (no recursive fallback)", () => {

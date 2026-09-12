@@ -166,6 +166,10 @@ class LiveSpeakerTests(unittest.TestCase):
             live_speakers.registered_speaker_count(attendees=[], presiding_officer=""),
             1,
         )
+        self.assertEqual(
+            live_speakers.registered_speaker_count(attendees=None, presiding_officer=None),
+            3,
+        )
 
     def test_participant_count_caps_voice_slots(self):
         sr = 16000
@@ -190,20 +194,28 @@ class LiveSpeakerTests(unittest.TestCase):
         self.assertEqual(out[0].speaker_label, "Voice 1")
         self.assertEqual(out[1].speaker_label, "Voice 1")
 
+        # Reverted attendee cap: default clustering may keep distinct voices.
+        segs2 = [Seg("hello", 0.0, 1.0), Seg("board", 1.0, 2.0)]
+        out2 = live_speakers.label_segments(
+            "meet-default-slots", segs2, wav, sample_rate=sr
+        )
+        self.assertTrue({s.speaker_label for s in out2}.issubset({"Voice 1", "Voice 2", "Voice 3"}))
+        self.assertGreaterEqual(len({s.speaker_index for s in out2}), 1)
+
     def test_clamp_voice_index_keeps_extra_whisper_voices(self):
         self.assertEqual(live_speakers.clamp_voice_index(7, registered_slots=2), 7)
         self.assertEqual(live_speakers.clamp_voice_index(99, registered_slots=1), 32)
         self.assertEqual(live_speakers.clamp_voice_index(0), 1)
         self.assertEqual(live_speakers.voice_label(7), "Voice 7")
 
-    def test_registered_count_null_attendees(self):
+    def test_unknown_attendees_revert_to_default_voice_cap(self):
         from types import SimpleNamespace
 
         self.assertEqual(
             live_speakers.registered_speaker_count(
                 SimpleNamespace(attendees=None, presiding_officer=None)
             ),
-            1,
+            3,
         )
 
 
