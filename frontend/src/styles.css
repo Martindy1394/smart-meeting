@@ -979,8 +979,7 @@ button {
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   align-items: stretch;
 }
-.content.history-detail .top-row .details-card,
-.content.history-detail .top-row .transcript-card {
+.content.history-detail .top-row .details-card {
   min-height: 420px;
 }
 .content.history-detail .bottom-cards {
@@ -1031,12 +1030,14 @@ button {
 .top-row .details-card,
 .top-row .transcript-card {
   margin-bottom: 0;
-  min-height: 380px;
-  height: 100%;
 }
 .top-row .details-card {
   display: flex;
   flex-direction: column;
+  min-height: 380px;
+}
+.top-row .transcript-card {
+  align-self: start;
 }
 .top-row .details-grid {
   grid-template-columns: 1fr;
@@ -1165,7 +1166,27 @@ button {
   overflow: hidden;
 }
 .transcript-card {
+  /* Fixed panel: long transcripts scroll inside instead of growing the card. */
+  height: 380px;
+  max-height: 380px;
   min-height: 380px;
+  overflow: hidden;
+  flex: none;
+}
+.content.history-detail .transcript-card {
+  height: 420px;
+  max-height: 420px;
+  min-height: 420px;
+}
+.transcript-card > .card-head {
+  flex: 0 0 auto;
+}
+.transcript-card > .card-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .card-head {
   display: flex;
@@ -1325,6 +1346,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
 }
 .transcript-turn {
   display: flex;
@@ -1332,12 +1354,15 @@ button {
   gap: 8px;
   margin: 0;
   line-height: 1.45;
+  flex: 0 0 auto;
 }
 .transcript-words {
   flex: 1;
   min-width: 0;
   font-style: normal;
   font-weight: 400;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .seg-time {
   display: inline-block;
