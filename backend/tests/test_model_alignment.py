@@ -53,6 +53,9 @@ class NameDirectoryTests(unittest.TestCase):
         out = collect_name_directory(meetings)
         self.assertEqual(out["presiding_officers"], ["Maria Santos"])
         self.assertEqual(out["attendees"], ["Ada", "Bob", "Carol"])
+        maria = next(p for p in out["people"] if p["name"] == "Maria Santos")
+        self.assertEqual(maria["officer_count"], 2)
+        self.assertIn("officer", maria["sources"])
 
 
 class SegmentTimesTests(unittest.TestCase):

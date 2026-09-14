@@ -257,11 +257,24 @@ class MeetingSummary(BaseModel):
         from_attributes = True
 
 
+class DirectoryPerson(BaseModel):
+    """One name in the suggestion directory, with frequency context."""
+
+    name: str
+    officer_count: int = 0
+    attendee_count: int = 0
+    identified_count: int = 0
+    last_seen: datetime | None = None
+    last_title: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
 class MeetingDirectory(BaseModel):
     """Distinct names from the owner's prior meetings (newest first)."""
 
     presiding_officers: list[str] = Field(default_factory=list)
     attendees: list[str] = Field(default_factory=list)
+    people: list[DirectoryPerson] = Field(default_factory=list)
 
 
 class ActionItem(BaseModel):

@@ -1569,6 +1569,9 @@ select.inline {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
+.details-grid .field .name-combobox {
+  width: 100%;
+}
 .details-grid .field {
   margin-bottom: 0;
 }
@@ -1626,10 +1629,83 @@ select.inline {
   gap: 8px;
   align-items: stretch;
 }
-.attendee-input-row input {
+.attendee-input-row input,
+.name-combobox input {
   flex: 1;
 }
-.attendee-input-row .btn {
+.name-combobox {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.name-combobox input {
+  width: 100%;
+}
+.name-suggest-list {
+  position: absolute;
+  z-index: 8;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: min(240px, 50vh);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+.name-suggest-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  min-height: 40px;
+}
+.name-suggest-item.is-active,
+.name-suggest-item:hover {
+  background: var(--surface-2);
+}
+.name-suggest-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.name-suggest-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.name-flag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.name-flag.is-present {
+  color: #166534;
+  border-color: rgba(21, 128, 61, 0.35);
+  background: rgba(21, 128, 61, 0.08);
+}
+.name-flag.is-guest {
+  color: #92400e;
+  border-color: rgba(180, 83, 9, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+}
+.name-suggest-title {
+  font-size: 11px;
+  color: var(--text-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .name-suggestions {

@@ -72,40 +72,148 @@ def load_attendees(raw: Any) -> list[str]:
     return []
 
 
+def _meeting_when(meeting: Any):
+    if isinstance(meeting, dict):
+        return meeting.get("meeting_date") or meeting.get("created_at")
+    return getattr(meeting, "meeting_date", None) or getattr(meeting, "created_at", None)
+
+
+def _meeting_title(meeting: Any) -> str:
+    if isinstance(meeting, dict):
+        return str(meeting.get("title") or "").strip()
+    return str(getattr(meeting, "title", None) or "").strip()
+
+
+def _identified_names(meeting: Any) -> list[tuple[str, float]]:
+    raw = None
+    if isinstance(meeting, dict):
+        raw = meeting.get("speaker_attendance_json") or meeting.get("attendance")
+    else:
+        raw = getattr(meeting, "speaker_attendance_json", None)
+    payload = raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+    if not isinstance(payload, dict):
+        return []
+    out: list[tuple[str, float]] = []
+    for bucket in ("present", "guests"):
+        for row in payload.get(bucket) or []:
+            if isinstance(row, str):
+                name = normalize_attendee_name(row)
+                conf = 0.0
+            elif isinstance(row, dict):
+                name = normalize_attendee_name(row.get("name"))
+                try:
+                    conf = float(row.get("confidence") or 0)
+                except (TypeError, ValueError):
+                    conf = 0.0
+            else:
+                continue
+            if name:
+                out.append((name, conf))
+    return out
+
+
 def collect_name_directory(
     meetings: Iterable[Any],
     *,
     max_officers: int = 80,
     max_attendees: int = 120,
-) -> dict[str, list[str]]:
-    """Unique presiding officers and attendees, newest meetings first."""
-    officers: list[str] = []
-    attendees: list[str] = []
+) -> dict[str, Any]:
+    """Unique presiding officers and attendees, newest meetings first.
+
+    Also returns ``people`` rows with frequency, last meeting, and whether the
+    name was confirmed by speech identification.
+    """
+    people: dict[str, dict[str, Any]] = {}
+
+    def bump(
+        name: str,
+        *,
+        as_officer: bool = False,
+        as_attendee: bool = False,
+        identified: bool = False,
+        when=None,
+        title: str = "",
+    ) -> None:
+        key = name.casefold()
+        row = people.get(key)
+        if row is None:
+            row = {
+                "name": name,
+                "officer_count": 0,
+                "attendee_count": 0,
+                "identified_count": 0,
+                "last_seen": when,
+                "last_title": title,
+                "sources": [],
+            }
+            people[key] = row
+        if as_officer:
+            row["officer_count"] += 1
+            if "officer" not in row["sources"]:
+                row["sources"].append("officer")
+        if as_attendee:
+            row["attendee_count"] += 1
+            if "attendee" not in row["sources"]:
+                row["sources"].append("attendee")
+        if identified:
+            row["identified_count"] += 1
+            if "identified" not in row["sources"]:
+                row["sources"].append("identified")
+        if when and not row["last_seen"]:
+            row["last_seen"] = when
+        if title and not row["last_title"]:
+            row["last_title"] = title
+
+    officer_order: list[str] = []
+    attendee_order: list[str] = []
     seen_off: set[str] = set()
     seen_att: set[str] = set()
+
     for meeting in meetings or []:
+        when = _meeting_when(meeting)
+        title = _meeting_title(meeting)
         officer = getattr(meeting, "presiding_officer", None)
         if isinstance(meeting, dict):
             officer = meeting.get("presiding_officer", officer)
         name = normalize_attendee_name(officer) if isinstance(officer, str) else None
         if name:
+            bump(name, as_officer=True, when=when, title=title)
             key = name.casefold()
             if key not in seen_off:
                 seen_off.add(key)
-                officers.append(name)
+                officer_order.append(name)
         raw_att = getattr(meeting, "attendees", None)
         if isinstance(meeting, dict):
             raw_att = meeting.get("attendees", raw_att)
         for attendee in load_attendees(raw_att):
+            bump(attendee, as_attendee=True, when=when, title=title)
             key = attendee.casefold()
             if key not in seen_att:
                 seen_att.add(key)
-                attendees.append(attendee)
-        if len(officers) >= max_officers and len(attendees) >= max_attendees:
-            break
+                attendee_order.append(attendee)
+        for ident, _conf in _identified_names(meeting):
+            bump(ident, identified=True, when=when, title=title)
+            key = ident.casefold()
+            if key not in seen_att:
+                seen_att.add(key)
+                attendee_order.append(ident)
+
+    ranked_people = sorted(
+        people.values(),
+        key=lambda r: (
+            -(int(r["officer_count"]) + int(r["attendee_count"])),
+            -(int(r["identified_count"])),
+        ),
+    )
     return {
-        "presiding_officers": officers[:max_officers],
-        "attendees": attendees[:max_attendees],
+        "presiding_officers": officer_order[:max_officers],
+        "attendees": attendee_order[:max_attendees],
+        "people": ranked_people[: max(max_officers, max_attendees)],
     }
 
 

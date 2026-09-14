@@ -24,6 +24,7 @@ export function normalizeMeeting(detail) {
     translation: detail.translation ?? "",
     translation_language: detail.translation_language ?? "",
     status: detail.status ?? "recording",
+    attendance: detail.attendance && typeof detail.attendance === "object" ? detail.attendance : null,
   };
 }
 
