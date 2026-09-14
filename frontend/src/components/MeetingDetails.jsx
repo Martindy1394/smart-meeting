@@ -6,7 +6,13 @@ import {
   useState,
 } from "react";
 import { api } from "../api/client";
+import {
+  loadRecentNames,
+  rememberRecentName,
+  sessionPeople,
+} from "../lib/nameSuggestions.js";
 import { listAttendees } from "../lib/voiceLabels.js";
+import NameSuggestField from "./NameSuggestField.jsx";
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -64,21 +70,6 @@ function sameAttendees(a, b) {
   return left.every((name, i) => name === right[i]);
 }
 
-function matchDirectory(query, names, exclude = []) {
-  const q = (query || "").trim().toLowerCase();
-  const skip = new Set((exclude || []).map((n) => String(n).toLowerCase()));
-  const out = [];
-  for (const raw of names || []) {
-    const name = String(raw || "").trim();
-    if (!name || skip.has(name.toLowerCase())) continue;
-    if (q && name.toLowerCase() === q) continue;
-    if (q && !name.toLowerCase().includes(q)) continue;
-    out.push(name);
-    if (out.length >= 8) break;
-  }
-  return out;
-}
-
 const AUTOSAVE_MS = 750;
 
 const MeetingDetails = forwardRef(function MeetingDetails(
@@ -100,7 +91,9 @@ const MeetingDetails = forwardRef(function MeetingDetails(
   const [directory, setDirectory] = useState({
     presiding_officers: [],
     attendees: [],
+    people: [],
   });
+  const [recents, setRecents] = useState(() => loadRecentNames());
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   const [error, setError] = useState("");
@@ -141,6 +134,7 @@ const MeetingDetails = forwardRef(function MeetingDetails(
             ? data.presiding_officers
             : [],
           attendees: Array.isArray(data.attendees) ? data.attendees : [],
+          people: Array.isArray(data.people) ? data.people : [],
         });
       } catch {
         /* suggestions are optional */
@@ -312,26 +306,25 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     return current;
   }
 
-  function addAttendee() {
-    const name = attendeeInput.trim();
+  function addAttendee(nameOverride) {
+    const name = String(nameOverride || attendeeInput).trim();
     if (!name) return;
     setAttendees((prev) => {
       const list = Array.isArray(prev) ? prev : [];
-      return list.includes(name) ? list : [...list, name];
+      return list.some((a) => a.toLowerCase() === name.toLowerCase())
+        ? list
+        : [...list, name];
     });
+    rememberRecentName("attendee", name);
+    setRecents(loadRecentNames());
     setAttendeeInput("");
-  }
-
-  function onAttendeeKeyDown(e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      addAttendee();
-    }
   }
 
   function removeAttendee(name) {
     setAttendees((prev) => (Array.isArray(prev) ? prev : []).filter((n) => n !== name));
   }
+
+  const sessionHits = sessionPeople(meeting);
 
   let statusLabel = "Autosave on";
   if (saving) statusLabel = "Saving…";
@@ -383,40 +376,21 @@ const MeetingDetails = forwardRef(function MeetingDetails(
 
         <div className="field">
           <label htmlFor="presiding-officer">Presiding officer</label>
-          <input
+          <NameSuggestField
             id="presiding-officer"
-            type="text"
+            role="officer"
             placeholder="e.g. Chair / Dean / Presiding Officer"
             value={presidingOfficer}
-            onChange={(e) => setPresidingOfficer(e.target.value)}
-            autoComplete="off"
-            list="presiding-officer-directory"
+            onChange={setPresidingOfficer}
+            directory={directory}
+            recents={recents.officers}
+            session={sessionHits}
+            onSelect={(name) => {
+              setPresidingOfficer(name);
+              rememberRecentName("officer", name);
+              setRecents(loadRecentNames());
+            }}
           />
-          <datalist id="presiding-officer-directory">
-            {(Array.isArray(directory.presiding_officers)
-              ? directory.presiding_officers
-              : []
-            ).map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-          {matchDirectory(presidingOfficer, directory.presiding_officers).length >
-            0 && (
-            <div className="name-suggestions" role="listbox" aria-label="Past presiding officers">
-              {matchDirectory(presidingOfficer, directory.presiding_officers).map(
-                (name) => (
-                  <button
-                    type="button"
-                    key={name}
-                    className="name-suggestion"
-                    onClick={() => setPresidingOfficer(name)}
-                  >
-                    {name}
-                  </button>
-                )
-              )}
-            </div>
-          )}
         </div>
 
         <div className="field">
@@ -461,61 +435,27 @@ const MeetingDetails = forwardRef(function MeetingDetails(
               ))}
             </div>
             <div className="attendee-input-row">
-              <input
-                type="text"
+              <NameSuggestField
+                role="attendee"
                 placeholder="Type an attendee's name"
                 value={attendeeInput}
-                onChange={(e) => setAttendeeInput(e.target.value)}
-                onKeyDown={onAttendeeKeyDown}
-                autoComplete="off"
-                list="attendee-directory"
+                onChange={setAttendeeInput}
+                directory={directory}
+                exclude={attendees}
+                recents={recents.attendees}
+                session={sessionHits}
+                onSelect={(name) => addAttendee(name)}
+                onEnterWithoutHighlight={() => addAttendee()}
               />
-              <datalist id="attendee-directory">
-                {(Array.isArray(directory.attendees) ? directory.attendees : [])
-                  .filter(
-                    (name) =>
-                      !(Array.isArray(attendees) ? attendees : []).some(
-                        (a) => a.toLowerCase() === name.toLowerCase()
-                      )
-                  )
-                  .map((name) => (
-                    <option key={name} value={name} />
-                  ))}
-              </datalist>
               <button
                 type="button"
                 className="btn secondary"
-                onClick={addAttendee}
+                onClick={() => addAttendee()}
                 disabled={!attendeeInput.trim()}
               >
                 + Add
               </button>
             </div>
-            {matchDirectory(attendeeInput, directory.attendees, attendees).length >
-              0 && (
-              <div className="name-suggestions" role="listbox" aria-label="Past attendees">
-                {matchDirectory(attendeeInput, directory.attendees, attendees).map(
-                  (name) => (
-                    <button
-                      type="button"
-                      key={name}
-                      className="name-suggestion"
-                      onClick={() => {
-                        setAttendees((prev) => {
-                          const list = Array.isArray(prev) ? prev : [];
-                          return list.some((a) => a.toLowerCase() === name.toLowerCase())
-                            ? list
-                            : [...list, name];
-                        });
-                        setAttendeeInput("");
-                      }}
-                    >
-                      {name}
-                    </button>
-                  )
-                )}
-              </div>
-            )}
           </div>
         </div>
       </div>

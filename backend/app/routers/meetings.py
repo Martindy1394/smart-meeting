@@ -441,7 +441,10 @@ def meeting_name_suggestions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Presiding officer and attendee names from this user's saved meetings."""
+    """Presiding officer and attendee names from this user's saved meetings.
+
+    Includes frequency / last-meeting context and speech-identified names.
+    """
     from ..services.attendees import collect_name_directory
 
     meetings = (
