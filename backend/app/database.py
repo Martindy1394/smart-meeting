@@ -84,6 +84,7 @@ def _apply_lightweight_migrations() -> None:
         "action_items_json": "TEXT DEFAULT '[]'",
         "language_locked": "BOOLEAN DEFAULT 0",
         "translation_faithfulness_json": "TEXT DEFAULT ''",
+        "speaker_attendance_json": "TEXT DEFAULT '{}'",
     }
     user_columns = {
         "username": "VARCHAR(64) DEFAULT ''",
@@ -117,6 +118,9 @@ def _apply_lightweight_migrations() -> None:
         "low_confidence": "BOOLEAN DEFAULT 0",
         "speaker_index": "INTEGER DEFAULT 0",
         "speaker_label": "VARCHAR(32) DEFAULT ''",
+        "speaker_name": "VARCHAR(255) DEFAULT ''",
+        "speaker_confidence": "FLOAT DEFAULT 0",
+        "speaker_id_method": "VARCHAR(32) DEFAULT ''",
     }
     if "transcript_segments" in tables:
         existing = {col["name"] for col in inspector.get_columns("transcript_segments")}

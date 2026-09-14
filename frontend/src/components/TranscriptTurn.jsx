@@ -28,7 +28,16 @@ export default function TranscriptTurn({
 }) {
   const slots = Math.max(1, Number(voiceSlots) || 1);
   const idx = mapVoiceSlot(segment?.speaker_index, slots);
-  const label = voiceLabelForSlot(idx, slots);
+  const name = String(segment?.speaker_name || "").trim();
+  const namedConf = Number(segment?.speaker_confidence) || 0;
+  const label =
+    name && namedConf >= 0.75 ? name : voiceLabelForSlot(idx, slots);
+  const titleBits = [voiceAccuracyTitle(idx)];
+  if (name) {
+    titleBits.push(
+      `${name} (${Math.round(namedConf * 100)}% ${segment?.speaker_id_method || "id"})`
+    );
+  }
   const words = stripTranscriptMeta(segment?.text || "");
   if (!words) return null;
   const low = Boolean(segment?.low_confidence);
@@ -37,7 +46,7 @@ export default function TranscriptTurn({
     <div className={live ? "transcript-turn transcript-live" : "transcript-turn"}>
       <span
         className={`speaker-chip ${speakerTone(idx)}`}
-        title={voiceAccuracyTitle(idx)}
+        title={titleBits.join(" · ")}
       >
         {label}
       </span>

@@ -519,9 +519,21 @@ def format_transcript(segments: list) -> str:
         if not text:
             continue
         lab = getattr(seg, "speaker_label", None)
+        name = getattr(seg, "speaker_name", None)
+        conf = getattr(seg, "speaker_confidence", None)
         if isinstance(seg, dict):
             lab = seg.get("speaker_label") or lab
+            name = seg.get("speaker_name") or name
+            conf = seg.get("speaker_confidence") if seg.get("speaker_confidence") is not None else conf
         lab = (lab or "").strip()
+        try:
+            from .speaker_id import DISPLAY_THRESHOLD
+
+            named = (str(name or "")).strip()
+            if named and float(conf or 0) >= DISPLAY_THRESHOLD:
+                lab = named
+        except Exception:
+            pass
         if lab and text.lower().startswith(lab.lower() + ":"):
             text = text.split(":", 1)[1].strip()
         if lab != last_lab:

@@ -181,6 +181,21 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
             max_voices=slots,
         )
 
+    try:
+        from . import speaker_id
+
+        speaker_id.identify_segments(
+            list(result.segments or []),
+            meeting,
+            owner_id=getattr(meeting, "owner_id", None),
+        )
+        report = speaker_id.build_attendance_report(list(result.segments or []), meeting)
+        import json
+
+        meeting.speaker_attendance_json = json.dumps(report.as_dict(), ensure_ascii=False)
+    except Exception:
+        logger.exception("Speaker identification failed meeting=%s", getattr(meeting, "id", None))
+
     db.query(TranscriptSegment).filter(
         TranscriptSegment.meeting_id == meeting.id
     ).delete()
@@ -201,6 +216,9 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
                 low_confidence=bool(getattr(seg, "low_confidence", False)),
                 speaker_index=int(getattr(seg, "speaker_index", 0) or 0),
                 speaker_label=str(getattr(seg, "speaker_label", "") or ""),
+                speaker_name=str(getattr(seg, "speaker_name", "") or ""),
+                speaker_confidence=float(getattr(seg, "speaker_confidence", 0) or 0),
+                speaker_id_method=str(getattr(seg, "speaker_id_method", "") or ""),
             )
         )
 

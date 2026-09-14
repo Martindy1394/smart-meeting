@@ -64,6 +64,14 @@ def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
             if not text:
                 continue
             voice = speaker or "Voice 1"
+            if isinstance(seg, dict):
+                named = (seg.get("speaker_name") or "").strip()
+                conf = float(seg.get("speaker_confidence") or 0)
+            else:
+                named = (getattr(seg, "speaker_name", None) or "").strip()
+                conf = float(getattr(seg, "speaker_confidence", 0) or 0)
+            if named and conf >= 0.75:
+                voice = named
             lines.append(f"{voice}: {text}")
         if lines:
             sections.append(("Voice-labeled transcript", "\n".join(lines)))
@@ -83,6 +91,27 @@ def build_export_sections(meeting: Any) -> list[tuple[str, str]]:
     if sfmt:
         heading = f"Structured summary ({sfmt})"
     sections.append((heading, summary or "(No summary yet.)"))
+
+    try:
+        from .speaker_id import build_attendance_report, format_attendance_text
+        import json
+
+        raw = getattr(meeting, "speaker_attendance_json", None) or ""
+        payload = None
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and parsed.get("expected") is not None:
+                    payload = parsed
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+        if payload is None:
+            payload = build_attendance_report(segments, meeting)
+        body = format_attendance_text(payload)
+        if body.strip():
+            sections.append(("Attendance (from speech introductions)", body))
+    except Exception:
+        pass
 
     return sections
 

@@ -105,6 +105,8 @@ class Meeting(Base):
     action_items_json: Mapped[str] = mapped_column(Text, default="[]")
     # Session-level ASR language lock (detect once, reuse).
     language_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # JSON attendance report from introduction-based speaker ID.
+    speaker_attendance_json: Mapped[str] = mapped_column(Text, default="{}")
 
     audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
@@ -149,7 +151,11 @@ class TranscriptSegment(Base):
     low_confidence: Mapped[bool] = mapped_column(Boolean, default=False)
     # Anonymous voice cluster remapped so Voice 1 = highest ASR accuracy.
     speaker_index: Mapped[int] = mapped_column(Integer, default=0)
-    speaker_label: Mapped[str] = mapped_column(String(32), default="")
+        speaker_label: Mapped[str] = mapped_column(String(32), default="")
+    # Roster name when an introduction / correction binds this Voice cluster.
+    speaker_name: Mapped[str] = mapped_column(String(255), default="")
+    speaker_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    speaker_id_method: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     meeting: Mapped["Meeting"] = relationship(back_populates="segments")
