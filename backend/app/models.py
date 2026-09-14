@@ -151,7 +151,7 @@ class TranscriptSegment(Base):
     low_confidence: Mapped[bool] = mapped_column(Boolean, default=False)
     # Anonymous voice cluster remapped so Voice 1 = highest ASR accuracy.
     speaker_index: Mapped[int] = mapped_column(Integer, default=0)
-        speaker_label: Mapped[str] = mapped_column(String(32), default="")
+    speaker_label: Mapped[str] = mapped_column(String(32), default="")
     # Roster name when an introduction / correction binds this Voice cluster.
     speaker_name: Mapped[str] = mapped_column(String(255), default="")
     speaker_confidence: Mapped[float] = mapped_column(Float, default=0.0)
