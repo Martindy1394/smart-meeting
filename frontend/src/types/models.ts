@@ -43,6 +43,10 @@ export interface TranscriptSegment {
   speaker_index?: number;
   /** Display label; UI renders this outside the word container. */
   speaker_label?: string;
+  /** Roster name when an introduction or correction binds this Voice cluster. */
+  speaker_name?: string;
+  speaker_confidence?: number;
+  speaker_id_method?: string;
 }
 
 /** Structured action item from BART Action Items (or persisted JSON). */
@@ -121,6 +125,22 @@ export interface MeetingDetail {
   updated_at: string;
   has_audio: boolean;
   segments: TranscriptSegment[];
+  attendance?: {
+    expected?: string[];
+    present?: Array<{
+      name: string;
+      status?: string;
+      first_start?: number | null;
+      last_end?: number | null;
+      confidence?: number;
+      method?: string;
+      speaker_index?: number;
+    }>;
+    absent?: string[];
+    guests?: Array<{ name: string; confidence?: number }>;
+    uncertain?: number;
+    backend?: string;
+  } | null;
 }
 
 export interface MeetingCreate {

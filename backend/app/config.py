@@ -242,6 +242,10 @@ class Settings(BaseSettings):
     # attendees.length + (1 if presiding_officer else 0). Unknown lists use this cap.
     live_speaker_labels: bool = True
     live_max_voices: int = 3
+    # heuristic (default) | pyannote — pyannote needs extras + HUGGINGFACE_TOKEN.
+    speaker_id_backend: str = "heuristic"
+    # Optional Whisper Large-v3 id for GPU speaker-ID quality (does not change live ASR).
+    whisper_speaker_id_model: str = ""
 
     # --- Background jobs / retention -------------------------------------
     jobs_use_redis_queue: bool = True

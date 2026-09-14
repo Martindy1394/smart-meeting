@@ -22,6 +22,7 @@ from ..schemas import (
     MeetingDirectory,
     MeetingSummary,
     MeetingUpdate,
+    SpeakerCorrectRequest,
 )
 from ..services import asr, audio, export as export_svc, finalize, redis_store
 
@@ -286,6 +287,14 @@ def _to_detail(m: Meeting) -> MeetingDetail:
             parsed = json.loads(raw) if isinstance(raw, str) else raw
             if isinstance(parsed, list):
                 detail.action_items = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    raw_att = getattr(m, "speaker_attendance_json", None) or ""
+    if raw_att and not detail.attendance:
+        try:
+            parsed = json.loads(raw_att) if isinstance(raw_att, str) else raw_att
+            if isinstance(parsed, dict):
+                detail.attendance = parsed
         except (json.JSONDecodeError, TypeError):
             pass
     return detail
@@ -708,6 +717,76 @@ def update_meeting(
             "en",
         }:
             meeting.language = lang
+    db.commit()
+    db.refresh(meeting)
+    return _to_detail(meeting)
+
+
+@router.get("/{meeting_id}/attendance")
+def meeting_attendance(
+    meeting_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Attendance inferred from speech introductions vs the roster."""
+    import json
+
+    from ..services import speaker_id
+
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    raw = getattr(meeting, "speaker_attendance_json", None) or ""
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict) and parsed.get("expected") is not None:
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    report = speaker_id.build_attendance_report(
+        list(getattr(meeting, "segments", None) or []), meeting
+    )
+    return report.as_dict()
+
+
+@router.post("/{meeting_id}/speakers/correct", response_model=MeetingDetail)
+def correct_speaker(
+    meeting_id: str,
+    payload: SpeakerCorrectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Learn from a misidentification: bind Voice N / heard text to a roster name."""
+    from ..services import speaker_id, speaker_memory
+
+    meeting = _get_owned_meeting(meeting_id, current_user, db)
+    canon = (payload.speaker_name or "").strip()
+    if not canon:
+        raise HTTPException(status_code=400, detail="speaker_name is required")
+    heard = (payload.heard or "").strip()
+    if heard:
+        speaker_memory.remember_alias(current_user.id, heard, canon)
+    idx = int(payload.speaker_index or 0)
+    if idx:
+        speaker_memory.remember_voice(current_user.id, meeting.id, idx, canon)
+        for seg in list(getattr(meeting, "segments", None) or []):
+            if int(getattr(seg, "speaker_index", 0) or 0) == idx:
+                old = (getattr(seg, "speaker_name", None) or "").strip()
+                if old:
+                    speaker_memory.remember_alias(current_user.id, old, canon)
+                seg.speaker_name = canon
+                seg.speaker_confidence = 0.95
+                seg.speaker_id_method = "correction"
+    speaker_id.identify_segments(
+        list(getattr(meeting, "segments", None) or []),
+        meeting,
+        owner_id=current_user.id,
+    )
+    report = speaker_id.build_attendance_report(
+        list(getattr(meeting, "segments", None) or []), meeting
+    )
+    import json
+
+    meeting.speaker_attendance_json = json.dumps(report.as_dict(), ensure_ascii=False)
     db.commit()
     db.refresh(meeting)
     return _to_detail(meeting)

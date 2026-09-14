@@ -16,3 +16,7 @@ sentencepiece==0.2.0
 # peft>=0.11.0
 # datasets>=2.18.0
 # accelerate>=0.30.0
+
+# Optional speaker ID overlay (gated Hugging Face model + GPU recommended)
+# pyannote.audio>=3.1.0
+# speechbrain>=1.0.0

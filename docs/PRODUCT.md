@@ -27,7 +27,7 @@ accuracy or security.
 | Tagalog + Hiligaynon recognition | **Ships (biased)** — Hiligaynon-first defaults; Tagalog `tl` + optional RNN-T live; PH dialect HF models; PLD fine-tune path for Hiligaynon |
 | Dialects / colloquialisms / code-switching | **Partial** — PH Whisper + prompts; code-switch aware language modes; quality improves with PLD / Tagalog fine-tunes |
 | Noise filtering | **Partial** — energy gates, AGC/loudness handling, optional VAD on final pass |
-| Speaker diarization | **Partial** — anonymous Voice 1–3 labels (spectral clusters ranked by Whisper accuracy; Voice 1 = most accurate; not named enrollment) |
+| Speaker diarization / identification | **Partial** — Voice 1…N clusters plus introduction→roster names (`docs/SPEAKER_IDENTIFICATION.md`). Not pyannote/SpeechBrain by default. |
 | English translation | **Ships** — NLLB (PH→EN default) + mBART many-to-many |
 | Verbatim original + English + structured minutes | **Ships** — transcript, English translation, BART bullets/numbered (Discussion / Decisions / Action items) |
 | Timestamped text | **Partial** — times stay on stored segments; the meeting room and exports lead with **Voice 1–3** labels instead of clock stamps |
@@ -38,7 +38,8 @@ accuracy or security.
 | Confidential sectors | **Goal** — architecture aims at private deployments; sector certifications are out of scope of this codebase |
 
 Related hardening docs: [`HILIGAYNON_LANGUAGE_FORCING.md`](HILIGAYNON_LANGUAGE_FORCING.md),
-[`MT_TAG_BENCHMARK.md`](MT_TAG_BENCHMARK.md), [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md).
+[`MT_TAG_BENCHMARK.md`](MT_TAG_BENCHMARK.md), [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md),
+[`SPEAKER_IDENTIFICATION.md`](SPEAKER_IDENTIFICATION.md).
 
 Data-flow requirements view: [`DFD.md`](DFD.md).  
 End-to-end traces, edge cases, and test plans: [`TEST_PLAN.md`](TEST_PLAN.md).

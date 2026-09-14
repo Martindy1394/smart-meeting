@@ -194,6 +194,9 @@ class TranscriptSegmentResponse(BaseModel):
     low_confidence: bool = False
     speaker_index: int = 0
     speaker_label: str = ""
+    speaker_name: str = ""
+    speaker_confidence: float = 0.0
+    speaker_id_method: str = ""
 
     class Config:
         from_attributes = True
@@ -295,6 +298,7 @@ class MeetingDetail(BaseModel):
     updated_at: datetime
     has_audio: bool = False
     segments: list[TranscriptSegmentResponse] = Field(default_factory=list)
+    attendance: dict | None = None
 
     class Config:
         from_attributes = True
@@ -406,6 +410,14 @@ class TranslateResponse(BaseModel):
     language_name: str
     engine: str
     translation_faithfulness: FaithfulnessReport | None = None
+
+
+class SpeakerCorrectRequest(BaseModel):
+    """Operator correction: bind Voice N (or a heard alias) to a roster name."""
+
+    speaker_index: int = 0
+    speaker_name: str = Field(..., min_length=1, max_length=255)
+    heard: str = ""
 
 
 TokenResponse.model_rebuild()
