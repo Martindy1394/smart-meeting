@@ -473,11 +473,12 @@ def test_live_decode_prompt_includes_meeting_context():
         confirmed_transcript="na ang budget para sa barangay",
     )
     assert prompt
-    assert "Iloilo City Hall" in prompt
-    assert "Budget hearing" in prompt
+    # Title/venue used to be copied into the prompt and then stripped as echo,
+    # leaving the live window blank. Keep names + language bias + caption tail.
+    assert "Iloilo City Hall" not in prompt
+    assert "Budget hearing" not in prompt
     assert "Mayor Garcia" in prompt
     assert "Hiligaynon" in prompt or "hiligaynon" in prompt.lower()
-    assert "Sangguniang" in prompt
     assert "na ang budget" in prompt
 
 

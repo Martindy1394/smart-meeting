@@ -752,13 +752,20 @@ export default function MeetingRoom({
                     }}
                   />
                 ) : null}
+                {hasLiveWords &&
+                (recorder.status === "finalizing" || isPaused) &&
+                recorder.message ? (
+                  <span className="transcript-live-status">{recorder.message}</span>
+                ) : null}
                 {!hasLiveWords ? (
                   <span className="transcript-live-status">
                     {isStarting
                       ? "Starting meeting and microphone…"
                       : isPaused
                         ? recorder.message || "Paused"
-                        : recorder.message || "Listening… spoken words appear here."}
+                        : recorder.status === "finalizing"
+                          ? recorder.message || "Finishing transcription…"
+                          : recorder.message || "Listening… spoken words appear here."}
                   </span>
                 ) : null}
               </div>

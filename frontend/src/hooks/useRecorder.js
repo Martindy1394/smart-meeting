@@ -515,7 +515,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         } else if (data.type === "live_caption") {
           // Cumulative caption — never allow a shorter update to erase older words
           // (protects against aggressive overlap dedupe or WS reconnect resets).
-          const incoming = (data.text || "").trim();
+          const incoming = String(data.text || data.live_caption || "").trim();
           if (!incoming) return;
           if (typeof data.low_confidence === "boolean") {
             setLiveLowConfidence(data.low_confidence);
@@ -570,8 +570,17 @@ export function useRecorder({ onFinalTranscript } = {}) {
             setLiveSpeakerLabel(String(data.speaker_label));
             setLiveSpeakerIndex(Number(data.speaker_index) || 0);
           }
-          // Only fall back to composed chunks if we have not received live_caption yet.
-          setLiveText((prev) => prev || composeLive());
+          setLiveText((prev) => {
+            const composed = composeLive();
+            const incoming = String(data.text || "").trim();
+            const best = [prev, composed, incoming]
+              .map((s) => String(s || "").trim())
+              .filter(Boolean)
+              .sort((a, b) => b.length - a.length)[0];
+            return best || prev;
+          });
+          setMessage("");
+          setStatus((s) => (s === "starting" ? "recording" : s));
         } else if (data.type === "finalizing") {
           // Server started finalize — never reconnect into a wiped session.
           stoppingRef.current = true;
@@ -726,14 +735,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
       let stream;
       try {
-        // Browser AEC/NS/AGC clean the mic before our 16 kHz downsample.
-        // The worklet is still not connected to speakers — that graph path
-        // plus AEC was what muted Chromium capture, not these constraints.
+        // AEC+AGC on this graph previously muted Chromium after a few seconds
+        // (captions stayed empty, then End showed only "Finishing transcription…").
+        // Keep 48 kHz mono; do not route the worklet to speakers.
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: true,
+            echoCancellation: false,
             noiseSuppression: true,
-            autoGainControl: true,
+            autoGainControl: false,
             channelCount: 1,
             sampleRate: 48000,
           },

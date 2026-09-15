@@ -148,9 +148,10 @@ async def _emit_live_window(
         # Monotonic guard at the socket layer too.
         if len(merged.split()) < len((live_caption or "").split()):
             merged = live_caption
-    if merged != live_caption:
-        # Words only on the wire — Voice N is speaker_label, not inlined in text.
-        display = merged
+    display = (merged or "").strip() or window_text.strip()
+    if display:
+        # Always push nonempty window text to the UI. Skipping when merge did
+        # not grow the caption left the transcript card on "Listening…".
         await _send(
             websocket,
             {
@@ -160,6 +161,10 @@ async def _emit_live_window(
                 "engine": "whisper",
                 "speaker_index": speaker_index,
                 "speaker_label": speaker_label,
+                "low_confidence": bool(
+                    result.segments
+                    and getattr(result.segments[0], "low_confidence", False)
+                ),
             },
         )
         # Also keep legacy live_segment for older clients / persistence.
@@ -218,7 +223,7 @@ async def _emit_live_window(
             confidence=result.language_confidence,
             detected_by=result.language_detected_by or "whisper",
         )
-    return merged, window_text, detection
+    return display or merged, window_text, detection
 
 
 @router.websocket("/ws/transcribe")

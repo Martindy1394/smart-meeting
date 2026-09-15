@@ -98,7 +98,7 @@ def resolve_whisper_compute_type(device: str | None = None) -> str:
 
 # Silero VAD inside faster-whisper (live). WebRTC VAD is not used on live PCM.
 _LIVE_VAD_PARAMS = {
-    "threshold": 0.55,
+    "threshold": 0.40,
     "min_silence_duration_ms": 600,
     "speech_pad_ms": 300,
 }
@@ -639,30 +639,12 @@ def live_decode_prompt(
     venue: str | None = None,
     confirmed_transcript: str | None = None,
 ) -> str | None:
-    """Per-window live prompt: meeting metadata + rolling confirmed caption.
-
-    Includes Barangay / Sangguniang Bayan markers for PH board meetings and
-    the last ~200 tokens of already-merged live text so Whisper conditions
-    on what we have already accepted.
-    """
-    venue_s = (venue or "").strip() or "the venue"
-    title_s = (title or "").strip() or "this meeting"
-    names = [t.strip() for t in (extra_terms or []) if isinstance(t, str) and t.strip()]
-    names = names[:24]
-    attendees_str = ", ".join(names) if names else "the attendees"
-    tail = _tail_text(confirmed_transcript or "", 200)
-    prompt = (
-        f"Meeting in {venue_s} about {title_s}. Attendees: {attendees_str}. "
-        "This is a mix of Hiligaynon, English and Tagalog. "
-        "Barangay, Sangguniang Bayan."
-    )
-    if tail:
-        prompt = f"{prompt} {tail}"
-    # Keep a language-bias line short so it does not dominate the metadata.
-    bias = initial_prompt(language, extra_terms=None)
-    if bias:
-        prompt = f"{bias} {prompt}"
-    return prompt.strip() or None
+    """Short live prompt — long English metadata was echoed then stripped to blank."""
+    del title, venue  # kept on the signature for callers; too easy for Whisper to copy
+    bias = initial_prompt(language, extra_terms=extra_terms)
+    tail = _tail_text(confirmed_transcript or "", 80)
+    parts = [p for p in (bias, tail) if p]
+    return " ".join(parts).strip() or None
 
 
 def parse_prompt_terms(raw) -> list[str]:
