@@ -3,7 +3,7 @@
 Implements the two-pass pipeline:
 
 * **Live pass** — fast Whisper (or an optional CTranslate2 Tagalog/Hiligaynon
-  fine-tune) on overlapping 10s windows (5s hop). Tagalog (``tl``) uses
+  fine-tune) on overlapping 8s windows (6s hop). Tagalog (``tl``) uses
   Whisper's native ``tl`` token. Hiligaynon (``hil``) uses **auto-detect**
   plus a Hiligaynon prompt — Whisper has no ``hil`` token, and we do **not**
   force Tagalog decode for Ilonggo speech.
@@ -22,6 +22,7 @@ application runs even when model weights are not installed.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -69,8 +70,14 @@ def resolve_whisper_device() -> str:
     return "cuda" if _cuda_available() else "cpu"
 
 
+def whisper_cpu_threads() -> int:
+    """CTranslate2 CPU threads: cap at 4 (sweet spot) but never exceed cores."""
+    n = int(os.cpu_count() or 4)
+    return max(1, min(4, n))
+
+
 def resolve_whisper_compute_type(device: str | None = None) -> str:
-    """faster-whisper compute type: FP16 on GPU, INT8 on CPU (or GPU INT8)."""
+    """faster-whisper compute type: FP16 on GPU, int8_float16 on CPU."""
     raw = (settings.whisper_compute_type or "auto").strip().lower() or "auto"
     if raw in {"fp16", "float16"}:
         raw = "float16"
@@ -78,16 +85,23 @@ def resolve_whisper_compute_type(device: str | None = None) -> str:
         raw = "float32"
     elif raw in {"int8_float16", "int8-float16"}:
         raw = "int8_float16"
+    elif raw in {"int8_float32", "int8-float32"}:
+        raw = "int8_float32"
     dev = (device or resolve_whisper_device()).strip().lower()
     if raw in {"", "auto"}:
-        return "float16" if dev == "cuda" else "int8"
+        return "float16" if dev == "cuda" else "int8_float16"
     # CTranslate2 GPU INT8 uses int8_float16 (quantized weights, FP16 compute).
     if raw == "int8" and dev == "cuda":
         return "int8_float16"
-    if raw == "int8_float16" and dev == "cpu":
-        return "int8"
     return raw
 
+
+# Silero VAD inside faster-whisper (live). WebRTC VAD is not used on live PCM.
+_LIVE_VAD_PARAMS = {
+    "threshold": 0.55,
+    "min_silence_duration_ms": 600,
+    "speech_pad_ms": 300,
+}
 
 # Soft VAD only used when explicitly enabled for the final path.
 _FINAL_VAD_PARAMS = {
@@ -248,29 +262,43 @@ class _ModelCache:
         device = resolve_whisper_device()
         compute_type = resolve_whisper_compute_type(device)
         logger.info(
-            "Loading faster-whisper model '%s' (device=%s compute_type=%s)",
+            "Loading faster-whisper model '%s' (device=%s compute_type=%s threads=%s)",
             model_size,
             device,
             compute_type,
+            whisper_cpu_threads() if device == "cpu" else "n/a",
         )
+
+        def _load(dev: str, ctype: str):
+            kwargs: dict = {"device": dev, "compute_type": ctype}
+            if dev == "cpu":
+                kwargs["cpu_threads"] = whisper_cpu_threads()
+                kwargs["num_workers"] = 1
+            return WhisperModel(model_size, **kwargs)
+
         try:
-            model = WhisperModel(
-                model_size,
-                device=device,
-                compute_type=compute_type,
-            )
+            model = _load(device, compute_type)
         except Exception:
             if device == "cuda":
                 logger.warning(
-                    "faster-whisper CUDA load failed (compute_type=%s); retrying CPU int8",
+                    "faster-whisper CUDA load failed (compute_type=%s); retrying CPU",
                     compute_type,
                     exc_info=True,
                 )
-                model = WhisperModel(
-                    model_size,
-                    device="cpu",
-                    compute_type="int8",
+                try:
+                    model = _load("cpu", "int8_float16")
+                except Exception:
+                    model = _load("cpu", "int8")
+            elif compute_type != "int8":
+                logger.warning(
+                    "faster-whisper CPU compute_type=%s failed; retrying int8",
+                    compute_type,
+                    exc_info=True,
                 )
+                try:
+                    model = _load("cpu", "int8_float32")
+                except Exception:
+                    model = _load("cpu", "int8")
             else:
                 raise
         with self._lock:
@@ -603,6 +631,40 @@ def initial_prompt(
     return prompt or None
 
 
+def live_decode_prompt(
+    language: str | None = None,
+    *,
+    extra_terms: list[str] | None = None,
+    title: str | None = None,
+    venue: str | None = None,
+    confirmed_transcript: str | None = None,
+) -> str | None:
+    """Per-window live prompt: meeting metadata + rolling confirmed caption.
+
+    Includes Barangay / Sangguniang Bayan markers for PH board meetings and
+    the last ~200 tokens of already-merged live text so Whisper conditions
+    on what we have already accepted.
+    """
+    venue_s = (venue or "").strip() or "the venue"
+    title_s = (title or "").strip() or "this meeting"
+    names = [t.strip() for t in (extra_terms or []) if isinstance(t, str) and t.strip()]
+    names = names[:24]
+    attendees_str = ", ".join(names) if names else "the attendees"
+    tail = _tail_text(confirmed_transcript or "", 200)
+    prompt = (
+        f"Meeting in {venue_s} about {title_s}. Attendees: {attendees_str}. "
+        "This is a mix of Hiligaynon, English and Tagalog. "
+        "Barangay, Sangguniang Bayan."
+    )
+    if tail:
+        prompt = f"{prompt} {tail}"
+    # Keep a language-bias line short so it does not dominate the metadata.
+    bias = initial_prompt(language, extra_terms=None)
+    if bias:
+        prompt = f"{bias} {prompt}"
+    return prompt.strip() or None
+
+
 def parse_prompt_terms(raw) -> list[str]:
     """Normalize proper-noun hints for Whisper ``initial_prompt``."""
     if raw is None or raw == "":
@@ -649,7 +711,7 @@ def meeting_prompt_terms(meeting) -> list[str]:
     return parse_prompt_terms(names)
 
 
-def _segment_from_whisper(s, *, text: str) -> Segment | None:
+def _segment_from_whisper(s, *, text: str, live: bool = False) -> Segment | None:
     """Build a Segment from a faster-whisper segment, applying confidence gates."""
     if not text or not any(ch.isalnum() for ch in text):
         return None
@@ -665,6 +727,20 @@ def _segment_from_whisper(s, *, text: str) -> Segment | None:
         no_sp_f = float(no_sp) if no_sp is not None else None
     except (TypeError, ValueError):
         no_sp_f = None
+
+    if live:
+        live_min_lp = float(getattr(settings, "asr_live_min_avg_logprob", -1.0) or -1.0)
+        live_max_nsp = float(getattr(settings, "asr_live_max_no_speech_prob", 0.8) or 0.8)
+        if avg_lp_f is not None and avg_lp_f < live_min_lp:
+            logger.info(
+                "asr.live_hide avg_logprob=%.3f text=%r", avg_lp_f, text[:80]
+            )
+            return None
+        if no_sp_f is not None and no_sp_f > live_max_nsp:
+            logger.info(
+                "asr.live_hide no_speech_prob=%.3f text=%r", no_sp_f, text[:80]
+            )
+            return None
 
     # Hard drop: almost certainly silence hallucination.
     # Whisper often marks quiet-but-real speech with high no_speech_prob; keep
@@ -724,6 +800,37 @@ def live_model_id(language: str | None) -> str:
         if custom:
             return custom
     return (settings.whisper_live_model or "small").strip()
+
+
+def detect_pcm_language(pcm: np.ndarray) -> LanguageDetection | None:
+    """Run faster-whisper ``detect_language`` once (cheaper than auto each window)."""
+    if pcm is None or len(pcm) == 0:
+        return None
+    cache = get_model_cache()
+    model_id = live_model_id("auto")
+    model = cache.get_faster_whisper(model_id)
+    audio = pcm.astype(np.float32, copy=False)
+    try:
+        with cache.fw_infer_lock(model_id):
+            result = model.detect_language(audio)
+    except Exception:
+        logger.debug("detect_language failed", exc_info=True)
+        return None
+    lang = None
+    prob = None
+    if isinstance(result, tuple) and result:
+        lang = result[0]
+        if len(result) > 1:
+            try:
+                prob = float(result[1])
+            except (TypeError, ValueError):
+                prob = None
+    elif isinstance(result, str):
+        lang = result
+    code = (str(lang) if lang is not None else "").strip().lower() or None
+    if not code:
+        return None
+    return LanguageDetection(language=code, confidence=prob, detected_by="whisper")
 
 
 def final_faster_model_id(language: str | None) -> str:
@@ -1077,6 +1184,7 @@ def transcribe_live(
     language: str | None,
     *,
     extra_terms: list[str] | None = None,
+    prompt_context: dict | None = None,
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Low-latency transcription of a live audio window.
 
@@ -1090,28 +1198,18 @@ def transcribe_live(
     if pcm is None or len(pcm) == 0:
         return [], None
     from . import audio as audio_svc
-    from . import pipeline_metrics, vad as vad_svc
+    from . import pipeline_metrics
 
     raw = pcm.astype(np.float32, copy=False)
     sr = int(settings.audio_sample_rate or 16000)
-    # Tier 1: VAD gate before Whisper (biggest hallucination source = silence).
-    vad_result = vad_svc.detect_speech(raw, sample_rate=sr, live=True)
-    if not vad_result.has_speech:
-        logger.info(
-            "asr.live vad_skip backend=%s %s samples=%d",
-            vad_result.backend,
-            vad_result.reason,
-            len(raw),
-        )
-        return [], None
-    # Gate on *raw* PCM before AGC — amplifying silence first made every
-    # quiet tail look like speech and Whisper re-looped the last phrase.
+    # Energy gate only — WebRTC VAD drops Hiligaynon onsets. Silero VAD runs
+    # inside faster-whisper (vad_filter=True).
     if not _energy_ok(raw, min_rms=0.006):
         return [], None
     # Full live windows whose newest hop is silence: user stopped talking.
     # Skip so Whisper cannot re-decode old speech from a silent tail.
-    window_s = float(settings.whisper_live_window_seconds or 10.0)
-    hop_s = float(settings.whisper_live_hop_seconds or 5.0)
+    window_s = float(settings.whisper_live_window_seconds or 8.0)
+    hop_s = float(settings.whisper_live_hop_seconds or 6.0)
     if len(raw) >= int(0.85 * window_s * sr):
         hop_n = max(1, int(hop_s * sr))
         if len(raw) >= hop_n and not _energy_ok(raw[-hop_n:], min_rms=0.005):
@@ -1128,6 +1226,8 @@ def transcribe_live(
     if not _energy_ok(pcm, min_rms=0.008):
         return [], None
 
+    ctx = prompt_context if isinstance(prompt_context, dict) else {}
+
     # Optional NeMo RNN-T live path (Tagalog meetings when enabled).
     try:
         from . import rnnt as rnnt_svc
@@ -1136,11 +1236,16 @@ def transcribe_live(
             try:
                 segs, detection = rnnt_svc.transcribe_live(pcm, language)
                 cleaned: list[Segment] = []
+                prompt = live_decode_prompt(
+                    language,
+                    extra_terms=extra_terms,
+                    title=ctx.get("title"),
+                    venue=ctx.get("venue"),
+                    confirmed_transcript=ctx.get("confirmed_transcript"),
+                )
                 for s in segs:
                     text = _collapse_hallucinations((s.text or "").strip())
-                    text = _strip_initial_prompt_echo(
-                        text, initial_prompt(language, extra_terms=extra_terms)
-                    )
+                    text = _strip_initial_prompt_echo(text, prompt)
                     if (
                         text
                         and any(ch.isalnum() for ch in text)
@@ -1171,53 +1276,62 @@ def transcribe_live(
     model = cache.get_faster_whisper(model_id)
     # Hiligaynon / auto→hil: Whisper auto-detect (never force Tagalog ``tl``).
     # Explicit Tagalog still uses native ``tl``; English uses ``en``.
-    # When language is already locked to a concrete code (session lock), prefer it.
+    # When language is already locked to a concrete Whisper code, prefer it.
     raw_label = (language or "").strip().lower()
     effective = effective_asr_language(language)
     if raw_label in {"en", "english"}:
         primary_lang: str | None = "en"
     elif is_tagalog_language(raw_label) or (
         is_tagalog_language(effective) and not is_auto_language(raw_label)
+        and not is_hiligaynon_language(raw_label)
     ):
         primary_lang = "tl"
     elif is_auto_language(raw_label) or is_hiligaynon_language(raw_label) or is_hiligaynon_language(effective):
-        # Hiligaynon-biased auto: never force tl. Locked concrete non-tl/en codes
-        # still use auto-detect (Whisper has no hil token).
+        # Hiligaynon-biased auto: never force tl.
         primary_lang = None
     elif raw_label:
-        # Session lock may pass a Whisper ISO code (e.g. "en", "tl").
-        # Never forward ``fil`` / ``hil`` — Whisper does not understand them.
         primary_lang = whisper_language_arg(raw_label)
     else:
         primary_lang = None
 
-    # Always bias live PH/Hiligaynon decode with the short language prompt + vocab.
-    live_prompt = initial_prompt(language, extra_terms=extra_terms)
+    live_prompt = live_decode_prompt(
+        language,
+        extra_terms=extra_terms,
+        title=ctx.get("title"),
+        venue=ctx.get("venue"),
+        confirmed_transcript=ctx.get("confirmed_transcript"),
+    )
     t0 = time.perf_counter()
     winning_decode: str | None = primary_lang
     winning_info: object | None = None
 
     def _run(decode_language: str | None):
-        # Never forward ``fil`` / ``hil`` — Whisper only accepts native codes.
         lang_arg = whisper_language_arg(decode_language) if decode_language else None
+        decode_kwargs = dict(
+            language=lang_arg,
+            task=_WHISPER_TASK,
+            beam_size=2,
+            best_of=2,
+            temperature=0.0,
+            vad_filter=True,
+            vad_parameters=_LIVE_VAD_PARAMS,
+            condition_on_previous_text=True,
+            without_timestamps=True,
+            word_timestamps=False,
+            no_speech_threshold=0.6,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
+            initial_prompt=live_prompt,
+        )
         with cache.fw_infer_lock(model_id):
-            return model.transcribe(
-                pcm,
-                language=lang_arg,
-                task=_WHISPER_TASK,
-                beam_size=5,
-                best_of=5,
-                temperature=0.0,
-                # Soft VAD drops silent tails that caused phrase loops.
-                vad_filter=True,
-                condition_on_previous_text=False,
-                without_timestamps=False,
-                # Stricter than before — silence was emitting looped captions.
-                no_speech_threshold=0.6,
-                compression_ratio_threshold=2.2,
-                log_prob_threshold=-1.0,
-                initial_prompt=live_prompt,
-            )
+            try:
+                return model.transcribe(pcm, **decode_kwargs)
+            except TypeError as exc:
+                msg = str(exc)
+                if "word_timestamps" in msg:
+                    decode_kwargs.pop("word_timestamps", None)
+                    return model.transcribe(pcm, **decode_kwargs)
+                raise
 
     with pipeline_metrics.track("asr.live"):
         segments, info = _run(primary_lang)
@@ -1226,12 +1340,12 @@ def transcribe_live(
     for s in segments:
         text = _collapse_hallucinations((s.text or "").strip())
         text = _strip_initial_prompt_echo(text, live_prompt)
-        seg = _segment_from_whisper(s, text=text)
+        seg = _segment_from_whisper(s, text=text, live=True)
         if seg:
             out.append(seg)
 
     # Empty/junk: Tagalog can retry auto↔tl. Hiligaynon stays on auto only.
-    if not out and is_tagalog_language(effective):
+    if not out and is_tagalog_language(effective) and not is_hiligaynon_language(raw_label):
         retry_lang = None if primary_lang is not None else "tl"
         if retry_lang != primary_lang:
             try:
@@ -1241,7 +1355,7 @@ def transcribe_live(
                 for s in segments:
                     text = _collapse_hallucinations((s.text or "").strip())
                     text = _strip_initial_prompt_echo(text, live_prompt)
-                    seg = _segment_from_whisper(s, text=text)
+                    seg = _segment_from_whisper(s, text=text, live=True)
                     if seg:
                         out.append(seg)
             except Exception as exc:
@@ -1297,6 +1411,46 @@ def _token_overlap_size(left: list[str], right: list[str], *, min_size: int = 3)
     return 0
 
 
+def _longest_common_token_run(
+    left: list[str],
+    right: list[str],
+    *,
+    min_size: int = 2,
+) -> tuple[int, int, int]:
+    """Longest common contiguous token run.
+
+    Returns ``(left_start, right_start, length)``. On ties prefer a match
+    near the end of ``left`` and the start of ``right`` (overlap merge).
+    """
+    if not left or not right:
+        return 0, 0, 0
+    n, m = len(left), len(right)
+    best_len = 0
+    best_li = 0
+    best_rj = 0
+    prev = [0] * (m + 1)
+    for i in range(1, n + 1):
+        cur = [0] * (m + 1)
+        for j in range(1, m + 1):
+            if left[i - 1] == right[j - 1]:
+                length = prev[j - 1] + 1
+                cur[j] = length
+                li = i - length
+                rj = j - length
+                if length < min_size:
+                    continue
+                if length > best_len:
+                    best_len, best_li, best_rj = length, li, rj
+                elif length == best_len:
+                    # Prefer later-in-left, earlier-in-right (window overlap).
+                    if li > best_li or (li == best_li and rj < best_rj):
+                        best_li, best_rj = li, rj
+        prev = cur
+    if best_len < min_size:
+        return 0, 0, 0
+    return best_li, best_rj, best_len
+
+
 def _novel_suffix_from_window(
     previous_window: str,
     current_window: str,
@@ -1305,10 +1459,9 @@ def _novel_suffix_from_window(
 ) -> str:
     """Return only the new words from an overlapping Whisper window.
 
-    Strategy (kept intentionally simple for debuggability):
-    1. Exact token suffix/prefix overlap vs the previous window.
-    2. If that fails, keep the newest ``hop_fraction`` of the current window
-       (default 0.5 for a 10s window / 5s hop) — never re-paste the whole window.
+    1. Exact token suffix/prefix overlap.
+    2. Word-level LCS (e.g. "...na ang budget" + "ang budget para sa...").
+    3. Newest hop-fraction of the current window.
     """
     cur_tokens = _raw_tokens(current_window)
     if not cur_tokens:
@@ -1317,7 +1470,6 @@ def _novel_suffix_from_window(
     if not prev_n:
         return _clean_caption(current_window)
 
-    # Parallel list of (original_index, norm) for current window tokens.
     cur_pairs: list[tuple[int, str]] = []
     for idx, tok in enumerate(cur_tokens):
         n = _norm_token(tok)
@@ -1327,15 +1479,23 @@ def _novel_suffix_from_window(
         return ""
 
     cur_n = [n for _, n in cur_pairs]
-    overlap = _token_overlap_size(prev_n, cur_n, min_size=3)
+    overlap = _token_overlap_size(prev_n, cur_n, min_size=2)
 
     if overlap == 0:
-        # No reliable overlap — keep only the newest hop fraction.
-        # Keeping ~85% re-appended hallucinated repeats after the user stopped.
+        left_tail = prev_n[-40:]
+        right_head = cur_n[:40]
+        _li, rj, ln = _longest_common_token_run(left_tail, right_head, min_size=2)
+        if ln:
+            if rj + ln >= len(cur_pairs):
+                return ""
+            start = cur_pairs[rj + ln][0]
+            return " ".join(cur_tokens[start:]).strip()
         frac = hop_fraction
         if frac is None:
-            frac = 0.5
-        frac = min(0.75, max(0.35, float(frac)))
+            w = float(settings.whisper_live_window_seconds or 8.0)
+            h = float(settings.whisper_live_hop_seconds or 6.0)
+            frac = (h / w) if w else 0.75
+        frac = min(0.75, max(0.2, float(frac)))
         cut = max(1, int(round(len(cur_tokens) * frac)))
         novel = " ".join(cur_tokens[-cut:]).strip()
         logger.debug(
@@ -1385,6 +1545,17 @@ def _append_novel(caption: str, novel: str) -> str:
         return prev
 
     overlap = _token_overlap_size(prev_n, add_n, min_size=1)
+    if overlap == 0 and prev_n and add_n:
+        _li, rj, ln = _longest_common_token_run(prev_n, add_n, min_size=2)
+        if ln:
+            overlap = 0
+            if rj + ln >= len(add_pairs):
+                return prev
+            start = add_pairs[rj + ln][0]
+            rest = " ".join(add_tokens[start:]).strip()
+            if not rest:
+                return prev
+            return f"{prev} {rest}".strip()
     if overlap and overlap < len(add_pairs):
         start = add_pairs[overlap][0]
         rest = " ".join(add_tokens[start:]).strip()
@@ -1425,7 +1596,7 @@ def merge_live_caption(
     Invariant: the returned caption never shrinks versus ``previous``.
 
     Merge path (simple, debuggable):
-    1. Prefer window-to-window novel suffix (exact token overlap).
+    1. Prefer window-to-window novel suffix (token overlap or LCS).
     2. Else novel vs caption tail only (never full multi-hour scan).
     3. Else hop-fraction / whole-window append with containment check.
     """

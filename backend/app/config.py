@@ -122,8 +122,8 @@ class Settings(BaseSettings):
     rnnt_live_model: str = "NCSpeech/stt_tl_fastconformer_hybrid_large"
     # auto = CUDA when a GPU is present, else CPU. faster-whisper / CTranslate2.
     whisper_device: str = "auto"
-    # auto = float16 on CUDA (Tensor Cores), int8 on CPU.
-    # On GPU, int8 is mapped to CTranslate2 int8_float16 (quantized weights).
+    # auto = float16 on CUDA (Tensor Cores), int8_float16 on CPU (x86).
+    # On GPU, explicit int8 is mapped to CTranslate2 int8_float16.
     whisper_compute_type: str = "auto"
     # Meeting language label is always ``auto`` in the product UI. This setting
     # is the ASR bias used when resolving ``auto`` (Hiligaynon prompts + PH
@@ -154,11 +154,12 @@ class Settings(BaseSettings):
     # Final-pass VAD: aggressive VAD was dropping long spans of real speech
     # (especially clipped mic audio / mixed EN+PH). Default off for coverage.
     whisper_final_vad_filter: bool = False
-    # Live caption windowing: 10s buffer overlapping by 5s (hop = 5s).
-    whisper_live_window_seconds: float = 10.0
-    whisper_live_hop_seconds: float = 5.0
+    # Live caption windowing: 8s rolling buffer, hop 6s (2s overlap context).
+    # Transcribes 8s every 6s of audio instead of 10s every 5s (~40% less CPU).
+    whisper_live_window_seconds: float = 8.0
+    whisper_live_hop_seconds: float = 6.0
     # Emit a short first caption quickly so recording does not feel stuck
-    # waiting for the full 10s window (steady-state still uses 10s/5s).
+    # waiting for the full 8s window (steady-state still uses 8s/6s).
     whisper_live_warmup_seconds: float = 2.5
     # Final ASR chunk size for multi-hour recordings (seconds of audio per pass).
     whisper_final_chunk_seconds: float = 600.0
@@ -234,10 +235,15 @@ class Settings(BaseSettings):
     asr_max_no_speech_prob: float = 0.6
     asr_flag_avg_logprob: float = -0.6
     asr_flag_no_speech_prob: float = 0.45
-    # Session language lock: detect on first N seconds, then reuse.
-    asr_language_lock_seconds: float = 8.0
+    # Session language lock: detect_language once after this many seconds.
+    asr_language_lock_seconds: float = 15.0
+    # If first detect confidence is below min, keep auto this long then lock.
+    asr_language_lock_retry_seconds: float = 5.0
     asr_language_relock_no_speech_prob: float = 0.85
-    asr_language_min_confidence: float = 0.45
+    asr_language_min_confidence: float = 0.7
+    # Live captions hide (not flag) segments worse than these; final pass still keeps them.
+    asr_live_min_avg_logprob: float = -1.0
+    asr_live_max_no_speech_prob: float = 0.8
     # Live / final Voice N labels. Bound to registered participants when known:
     # attendees.length + (1 if presiding_officer else 0). Unknown lists use this cap.
     live_speaker_labels: bool = True

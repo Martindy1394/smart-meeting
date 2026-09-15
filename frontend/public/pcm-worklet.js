@@ -1,7 +1,7 @@
 // AudioWorkletProcessor that downsamples the microphone input to 16 kHz mono
 // and emits little-endian 16-bit PCM chunks (~ up to 4096 samples) to the main
-// thread. Using an AudioWorklet (rather than MediaRecorder) gives us raw PCM
-// with no server-side WebM/Opus decoding and minimal latency.
+// thread. Using an AudioWorklet (rather than ScriptProcessorNode) gives us raw
+// PCM with no server-side WebM/Opus decoding and minimal latency.
 class PCMWorkletProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -9,6 +9,9 @@ class PCMWorkletProcessor extends AudioWorkletProcessor {
     this.inputSampleRate = sampleRate; // global provided by AudioWorkletGlobalScope
     this.ratio = this.inputSampleRate / this.targetSampleRate;
     this._buffer = [];
+    // Fractional source index carried across process() callbacks so 48→16 kHz
+    // (and 44.1→16 kHz) does not drop/duplicate samples at block edges.
+    this._frac = 0;
     // Emit roughly every ~0.25s worth of 16k samples to keep chunks small.
     this._emitEvery = 4096;
     this.port.onmessage = (event) => {
@@ -46,23 +49,39 @@ class PCMWorkletProcessor extends AudioWorkletProcessor {
     this.port.postMessage({ type: "flushed" });
   }
 
-  // Linear-interpolation resampler — more accurate than block averaging when
-  // the hardware rate is not an integer multiple of 16 kHz (e.g. 44.1 kHz).
-  _downsample(input) {
-    if (this.ratio <= 1) {
-      return input;
-    }
-    const outLength = Math.floor(input.length / this.ratio);
-    if (outLength <= 0) return new Float32Array(0);
-    const out = new Float32Array(outLength);
-    for (let i = 0; i < outLength; i++) {
-      const src = i * this.ratio;
-      const i0 = Math.floor(src);
-      const i1 = Math.min(i0 + 1, input.length - 1);
-      const frac = src - i0;
-      out[i] = input[i0] * (1 - frac) + input[i1] * frac;
+  _mono(input) {
+    const left = input[0];
+    if (!left) return null;
+    if (input.length < 2 || !input[1]) return left;
+    const right = input[1];
+    const n = Math.min(left.length, right.length);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      out[i] = 0.5 * (left[i] + right[i]);
     }
     return out;
+  }
+
+  // Linear-interpolation resampler with a rolling fractional index.
+  _downsample(input) {
+    if (!input || !input.length) return new Float32Array(0);
+    if (this.ratio <= 1) {
+      this._frac = 0;
+      return input;
+    }
+    const out = [];
+    let pos = this._frac;
+    const last = input.length - 1;
+    while (pos <= last) {
+      const i0 = Math.min(Math.floor(pos), last);
+      const i1 = Math.min(i0 + 1, last);
+      const frac = pos - i0;
+      out.push(input[i0] * (1 - frac) + input[i1] * frac);
+      pos += this.ratio;
+    }
+    this._frac = pos - input.length;
+    if (!Number.isFinite(this._frac) || this._frac < 0) this._frac = 0;
+    return out.length ? Float32Array.from(out) : new Float32Array(0);
   }
 
   process(inputs) {
@@ -70,7 +89,7 @@ class PCMWorkletProcessor extends AudioWorkletProcessor {
     if (!input || input.length === 0) {
       return true;
     }
-    const channel = input[0];
+    const channel = this._mono(input);
     if (!channel) {
       return true;
     }

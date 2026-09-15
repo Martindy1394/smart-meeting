@@ -726,17 +726,16 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
       let stream;
       try {
-        // echoCancellation OFF: wiring the worklet into the audio graph with AEC
-        // on can make Chromium mute the mic after a few seconds ("transcription
-        // stopped"). We also avoid connecting to audioCtx.destination below.
+        // Browser AEC/NS/AGC clean the mic before our 16 kHz downsample.
+        // The worklet is still not connected to speakers — that graph path
+        // plus AEC was what muted Chromium capture, not these constraints.
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
             channelCount: 1,
-            echoCancellation: false,
-            noiseSuppression: false,
-            // Browser AGC raises the noise floor so quiet tails look like
-            // speech and Whisper loops the last phrase after you stop talking.
-            autoGainControl: false,
+            sampleRate: 48000,
           },
         });
       } catch (err) {

@@ -47,14 +47,18 @@ def test_align_pcm16_drops_odd_trailing_byte():
 
 
 def test_window_hop_overlap_math():
-    """10s window / 5s hop must retain 5s overlap (never discard the shared half)."""
+    """8s window / 6s hop retains 2s overlap (rolling context, hop-sized new audio)."""
+    from app.config import Settings
+
     sr = settings.audio_sample_rate
-    window = int(10.0 * sr * 2)
-    hop = int(5.0 * sr * 2)
-    assert window == 320_000
-    assert hop == 160_000
-    # offsets: 0, hop, 2*hop… each window overlaps previous by window-hop
-    assert window - hop == hop
+    window = int(8.0 * sr * 2)
+    hop = int(6.0 * sr * 2)
+    assert window == 256_000
+    assert hop == 192_000
+    assert window - hop == int(2.0 * sr * 2)
+    fields = Settings.model_fields
+    assert fields["whisper_live_window_seconds"].default == 8.0
+    assert fields["whisper_live_hop_seconds"].default == 6.0
 
 
 if __name__ == "__main__":

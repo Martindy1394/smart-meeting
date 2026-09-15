@@ -42,6 +42,7 @@ async def _emit_live_window(
     byte_offset: int | None = None,
     replace_caption: bool = False,
     extra_terms: list[str] | None = None,
+    prompt_context: dict | None = None,
 ) -> tuple[str, str, object | None]:
     """Transcribe one live window and merge into the cumulative caption.
 
@@ -96,6 +97,7 @@ async def _emit_live_window(
         language,
         live=True,
         extra_terms=extra_terms,
+        prompt_context=prompt_context,
     )
     if speaker_index:
         try:
@@ -309,6 +311,8 @@ async def transcribe_ws(websocket: WebSocket):
     # Session language lock + attendee/officer name hints for Whisper.
     from ..services import transcription as transcription_svc
     extra_terms: list[str] = []
+    meeting_title = ""
+    meeting_venue = ""
     language_locked = bool(meta.get("language_locked"))
     locked_language = (meta.get("locked_language") or "").strip() or None
     try:
@@ -317,6 +321,8 @@ async def transcribe_ws(websocket: WebSocket):
             mrow = db2.get(Meeting, meeting_id)
             if mrow is not None:
                 extra_terms = transcription_svc.meeting_prompt_terms(mrow)
+                meeting_title = (getattr(mrow, "title", None) or "").strip()
+                meeting_venue = (getattr(mrow, "venue", None) or "").strip()
                 if getattr(mrow, "language_locked", False) and (mrow.language or "").strip():
                     language_locked = True
                     locked_language = (mrow.language or "").strip()
@@ -354,6 +360,48 @@ async def transcribe_ws(websocket: WebSocket):
             meeting_id, language_locked=True, locked_language="en"
         )
     speech_seconds_seen = 0.0
+    language_detect_done = bool(language_locked)
+    last_language_detection = None
+
+    def _prompt_ctx() -> dict:
+        return {
+            "title": meeting_title,
+            "venue": meeting_venue,
+            "confirmed_transcript": live_caption,
+        }
+
+    async def _detect_once_and_lock(chunk: bytes, *, window_seconds: float) -> None:
+        """First 15s: detect_language once. High conf locks; else wait 5s then lock."""
+        nonlocal language, language_locked, locked_language, speech_seconds_seen
+        nonlocal language_detect_done, last_language_detection
+        if language_locked and locked_language:
+            return
+        bytes_per_sec = float(settings.audio_sample_rate * 2)
+        elapsed = _recording_length() / bytes_per_sec if bytes_per_sec else 0.0
+        need = float(settings.asr_language_lock_seconds or 15.0)
+        if elapsed < need:
+            return
+        if not language_detect_done:
+            language_detect_done = True
+            try:
+                samples = audio.pcm16_to_float32(audio.align_pcm16(chunk))
+                last_language_detection = await asyncio.to_thread(
+                    transcription_svc.detect_pcm_language, samples
+                )
+            except Exception:
+                logger.debug("detect_language once failed", exc_info=True)
+        language, language_locked, locked_language, speech_seconds_seen = (
+            _maybe_lock_language(
+                language=language,
+                language_locked=language_locked,
+                locked_language=locked_language,
+                detection=last_language_detection,
+                speech_seconds_seen=speech_seconds_seen,
+                meeting_id=meeting_id,
+                window_seconds=window_seconds,
+                elapsed_audio_seconds=elapsed,
+            )
+        )
 
     # Local fallback only used when Redis is down (disk is still authoritative).
     local_pcm = bytearray()
@@ -508,7 +556,7 @@ async def transcribe_ws(websocket: WebSocket):
         """Transcribe at most one live window from disk PCM.
 
         Windows are ``[live_offset, live_offset+window)`` and the offset advances
-        by ``hop`` only — the 5s overlap is retained in the buffer (never trimmed).
+        by ``hop`` only — the 2s overlap is retained in the buffer (never trimmed).
         """
         nonlocal live_caption, previous_window, seq, live_offset, warmup_done
         nonlocal language, language_locked, locked_language, speech_seconds_seen
@@ -517,7 +565,7 @@ async def transcribe_ws(websocket: WebSocket):
         total = _recording_length()
         _apply_backpressure(total)
 
-        # Fast first caption: short warmup before the first full 10s window.
+        # Fast first caption: short warmup before the first full 8s window.
         if (
             not warmup_done
             and live_offset == 0
@@ -528,6 +576,10 @@ async def transcribe_ws(websocket: WebSocket):
             if len(chunk) >= bytes_per_warmup:
                 seq += 1
                 try:
+                    await _detect_once_and_lock(
+                        chunk,
+                        window_seconds=float(settings.whisper_live_warmup_seconds or 2.5),
+                    )
                     live_caption, previous_window, _det = await _emit_live_window(
                         websocket,
                         meeting_id=meeting_id,
@@ -535,6 +587,7 @@ async def transcribe_ws(websocket: WebSocket):
                         language=language,
                         seq=seq,
                         extra_terms=extra_terms,
+                        prompt_context=_prompt_ctx(),
                         live_caption=live_caption,
                         previous_window=previous_window,
                         byte_offset=0,
@@ -544,10 +597,12 @@ async def transcribe_ws(websocket: WebSocket):
                             language=language,
                             language_locked=language_locked,
                             locked_language=locked_language,
-                            detection=_det,
+                            detection=last_language_detection or _det,
                             speech_seconds_seen=speech_seconds_seen,
                             meeting_id=meeting_id,
                             window_seconds=float(settings.whisper_live_warmup_seconds or 2.5),
+                            elapsed_audio_seconds=_recording_length()
+                            / float(settings.audio_sample_rate * 2),
                         )
                     )
                 except Exception as exc:
@@ -579,6 +634,10 @@ async def transcribe_ws(websocket: WebSocket):
         )
         seq += 1
         try:
+            await _detect_once_and_lock(
+                chunk,
+                window_seconds=float(settings.whisper_live_window_seconds or 8.0),
+            )
             live_caption, previous_window, _det = await _emit_live_window(
                 websocket,
                 meeting_id=meeting_id,
@@ -586,6 +645,7 @@ async def transcribe_ws(websocket: WebSocket):
                 language=language,
                 seq=seq,
                 extra_terms=extra_terms,
+                prompt_context=_prompt_ctx(),
                 live_caption=live_caption,
                 previous_window=previous_window,
                 byte_offset=window_offset,
@@ -596,10 +656,12 @@ async def transcribe_ws(websocket: WebSocket):
                     language=language,
                     language_locked=language_locked,
                     locked_language=locked_language,
-                    detection=_det,
+                    detection=last_language_detection or _det,
                     speech_seconds_seen=speech_seconds_seen,
                     meeting_id=meeting_id,
-                    window_seconds=float(settings.whisper_live_window_seconds or 10.0),
+                    window_seconds=float(settings.whisper_live_window_seconds or 8.0),
+                    elapsed_audio_seconds=_recording_length()
+                    / float(settings.audio_sample_rate * 2),
                 )
             )
         except Exception as exc:
@@ -813,6 +875,10 @@ async def transcribe_ws(websocket: WebSocket):
                 break
             seq += 1
             try:
+                await _detect_once_and_lock(
+                    chunk,
+                    window_seconds=float(settings.whisper_live_window_seconds or 8.0),
+                )
                 live_caption, previous_window, _det = await _emit_live_window(
                     websocket,
                     meeting_id=meeting_id,
@@ -820,6 +886,7 @@ async def transcribe_ws(websocket: WebSocket):
                     language=language,
                     seq=seq,
                     extra_terms=extra_terms,
+                    prompt_context=_prompt_ctx(),
                     live_caption=live_caption,
                     previous_window=previous_window,
                     byte_offset=live_offset,
@@ -829,10 +896,12 @@ async def transcribe_ws(websocket: WebSocket):
                         language=language,
                         language_locked=language_locked,
                         locked_language=locked_language,
-                        detection=_det,
+                        detection=last_language_detection or _det,
                         speech_seconds_seen=speech_seconds_seen,
                         meeting_id=meeting_id,
-                        window_seconds=float(settings.whisper_live_window_seconds or 10.0),
+                        window_seconds=float(settings.whisper_live_window_seconds or 8.0),
+                        elapsed_audio_seconds=_recording_length()
+                        / float(settings.audio_sample_rate * 2),
                     )
                 )
             except Exception as exc:
@@ -845,6 +914,11 @@ async def transcribe_ws(websocket: WebSocket):
             chunk = _read_slice(live_offset, total - 1)
             seq += 1
             try:
+                await _detect_once_and_lock(
+                    chunk,
+                    window_seconds=float(leftover)
+                    / float(settings.audio_sample_rate * 2),
+                )
                 live_caption, previous_window, _det = await _emit_live_window(
                     websocket,
                     meeting_id=meeting_id,
@@ -852,6 +926,7 @@ async def transcribe_ws(websocket: WebSocket):
                     language=language,
                     seq=seq,
                     extra_terms=extra_terms,
+                    prompt_context=_prompt_ctx(),
                     live_caption=live_caption,
                     previous_window=previous_window,
                     byte_offset=live_offset,
@@ -861,10 +936,12 @@ async def transcribe_ws(websocket: WebSocket):
                         language=language,
                         language_locked=language_locked,
                         locked_language=locked_language,
-                        detection=_det,
+                        detection=last_language_detection or _det,
                         speech_seconds_seen=speech_seconds_seen,
                         meeting_id=meeting_id,
                         window_seconds=float(leftover)
+                        / float(settings.audio_sample_rate * 2),
+                        elapsed_audio_seconds=_recording_length()
                         / float(settings.audio_sample_rate * 2),
                     )
                 )
@@ -920,28 +997,36 @@ def _maybe_lock_language(
     speech_seconds_seen: float,
     meeting_id: str,
     window_seconds: float,
+    elapsed_audio_seconds: float | None = None,
 ) -> tuple[str, bool, str | None, float]:
-    """Session-level language lock after first ~N seconds of speech."""
+    """Lock decode language after ~15s; retry 5s more if confidence is low."""
     from ..config import settings as _settings
     from ..database import SessionLocal
     from ..models import Meeting
 
     speech_seconds_seen += max(0.0, float(window_seconds or 0.0))
+    elapsed = (
+        float(elapsed_audio_seconds)
+        if elapsed_audio_seconds is not None
+        else speech_seconds_seen
+    )
     if language_locked and locked_language:
         return locked_language, True, locked_language, speech_seconds_seen
     if detection is None:
         return language, False, None, speech_seconds_seen
     conf = getattr(detection, "confidence", None)
     code = (getattr(detection, "language", None) or "").strip().lower() or None
-    # Relock trigger: extreme no-speech is handled per-segment; here we only lock.
-    need = float(getattr(_settings, "asr_language_lock_seconds", 8.0) or 8.0)
-    min_conf = float(getattr(_settings, "asr_language_min_confidence", 0.45) or 0.45)
-    if speech_seconds_seen < need:
+    need = float(getattr(_settings, "asr_language_lock_seconds", 15.0) or 15.0)
+    retry = float(getattr(_settings, "asr_language_lock_retry_seconds", 5.0) or 5.0)
+    min_conf = float(getattr(_settings, "asr_language_min_confidence", 0.7) or 0.7)
+    if elapsed < need:
         return language, False, None, speech_seconds_seen
     if not code:
         return language, False, None, speech_seconds_seen
-    if conf is not None and float(conf) < min_conf:
+    low_conf = conf is not None and float(conf) < min_conf
+    if low_conf and elapsed < (need + retry):
         return language, False, None, speech_seconds_seen
+    # After the retry window, lock even with modest confidence.
     # Hiligaynon-biased auto meetings: Whisper often guesses ``tl`` for Ilonggo
     # speech (no hil token). Do **not** lock those sessions to Tagalog.
     # Explicit Tagalog meetings must keep ``tl`` — never remap them to hil.
@@ -956,10 +1041,8 @@ def _maybe_lock_language(
         ):
             code = "hil"
         else:
-            # Unknown session label that detected Tagalog — keep Whisper-native tl.
             code = "tl"
     elif code == "fil":
-        # Should not happen (Whisper emits tl), but never persist fil.
         code = "tl"
     language_locked = True
     locked_language = code
@@ -976,7 +1059,6 @@ def _maybe_lock_language(
             m = db.get(Meeting, meeting_id)
             if m is not None:
                 m.language_locked = True
-                # Store detected code for operators; product still treats hil as auto-decode.
                 if code and code not in {"auto", "detect", "none"}:
                     m.language = code
                 m.language_confidence = float(conf) if conf is not None else m.language_confidence
