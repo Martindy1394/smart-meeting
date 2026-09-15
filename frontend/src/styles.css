@@ -1326,9 +1326,18 @@ button {
   line-height: 1.6;
   white-space: pre-wrap;
 }
-.transcript-live {
+.transcript-live-status {
   color: var(--text-dim);
   font-style: italic;
+}
+.transcript-live-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 4.5em;
+}
+.transcript-turn.is-live .transcript-words {
+  color: var(--text);
 }
 .caption-low-confidence {
   text-decoration: underline wavy;

@@ -270,11 +270,13 @@ class DirectoryPerson(BaseModel):
 
 
 class MeetingDirectory(BaseModel):
-    """Distinct names from the owner's prior meetings (newest first)."""
+    """Distinct names / titles / venues from the owner's prior meetings."""
 
     presiding_officers: list[str] = Field(default_factory=list)
     attendees: list[str] = Field(default_factory=list)
     people: list[DirectoryPerson] = Field(default_factory=list)
+    titles: list[str] = Field(default_factory=list)
+    venues: list[str] = Field(default_factory=list)
 
 
 class ActionItem(BaseModel):

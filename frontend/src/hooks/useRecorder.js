@@ -515,7 +515,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
         } else if (data.type === "live_caption") {
           // Cumulative caption — never allow a shorter update to erase older words
           // (protects against aggressive overlap dedupe or WS reconnect resets).
-          const incoming = (data.text || "").trim();
+          const incoming = String(data.text || data.live_caption || "").trim();
           if (!incoming) return;
           if (typeof data.low_confidence === "boolean") {
             setLiveLowConfidence(data.low_confidence);
@@ -570,8 +570,17 @@ export function useRecorder({ onFinalTranscript } = {}) {
             setLiveSpeakerLabel(String(data.speaker_label));
             setLiveSpeakerIndex(Number(data.speaker_index) || 0);
           }
-          // Only fall back to composed chunks if we have not received live_caption yet.
-          setLiveText((prev) => prev || composeLive());
+          setLiveText((prev) => {
+            const composed = composeLive();
+            const incoming = String(data.text || "").trim();
+            const best = [prev, composed, incoming]
+              .map((s) => String(s || "").trim())
+              .filter(Boolean)
+              .sort((a, b) => b.length - a.length)[0];
+            return best || prev;
+          });
+          setMessage("");
+          setStatus((s) => (s === "starting" ? "recording" : s));
         } else if (data.type === "finalizing") {
           // Server started finalize — never reconnect into a wiped session.
           stoppingRef.current = true;
@@ -726,12 +735,12 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
       let stream;
       try {
-        // Browser AEC/NS/AGC clean the mic before our 16 kHz downsample.
-        // The worklet is still not connected to speakers — that graph path
-        // plus AEC was what muted Chromium capture, not these constraints.
+        // AEC on this worklet graph muted Chromium capture. Keep AEC off.
+        // Restore AGC so quiet laptop mics reach Whisper (otherwise the
+        // transcript card stays on "Listening…" with no words).
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: true,
+            echoCancellation: false,
             noiseSuppression: true,
             autoGainControl: true,
             channelCount: 1,
@@ -848,14 +857,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       };
       source.connect(node);
-      // Keep the worklet running WITHOUT connecting to speakers.
-      // Connecting a mic graph to destination + echoCancellation was muting
-      // capture after a few seconds in Chromium (captions looked "stopped").
+      // AudioWorklet process() only runs when the node is in a live graph.
+      // MediaStreamDestination with no consumer is not pulled in Chromium, so
+      // PCM never left the worklet and captions never arrived. Gain 0 into
+      // destination keeps the worklet alive without audible monitor; AEC is off.
       const silent = audioCtx.createGain();
       silent.gain.value = 0;
-      const sink = audioCtx.createMediaStreamDestination();
       node.connect(silent);
-      silent.connect(sink);
+      silent.connect(audioCtx.destination);
 
       setStatus("recording");
       setMessage("Listening…");

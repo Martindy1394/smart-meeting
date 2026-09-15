@@ -46,6 +46,7 @@ export default function MeetingRoom({
   onBack,
 }) {
   const detailsRef = useRef(null);
+  const liveBodyRef = useRef(null);
   const [detailsReady, setDetailsReady] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
 
@@ -449,6 +450,17 @@ export default function MeetingRoom({
     recorder.status === "paused";
   const isStarting = recorder.status === "starting";
   const isPaused = Boolean(recorder.paused || recorder.status === "paused");
+  const hasLiveWords = Boolean(
+    (recorder.liveTurns && recorder.liveTurns.length) ||
+      String(recorder.liveText || "").trim()
+  );
+
+  useEffect(() => {
+    if (!showLive) return;
+    const el = liveBodyRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [showLive, recorder.liveText, recorder.liveTurns]);
   // History detail: never show Start live transcription. New meetings keep it.
   const hideLiveUploadActions =
     historyView &&
@@ -718,27 +730,38 @@ export default function MeetingRoom({
               </span>
             </div>
           </div>
-          <div className="card-body">
+          <div className="card-body" ref={liveBodyRef}>
             {asrError && <div className="error-banner">{asrError}</div>}
-            {showLive && (recorder.liveTurns?.length || recorder.liveText) ? (
-              recorder.liveTurns?.length ? (
-                <TranscriptTurns
-                  segments={recorder.liveTurns}
-                  fallbackText={recorder.liveText}
-                  voiceSlots={voiceSlots}
-                />
-              ) : (
-              <TranscriptTurn
-                live
-                voiceSlots={voiceSlots}
-                segment={{
-                  text: recorder.liveText,
-                  speaker_index: recorder.liveSpeakerIndex,
-                  speaker_label: recorder.liveSpeakerLabel,
-                  low_confidence: recorder.liveLowConfidence,
-                }}
-              />
-              )
+            {showLive ? (
+              <div className="transcript-live-stream" aria-live="polite">
+                {recorder.liveTurns?.length ? (
+                  <TranscriptTurns
+                    segments={recorder.liveTurns}
+                    fallbackText={recorder.liveText}
+                    voiceSlots={voiceSlots}
+                  />
+                ) : recorder.liveText ? (
+                  <p className="transcript-turn is-live">
+                    <span className="transcript-words">{recorder.liveText}</span>
+                  </p>
+                ) : null}
+                {hasLiveWords &&
+                (recorder.status === "finalizing" || isPaused) &&
+                recorder.message ? (
+                  <span className="transcript-live-status">{recorder.message}</span>
+                ) : null}
+                {!hasLiveWords ? (
+                  <span className="transcript-live-status">
+                    {isStarting
+                      ? "Starting meeting and microphone…"
+                      : isPaused
+                        ? recorder.message || "Paused"
+                        : recorder.status === "finalizing"
+                          ? recorder.message || "Finishing transcription…"
+                          : recorder.message || "Listening… spoken words appear here."}
+                  </span>
+                ) : null}
+              </div>
             ) : hasTranscript ? (
               <TranscriptTurns
                 segments={
@@ -751,14 +774,6 @@ export default function MeetingRoom({
                 fallbackText={finalTranscript}
                 voiceSlots={voiceSlots}
               />
-            ) : showLive ? (
-              <span className="transcript-live">
-                {isStarting
-                  ? "Starting meeting and microphone…"
-                  : isPaused
-                    ? recorder.message || "Paused"
-                    : recorder.message || "Listening…"}
-              </span>
             ) : asrBusy ? (
               <div className="center-spin">
                 <span className="spinner" /> Running Whisper ASR on audio…

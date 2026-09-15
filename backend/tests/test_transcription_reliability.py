@@ -443,18 +443,23 @@ def test_merge_lcs_dedupes_mid_window_overlap():
     assert merged.startswith(prev.split()[0])
 
 
-def test_live_hides_low_confidence_segments():
+def test_live_flags_low_confidence_segments():
     from types import SimpleNamespace
 
     from app.services.transcription import _segment_from_whisper
 
     weak = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-1.2, no_speech_prob=0.2)
-    assert _segment_from_whisper(weak, text="Mic test.", live=True) is None
-    hush = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-0.2, no_speech_prob=0.85)
-    assert _segment_from_whisper(hush, text="Thank you.", live=True) is None
-    kept = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-0.3, no_speech_prob=0.2)
-    out = _segment_from_whisper(kept, text="Maayong aga sa tanan.", live=True)
+    out = _segment_from_whisper(weak, text="Mic test.", live=True)
     assert out is not None
+    assert out.low_confidence is True
+    hush = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-0.2, no_speech_prob=0.85)
+    out2 = _segment_from_whisper(hush, text="Thank you.", live=True)
+    assert out2 is not None
+    assert out2.low_confidence is True
+    kept = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-0.3, no_speech_prob=0.2)
+    out3 = _segment_from_whisper(kept, text="Maayong aga sa tanan.", live=True)
+    assert out3 is not None
+    assert out3.low_confidence is False
 
 
 def test_live_decode_prompt_includes_meeting_context():
@@ -468,12 +473,13 @@ def test_live_decode_prompt_includes_meeting_context():
         confirmed_transcript="na ang budget para sa barangay",
     )
     assert prompt
-    assert "Iloilo City Hall" in prompt
-    assert "Budget hearing" in prompt
+    # Title/venue/prior caption must not enter the prompt — Whisper echoes them
+    # and the echo strip then blanks the live window.
+    assert "Iloilo City Hall" not in prompt
+    assert "Budget hearing" not in prompt
+    assert "na ang budget" not in prompt
     assert "Mayor Garcia" in prompt
     assert "Hiligaynon" in prompt or "hiligaynon" in prompt.lower()
-    assert "Sangguniang" in prompt
-    assert "na ang budget" in prompt
 
 
 def test_energy_ok_rejects_near_silence():
@@ -623,7 +629,7 @@ if __name__ == "__main__":
     test_amplify_live_skips_dynaudnorm_path()
     test_merge_rejects_near_duplicate_window()
     test_merge_lcs_dedupes_mid_window_overlap()
-    test_live_hides_low_confidence_segments()
+    test_live_flags_low_confidence_segments()
     test_live_decode_prompt_includes_meeting_context()
     test_energy_ok_rejects_near_silence()
     test_hiligaynon_initial_prompt_always_available()
