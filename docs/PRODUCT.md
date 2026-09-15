@@ -31,7 +31,7 @@ accuracy or security.
 | English translation | **Ships** — NLLB (PH→EN default) + mBART many-to-many |
 | Verbatim original + English + structured minutes | **Ships** — transcript, English translation, BART bullets/numbered (Discussion / Decisions / Action items) |
 | Timestamped text | **Partial** — times stay on stored segments; the meeting room and exports lead with **Voice 1–3** labels instead of clock stamps |
-| Searchable keywords | **Ships** — history search over title, venue, attendees, transcript, summary, and translation; find-in-transcript on the meeting room |
+| Searchable keywords | **Ships** — history search over title, venue, attendees, transcript, summary, and translation |
 | Export PDF / DOCX | **Ships** — meeting export API + UI (`txt` / `docx` / `pdf`) |
 | Offline processing | **Partial** — models run locally when installed (`requirements-ml.txt`); no cloud LLM required |
 | End-to-end encryption | **Roadmap** — auth is short-lived JWT + refresh revocation; audio encryption-at-rest via `DATA_ENCRYPTION_KEY` (see [`ENCRYPTION_AT_REST.md`](ENCRYPTION_AT_REST.md)). True client E2E is not built yet |
