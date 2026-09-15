@@ -53,7 +53,6 @@ export default function MeetingRoom({
   const [transcriptSegments, setTranscriptSegments] = useState(
     Array.isArray(meeting?.segments) ? meeting.segments : []
   );
-  const [transcriptQuery, setTranscriptQuery] = useState("");
   const [status, setStatus] = useState(meeting?.status);
   const voiceSlots = registeredSpeakerCount(meeting);
 
@@ -631,16 +630,6 @@ export default function MeetingRoom({
               )}
             </h3>
             <div className="transcript-head-meta">
-              {hasTranscript && !showLive && (
-                <input
-                  className="transcript-find"
-                  type="search"
-                  placeholder="Find in transcript…"
-                  value={transcriptQuery}
-                  onChange={(e) => setTranscriptQuery(e.target.value)}
-                  aria-label="Find in transcript"
-                />
-              )}
               {/* On saved-meeting pages, actions live in the top toolbar. */}
               {!historyView && (hasTranscript || hasAudio) && (
                 <div className="transcript-actions">
@@ -760,7 +749,6 @@ export default function MeetingRoom({
                       : []
                 }
                 fallbackText={finalTranscript}
-                keyword={transcriptQuery}
                 voiceSlots={voiceSlots}
               />
             ) : showLive ? (
