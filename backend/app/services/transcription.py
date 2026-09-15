@@ -639,12 +639,9 @@ def live_decode_prompt(
     venue: str | None = None,
     confirmed_transcript: str | None = None,
 ) -> str | None:
-    """Short live prompt — long English metadata was echoed then stripped to blank."""
-    del title, venue  # kept on the signature for callers; too easy for Whisper to copy
-    bias = initial_prompt(language, extra_terms=extra_terms)
-    tail = _tail_text(confirmed_transcript or "", 80)
-    parts = [p for p in (bias, tail) if p]
-    return " ".join(parts).strip() or None
+    """Short live prompt — do not include prior captions (Whisper echoes them)."""
+    del title, venue, confirmed_transcript
+    return initial_prompt(language, extra_terms=extra_terms)
 
 
 def parse_prompt_terms(raw) -> list[str]:
@@ -1192,30 +1189,22 @@ def transcribe_live(
     from . import pipeline_metrics
 
     raw = pcm.astype(np.float32, copy=False)
-    sr = int(settings.audio_sample_rate or 16000)
-    # Energy gate only — WebRTC VAD drops Hiligaynon onsets. Silero VAD runs
-    # inside faster-whisper (vad_filter=True).
-    if not _energy_ok(raw, min_rms=0.006):
+    # Digital silence only. Laptop mics with AEC off are often below the old
+    # 0.006 RMS gate, so real speech never reached Whisper and the UI stayed
+    # on "Listening…". Skip_silent_tail also dropped 8s windows that still
+    # had speech in the first 2s of overlap.
+    peak = float(np.max(np.abs(raw))) if raw.size else 0.0
+    rms = float(np.sqrt(np.mean(np.square(raw)))) if raw.size else 0.0
+    if peak < 0.001 and rms < 0.0004:
         return [], None
-    # Full live windows whose newest hop is silence: user stopped talking.
-    # Skip so Whisper cannot re-decode old speech from a silent tail.
-    window_s = float(settings.whisper_live_window_seconds or 8.0)
-    hop_s = float(settings.whisper_live_hop_seconds or 6.0)
-    if len(raw) >= int(0.85 * window_s * sr):
-        hop_n = max(1, int(hop_s * sr))
-        if len(raw) >= hop_n and not _energy_ok(raw[-hop_n:], min_rms=0.005):
-            logger.info("asr.live skip_silent_tail samples=%d hop=%d", len(raw), hop_n)
-            return [], None
 
-    # Mild numpy AGC only — never dynaudnorm on live (boosts room noise).
+    # Numpy AGC only — never dynaudnorm on live (boosts room noise).
     pcm = audio_svc.amplify_for_asr(
         raw,
-        target_rms=0.06,
-        max_gain=4.0,
+        target_rms=0.08,
+        max_gain=12.0,
         allow_dynaudnorm=False,
     )
-    if not _energy_ok(pcm, min_rms=0.008):
-        return [], None
 
     ctx = prompt_context if isinstance(prompt_context, dict) else {}
 
@@ -1304,12 +1293,12 @@ def transcribe_live(
             beam_size=2,
             best_of=2,
             temperature=0.0,
-            vad_filter=True,
-            vad_parameters=_LIVE_VAD_PARAMS,
-            condition_on_previous_text=True,
+            # Silero VAD drops quiet / Hiligaynon onsets → empty live panel.
+            vad_filter=False,
+            condition_on_previous_text=False,
             without_timestamps=True,
             word_timestamps=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=0.7,
             compression_ratio_threshold=2.4,
             log_prob_threshold=-1.0,
             initial_prompt=live_prompt,

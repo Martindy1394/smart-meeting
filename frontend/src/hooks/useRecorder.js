@@ -735,14 +735,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
 
       let stream;
       try {
-        // AEC+AGC on this graph previously muted Chromium after a few seconds
-        // (captions stayed empty, then End showed only "Finishing transcription…").
-        // Keep 48 kHz mono; do not route the worklet to speakers.
+        // AEC on this worklet graph muted Chromium capture. Keep AEC off.
+        // Restore AGC so quiet laptop mics reach Whisper (otherwise the
+        // transcript card stays on "Listening…" with no words).
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: false,
             noiseSuppression: true,
-            autoGainControl: false,
+            autoGainControl: true,
             channelCount: 1,
             sampleRate: 48000,
           },
@@ -857,14 +857,14 @@ export function useRecorder({ onFinalTranscript } = {}) {
         }
       };
       source.connect(node);
-      // Keep the worklet running WITHOUT connecting to speakers.
-      // Connecting a mic graph to destination + echoCancellation was muting
-      // capture after a few seconds in Chromium (captions looked "stopped").
+      // AudioWorklet process() only runs when the node is in a live graph.
+      // MediaStreamDestination with no consumer is not pulled in Chromium, so
+      // PCM never left the worklet and captions never arrived. Gain 0 into
+      // destination keeps the worklet alive without audible monitor; AEC is off.
       const silent = audioCtx.createGain();
       silent.gain.value = 0;
-      const sink = audioCtx.createMediaStreamDestination();
       node.connect(silent);
-      silent.connect(sink);
+      silent.connect(audioCtx.destination);
 
       setStatus("recording");
       setMessage("Listening…");

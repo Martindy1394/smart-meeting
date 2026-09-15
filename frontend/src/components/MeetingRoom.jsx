@@ -741,16 +741,9 @@ export default function MeetingRoom({
                     voiceSlots={voiceSlots}
                   />
                 ) : recorder.liveText ? (
-                  <TranscriptTurn
-                    live
-                    voiceSlots={voiceSlots}
-                    segment={{
-                      text: recorder.liveText,
-                      speaker_index: recorder.liveSpeakerIndex,
-                      speaker_label: recorder.liveSpeakerLabel,
-                      low_confidence: recorder.liveLowConfidence,
-                    }}
-                  />
+                  <p className="transcript-turn is-live">
+                    <span className="transcript-words">{recorder.liveText}</span>
+                  </p>
                 ) : null}
                 {hasLiveWords &&
                 (recorder.status === "finalizing" || isPaused) &&

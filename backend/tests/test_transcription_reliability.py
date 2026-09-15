@@ -473,13 +473,13 @@ def test_live_decode_prompt_includes_meeting_context():
         confirmed_transcript="na ang budget para sa barangay",
     )
     assert prompt
-    # Title/venue used to be copied into the prompt and then stripped as echo,
-    # leaving the live window blank. Keep names + language bias + caption tail.
+    # Title/venue/prior caption must not enter the prompt — Whisper echoes them
+    # and the echo strip then blanks the live window.
     assert "Iloilo City Hall" not in prompt
     assert "Budget hearing" not in prompt
+    assert "na ang budget" not in prompt
     assert "Mayor Garcia" in prompt
     assert "Hiligaynon" in prompt or "hiligaynon" in prompt.lower()
-    assert "na ang budget" in prompt
 
 
 def test_energy_ok_rejects_near_silence():
