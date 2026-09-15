@@ -188,6 +188,39 @@ def test_language_lock_keeps_explicit_tagalog():
     assert lang2 == "hil"
 
 
+def test_language_lock_waits_then_locks_low_confidence():
+    from app.services.transcription import LanguageDetection
+    from app.ws.transcription import _maybe_lock_language
+
+    det = LanguageDetection(language="en", confidence=0.5, detected_by="whisper")
+    lang, locked, locked_lang, _ = _maybe_lock_language(
+        language="auto",
+        language_locked=False,
+        locked_language=None,
+        detection=det,
+        speech_seconds_seen=15.0,
+        meeting_id="test-lock-wait",
+        window_seconds=0.0,
+        elapsed_audio_seconds=16.0,
+    )
+    assert locked is False
+    assert lang == "auto"
+
+    lang2, locked2, locked_lang2, _ = _maybe_lock_language(
+        language="auto",
+        language_locked=False,
+        locked_language=None,
+        detection=det,
+        speech_seconds_seen=20.0,
+        meeting_id="test-lock-force",
+        window_seconds=0.0,
+        elapsed_audio_seconds=21.0,
+    )
+    assert locked2 is True
+    assert locked_lang2 == "en"
+    assert lang2 == "en"
+
+
 def test_auto_final_backend_prefers_hf_for_hiligaynon(monkeypatch=None):
     # Hiligaynon prefers HF PH dialect model (Visayan-aware) then FW fallback.
     from app.config import settings
@@ -399,6 +432,50 @@ def test_merge_rejects_near_duplicate_window():
     assert merged == prev
 
 
+def test_merge_lcs_dedupes_mid_window_overlap():
+    from app.services.transcription import merge_live_caption
+
+    prev = "gin-approve nila na ang budget kag"
+    cur = "ang budget para sa road"
+    merged = merge_live_caption(prev, cur, previous_window=prev)
+    assert "para sa road" in merged
+    assert merged.lower().count("budget") == 1
+    assert merged.startswith(prev.split()[0])
+
+
+def test_live_hides_low_confidence_segments():
+    from types import SimpleNamespace
+
+    from app.services.transcription import _segment_from_whisper
+
+    weak = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-1.2, no_speech_prob=0.2)
+    assert _segment_from_whisper(weak, text="Mic test.", live=True) is None
+    hush = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-0.2, no_speech_prob=0.85)
+    assert _segment_from_whisper(hush, text="Thank you.", live=True) is None
+    kept = SimpleNamespace(start=0.0, end=1.0, avg_logprob=-0.3, no_speech_prob=0.2)
+    out = _segment_from_whisper(kept, text="Maayong aga sa tanan.", live=True)
+    assert out is not None
+
+
+def test_live_decode_prompt_includes_meeting_context():
+    from app.services.transcription import live_decode_prompt
+
+    prompt = live_decode_prompt(
+        "hil",
+        extra_terms=["Mayor Garcia"],
+        title="Budget hearing",
+        venue="Iloilo City Hall",
+        confirmed_transcript="na ang budget para sa barangay",
+    )
+    assert prompt
+    assert "Iloilo City Hall" in prompt
+    assert "Budget hearing" in prompt
+    assert "Mayor Garcia" in prompt
+    assert "Hiligaynon" in prompt or "hiligaynon" in prompt.lower()
+    assert "Sangguniang" in prompt
+    assert "na ang budget" in prompt
+
+
 def test_energy_ok_rejects_near_silence():
     from app.services.transcription import _energy_ok
 
@@ -538,12 +615,16 @@ if __name__ == "__main__":
     test_tagalog_uses_native_tl_and_prefer_forced()
     test_whisper_language_arg_never_forwards_fil_or_hil()
     test_language_lock_keeps_explicit_tagalog()
+    test_language_lock_waits_then_locks_low_confidence()
     test_auto_final_backend_prefers_hf_for_hiligaynon()
     test_auto_final_backend_prefers_hf_for_tagalog()
     test_auto_meeting_uses_combined_ph_hf_candidates()
     test_amplify_for_asr_boosts_quiet_audio()
     test_amplify_live_skips_dynaudnorm_path()
     test_merge_rejects_near_duplicate_window()
+    test_merge_lcs_dedupes_mid_window_overlap()
+    test_live_hides_low_confidence_segments()
+    test_live_decode_prompt_includes_meeting_context()
     test_energy_ok_rejects_near_silence()
     test_hiligaynon_initial_prompt_always_available()
     test_ellipsis_spam_is_junk()

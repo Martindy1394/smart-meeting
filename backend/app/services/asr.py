@@ -69,6 +69,7 @@ def transcribe_pcm(
     *,
     live: bool = False,
     extra_terms: list[str] | None = None,
+    prompt_context: dict | None = None,
 ) -> ASRResult:
     """Run Whisper ASR on a float32 PCM buffer.
 
@@ -85,7 +86,7 @@ def transcribe_pcm(
 
     if live:
         segments, detection = transcription.transcribe_live(
-            pcm, language, extra_terms=extra_terms
+            pcm, language, extra_terms=extra_terms, prompt_context=prompt_context
         )
     else:
         segments, detection = transcription.transcribe_final(
