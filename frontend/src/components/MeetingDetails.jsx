@@ -13,6 +13,7 @@ import {
 } from "../lib/nameSuggestions.js";
 import { listAttendees } from "../lib/voiceLabels.js";
 import NameSuggestField from "./NameSuggestField.jsx";
+import HistorySuggestField from "./HistorySuggestField.jsx";
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -92,6 +93,8 @@ const MeetingDetails = forwardRef(function MeetingDetails(
     presiding_officers: [],
     attendees: [],
     people: [],
+    titles: [],
+    venues: [],
   });
   const [recents, setRecents] = useState(() => loadRecentNames());
   const [saving, setSaving] = useState(false);
@@ -134,7 +137,9 @@ const MeetingDetails = forwardRef(function MeetingDetails(
             ? data.presiding_officers
             : [],
           attendees: Array.isArray(data.attendees) ? data.attendees : [],
-          people: Array.isArray(data.people) ? data.people : [],
+            people: Array.isArray(data.people) ? data.people : [],
+            titles: Array.isArray(data.titles) ? data.titles : [],
+            venues: Array.isArray(data.venues) ? data.venues : [],
         });
       } catch {
         /* suggestions are optional */
@@ -349,28 +354,28 @@ const MeetingDetails = forwardRef(function MeetingDetails(
 
       <div className="details-grid">
         <div className="field title-field">
-          <label>
+          <label htmlFor="meeting-title">
             Title <span className="req">*</span>
           </label>
-          <input
-            type="text"
+          <HistorySuggestField
+            id="meeting-title"
             placeholder="Enter meeting title"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            required
+            onChange={setTitle}
+            options={directory.titles}
           />
         </div>
 
         <div className="field">
-          <label>
+          <label htmlFor="meeting-venue">
             Venue <span className="req">*</span>
           </label>
-          <input
-            type="text"
+          <HistorySuggestField
+            id="meeting-venue"
             placeholder="e.g. Conference Room A / Zoom"
             value={venue}
-            onChange={(e) => setVenue(e.target.value)}
-            required
+            onChange={setVenue}
+            options={directory.venues}
           />
         </div>
 

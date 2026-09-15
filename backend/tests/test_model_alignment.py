@@ -43,16 +43,22 @@ class NameDirectoryTests(unittest.TestCase):
             SimpleNamespace(
                 presiding_officer="Maria Santos",
                 attendees=["Ada", "Bob"],
+                title="Budget hearing",
+                venue="Iloilo City Hall",
             ),
             SimpleNamespace(
                 presiding_officer="maria santos",
                 attendees=["ada", "Carol"],
+                title="Budget hearing",
+                venue="Session Hall",
             ),
-            SimpleNamespace(presiding_officer="  ", attendees=[]),
+            SimpleNamespace(presiding_officer="  ", attendees=[], title="Untitled meeting", venue=""),
         ]
         out = collect_name_directory(meetings)
         self.assertEqual(out["presiding_officers"], ["Maria Santos"])
         self.assertEqual(out["attendees"], ["Ada", "Bob", "Carol"])
+        self.assertEqual(out["titles"], ["Budget hearing"])
+        self.assertEqual(out["venues"], ["Iloilo City Hall", "Session Hall"])
         maria = next(p for p in out["people"] if p["name"] == "Maria Santos")
         self.assertEqual(maria["officer_count"], 2)
         self.assertIn("officer", maria["sources"])

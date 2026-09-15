@@ -729,18 +729,27 @@ def _segment_from_whisper(s, *, text: str, live: bool = False) -> Segment | None
         no_sp_f = None
 
     if live:
+        # Show live words on screen. Weak ASR is flagged, not hidden — empty
+        # live panels were the result of dropping these segments entirely.
         live_min_lp = float(getattr(settings, "asr_live_min_avg_logprob", -1.0) or -1.0)
         live_max_nsp = float(getattr(settings, "asr_live_max_no_speech_prob", 0.8) or 0.8)
+        live_low = False
         if avg_lp_f is not None and avg_lp_f < live_min_lp:
-            logger.info(
-                "asr.live_hide avg_logprob=%.3f text=%r", avg_lp_f, text[:80]
-            )
-            return None
+            live_low = True
         if no_sp_f is not None and no_sp_f > live_max_nsp:
-            logger.info(
-                "asr.live_hide no_speech_prob=%.3f text=%r", no_sp_f, text[:80]
-            )
-            return None
+            live_low = True
+        if avg_lp_f is not None and avg_lp_f < float(settings.asr_flag_avg_logprob):
+            live_low = True
+        if no_sp_f is not None and no_sp_f >= float(settings.asr_flag_no_speech_prob):
+            live_low = True
+        return Segment(
+            text=text,
+            start=float(getattr(s, "start", 0.0) or 0.0),
+            end=float(getattr(s, "end", 0.0) or 0.0),
+            avg_logprob=avg_lp_f,
+            no_speech_prob=no_sp_f,
+            low_confidence=live_low,
+        )
 
     # Hard drop: almost certainly silence hallucination.
     # Whisper often marks quiet-but-real speech with high no_speech_prob; keep

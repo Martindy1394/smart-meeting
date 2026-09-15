@@ -43,7 +43,7 @@ export default function TranscriptTurn({
   const low = Boolean(segment?.low_confidence);
 
   return (
-    <div className={live ? "transcript-turn transcript-live" : "transcript-turn"}>
+    <div className={live ? "transcript-turn is-live" : "transcript-turn"}>
       <span
         className={`speaker-chip ${speakerTone(idx)}`}
         title={titleBits.join(" · ")}

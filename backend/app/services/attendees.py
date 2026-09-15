@@ -84,6 +84,12 @@ def _meeting_title(meeting: Any) -> str:
     return str(getattr(meeting, "title", None) or "").strip()
 
 
+def _meeting_venue(meeting: Any) -> str:
+    if isinstance(meeting, dict):
+        return str(meeting.get("venue") or "").strip()
+    return str(getattr(meeting, "venue", None) or "").strip()
+
+
 def _identified_names(meeting: Any) -> list[tuple[str, float]]:
     raw = None
     if isinstance(meeting, dict):
@@ -171,12 +177,28 @@ def collect_name_directory(
 
     officer_order: list[str] = []
     attendee_order: list[str] = []
+    title_order: list[str] = []
+    venue_order: list[str] = []
     seen_off: set[str] = set()
     seen_att: set[str] = set()
+    seen_titles: set[str] = set()
+    seen_venues: set[str] = set()
+    skip_titles = {"untitled meeting", "untitled"}
 
     for meeting in meetings or []:
         when = _meeting_when(meeting)
         title = _meeting_title(meeting)
+        venue = _meeting_venue(meeting)
+        if title and title.casefold() not in skip_titles:
+            tkey = title.casefold()
+            if tkey not in seen_titles:
+                seen_titles.add(tkey)
+                title_order.append(title)
+        if venue:
+            vkey = venue.casefold()
+            if vkey not in seen_venues:
+                seen_venues.add(vkey)
+                venue_order.append(venue)
         officer = getattr(meeting, "presiding_officer", None)
         if isinstance(meeting, dict):
             officer = meeting.get("presiding_officer", officer)
@@ -214,6 +236,8 @@ def collect_name_directory(
         "presiding_officers": officer_order[:max_officers],
         "attendees": attendee_order[:max_attendees],
         "people": ranked_people[: max(max_officers, max_attendees)],
+        "titles": title_order[:80],
+        "venues": venue_order[:80],
     }
 
 
