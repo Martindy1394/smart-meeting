@@ -395,6 +395,26 @@ def _seg_text(seg) -> str:
     return (getattr(seg, "text", None) or "").strip()
 
 
+def _is_low_confidence_tail(seg) -> bool:
+    """True when a continuation slice is Whisper's quiet/uncertain tail."""
+    if isinstance(seg, dict):
+        if bool(seg.get("low_confidence")):
+            return True
+        nsp = seg.get("no_speech_prob")
+    else:
+        if bool(getattr(seg, "low_confidence", False)):
+            return True
+        nsp = getattr(seg, "no_speech_prob", None)
+    if nsp is None:
+        return False
+    try:
+        nsp_f = float(nsp)
+    except (TypeError, ValueError):
+        return False
+    flag = float(getattr(settings, "asr_flag_no_speech_prob", 0.45) or 0.45)
+    return nsp_f >= flag
+
+
 def _set_voice(seg, index: int, label: str) -> None:
     if isinstance(seg, dict):
         seg["speaker_index"] = int(index)
@@ -465,6 +485,14 @@ def _label_segments_inner(
         else:
             idx = 1
         cluster_ids.append(int(idx or 1))
+
+    # Quiet tails of the *same* utterance (high no-speech / low_confidence)
+    # must not become Voice 2 just because RMS dropped after a mic blast.
+    times = [coerce_times(s) for s in segments]
+    for i in range(1, len(segments)):
+        gap = float(times[i][0]) - float(times[i - 1][1])
+        if gap <= 0.5 and _is_low_confidence_tail(segments[i]):
+            cluster_ids[i] = cluster_ids[i - 1]
 
     score_sum: dict[int, float] = {}
     score_n: dict[int, int] = {}

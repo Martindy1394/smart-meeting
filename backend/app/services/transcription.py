@@ -678,6 +678,10 @@ def parse_prompt_terms(raw) -> list[str]:
         key = term.casefold()
         if key in seen:
             continue
+        # Single-letter / stub roster chips ("j") poison Whisper's prompt.
+        alpha = sum(1 for ch in term if ch.isalpha())
+        if alpha < 3:
+            continue
         seen.add(key)
         out.append(term)
     return out[:24]
