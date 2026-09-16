@@ -613,7 +613,9 @@ def initial_prompt(
     appended as a short Whisper prompt hint.
     """
     lang = effective_asr_language(language)
-    if is_hiligaynon_language(lang):
+    if lang in {"en", "english"}:
+        prompt = "English meeting discussion."
+    elif is_hiligaynon_language(lang):
         prompt = (settings.whisper_hiligaynon_initial_prompt or "").strip()
         if not prompt:
             prompt = (settings.whisper_initial_prompt or "").strip()

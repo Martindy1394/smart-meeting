@@ -122,6 +122,10 @@ def test_auto_language_resolves_to_hiligaynon_default():
     assert effective_asr_language(None) == "hil"
     assert effective_asr_language("") == "hil"
     assert effective_asr_language("en") == "en"
+    en_prompt = initial_prompt("en")
+    assert en_prompt
+    assert "English" in en_prompt
+    assert "Hiligaynon" not in en_prompt
     assert is_hiligaynon_language(effective_asr_language("auto"))
     assert _final_language_mode("auto") == "auto"
     assert _final_decode_language("auto") is None
