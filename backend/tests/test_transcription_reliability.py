@@ -15,7 +15,11 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.transcription import (  # noqa: E402
     LanguageDetection,
     _ModelCache,
+    _FINAL_VAD_PARAMS,
+    _english_detection_confident,
+    _faster_whisper_final_kwargs,
     _final_decode_language,
+    _final_decode_prompt,
     _final_language_mode,
     _forced_language,
     _language_detection_from_info,
@@ -626,6 +630,102 @@ def test_language_detection_clamps_confidence():
     assert isinstance(LanguageDetection(language="en").as_dict()["detected_by"], str)
 
 
+def test_auto_final_prompt_skips_hiligaynon():
+    """Live still uses the Hiligaynon prompt; the full-file auto pass does not."""
+    live = initial_prompt("auto")
+    assert live
+    assert "Hiligaynon" in live or "Ilonggo" in live
+    auto_final = _final_decode_prompt("auto")
+    assert auto_final
+    assert "Hiligaynon" not in auto_final
+    assert "Ilonggo" not in auto_final
+    assert "Meeting discussion" in auto_final
+    hil_final = _final_decode_prompt("hil")
+    assert hil_final
+    assert "Hiligaynon" in hil_final or "Ilonggo" in hil_final
+
+
+def test_final_english_gates_on_detection_confidence():
+    high = LanguageDetection(language="en", confidence=0.88, detected_by="whisper")
+    low = LanguageDetection(language="en", confidence=0.4, detected_by="whisper")
+    tl = LanguageDetection(language="tl", confidence=0.95, detected_by="whisper")
+    assert _english_detection_confident(high) is True
+    assert _english_detection_confident(low) is False
+    assert _english_detection_confident(tl) is False
+    assert _final_decode_language("auto") is None
+    assert _final_decode_language("auto", detection=low) is None
+    assert _final_decode_language("auto", detection=high) == "en"
+    assert _final_decode_language("auto", detection=tl) is None
+    prompt = _final_decode_prompt("auto", detection=high)
+    assert prompt
+    assert "English" in prompt
+    assert "Hiligaynon" not in prompt
+    low_prompt = _final_decode_prompt("auto", detection=low)
+    assert low_prompt
+    assert "Hiligaynon" not in low_prompt
+    assert "English meeting" not in low_prompt
+
+
+# Manual /tmp repro used these transcribe() kwargs (VAD off, ad-hoc English prompt).
+_MANUAL_FULL_FILE_REPRO_KWARGS = {
+    "language": "en",
+    "task": "transcribe",
+    "beam_size": 5,
+    "best_of": 5,
+    "temperature": [0.0, 0.2],
+    "vad_filter": False,
+    "condition_on_previous_text": True,
+    "without_timestamps": False,
+    "initial_prompt": "English board meeting. Mic test. Names of attendees.",
+    "no_speech_threshold": 0.25,
+    "compression_ratio_threshold": 2.6,
+    "log_prob_threshold": -1.2,
+}
+
+
+def test_production_whisper_call_diff_vs_manual_repro():
+    """Production ``model.transcribe`` kwargs vs the one-shot English WAV script.
+
+    Intentional deltas after this change: Silero VAD on (+ vad_parameters),
+    and the short English meeting prompt instead of the ad-hoc repro string.
+    Every other decode hyperparameter must stay aligned.
+    """
+    high = LanguageDetection(language="en", confidence=0.88, detected_by="whisper")
+    prompt = _final_decode_prompt("auto", extra_terms=None, detection=high)
+    got = _faster_whisper_final_kwargs(
+        language="en", vad_filter=True, initial_prompt=prompt
+    )
+    expected = {
+        "language": "en",
+        "task": "transcribe",
+        "beam_size": 5,
+        "best_of": 5,
+        "temperature": [0.0, 0.2],
+        "vad_filter": True,
+        "vad_parameters": _FINAL_VAD_PARAMS,
+        "condition_on_previous_text": True,
+        "without_timestamps": False,
+        "initial_prompt": "English meeting discussion.",
+        "no_speech_threshold": 0.25,
+        "compression_ratio_threshold": 2.6,
+        "log_prob_threshold": -1.2,
+    }
+    assert got == expected
+
+    repro = dict(_MANUAL_FULL_FILE_REPRO_KWARGS)
+    deltas = {}
+    keys = set(repro) | set(got)
+    for key in sorted(keys):
+        old = repro.get(key, "<missing>")
+        new = got.get(key, "<missing>")
+        if old != new:
+            deltas[key] = {"repro": old, "production": new}
+    assert set(deltas) == {"vad_filter", "vad_parameters", "initial_prompt"}
+    assert deltas["vad_filter"]["production"] is True
+    assert deltas["vad_parameters"]["production"] == _FINAL_VAD_PARAMS
+    assert "Hiligaynon" not in str(deltas["initial_prompt"]["production"])
+
+
 if __name__ == "__main__":
     test_merge_live_caption_appends_novel_overlap()
     test_merge_live_caption_never_shrinks()
@@ -657,4 +757,7 @@ if __name__ == "__main__":
     test_language_detection_from_whisper_auto()
     test_language_detection_forced_fallback()
     test_language_detection_clamps_confidence()
+    test_auto_final_prompt_skips_hiligaynon()
+    test_final_english_gates_on_detection_confidence()
+    test_production_whisper_call_diff_vs_manual_repro()
     print("all_unit_tests_passed")

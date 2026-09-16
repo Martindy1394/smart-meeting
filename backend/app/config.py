@@ -152,9 +152,10 @@ class Settings(BaseSettings):
     whisper_tagalog_final_language_mode: str = "prefer_forced"
     # Hiligaynon: Whisper auto-detect (no hil token; never force Tagalog ``tl``).
     whisper_hiligaynon_final_language_mode: str = "auto"
-    # Final-pass VAD: aggressive VAD was dropping long spans of real speech
-    # (especially clipped mic audio / mixed EN+PH). Default off for coverage.
-    whisper_final_vad_filter: bool = False
+    # Final-pass Silero VAD: drop the quiet tail / non-speech so full-file
+    # decode does not latch onto silence. Coverage retries still disable VAD
+    # if the first pass is too sparse.
+    whisper_final_vad_filter: bool = True
     # Live caption windowing: short hops so captions grow word-by-word.
     # 4s of context, 1s hop (3s overlap), 1s warmup for the first words.
     whisper_live_window_seconds: float = 4.0

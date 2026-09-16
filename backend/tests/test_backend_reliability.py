@@ -63,7 +63,9 @@ def test_live_caption_covers_recording():
 
 def test_fast_finalize_is_off_in_env_example():
     example = BACKEND_ROOT / ".env.example"
-    assert "WHISPER_FAST_FINALIZE=false" in example.read_text()
+    text = example.read_text()
+    assert "WHISPER_FAST_FINALIZE=false" in text
+    assert "WHISPER_FINAL_VAD_FILTER=true" in text
 
 
 if __name__ == "__main__":
