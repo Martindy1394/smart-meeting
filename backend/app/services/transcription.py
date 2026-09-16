@@ -2112,9 +2112,9 @@ def _run_faster_whisper_final(
             audio_in,
             language=lang_arg,
             task=_WHISPER_TASK,
-            beam_size=5,
-            best_of=5,
-            temperature=[0.0, 0.2],
+            beam_size=1 if bool(settings.whisper_fast_finalize) else 5,
+            best_of=1 if bool(settings.whisper_fast_finalize) else 5,
+            temperature=0.0 if bool(settings.whisper_fast_finalize) else [0.0, 0.2],
             vad_filter=vad_filter,
             vad_parameters=_FINAL_VAD_PARAMS if vad_filter else None,
             # False avoids Whisper latching onto a repeated phrase on quiet PH
@@ -2171,23 +2171,24 @@ def _transcribe_final_faster_whisper(
     attempts: list[tuple[str, str | None, bool]] = [
         ("primary", primary_lang, use_vad),
     ]
-    # Coverage retries — order matters.
-    if primary_lang is not None:
-        # Tagalog prefer_forced: after forced tl, try auto for code-switched EN.
-        attempts.append(("auto_retry", None, use_vad))
-    if use_vad:
-        attempts.append(("no_vad", primary_lang, False))
-        attempts.append(("auto_no_vad", None, False))
-    else:
-        # Tagalog-only forced retry when primary was auto. Never force tl for hil.
-        forced = _forced_language(language)
-        if primary_lang is None and forced is not None:
-            attempts.append(("forced_lang_retry", forced, False))
-        elif primary_lang is not None:
-            attempts.append(("auto_retry2", None, False))
-    # Tagalog: if primary was auto somehow, still ensure a forced-tl attempt.
-    if is_tagalog_language(language) and mode in {"auto", "detect", "none"}:
-        attempts.insert(0, ("tagalog_forced_tl", "tl", use_vad))
+    if not bool(settings.whisper_fast_finalize):
+        # Coverage retries — order matters.
+        if primary_lang is not None:
+            # Tagalog prefer_forced: after forced tl, try auto for code-switched EN.
+            attempts.append(("auto_retry", None, use_vad))
+        if use_vad:
+            attempts.append(("no_vad", primary_lang, False))
+            attempts.append(("auto_no_vad", None, False))
+        else:
+            # Tagalog-only forced retry when primary was auto. Never force tl for hil.
+            forced = _forced_language(language)
+            if primary_lang is None and forced is not None:
+                attempts.append(("forced_lang_retry", forced, False))
+            elif primary_lang is not None:
+                attempts.append(("auto_retry2", None, False))
+        # Tagalog: if primary was auto somehow, still ensure a forced-tl attempt.
+        if is_tagalog_language(language) and mode in {"auto", "detect", "none"}:
+            attempts.insert(0, ("tagalog_forced_tl", "tl", use_vad))
 
     # Deduplicate attempt signatures.
     seen: set[tuple[str | None, bool]] = set()

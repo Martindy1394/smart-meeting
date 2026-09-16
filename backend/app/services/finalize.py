@@ -47,6 +47,79 @@ def is_processing_stale(meeting: Meeting, *, now: datetime | None = None) -> boo
     return age >= max(60, int(settings.processing_stale_seconds))
 
 
+def live_caption_covers_recording(live_caption: str, duration_seconds: float) -> bool:
+    """True when live captions are complete enough to skip a second ASR pass."""
+    live = (live_caption or "").strip()
+    words = len(live.split()) if live else 0
+    min_words = max(1, int(settings.live_caption_prefer_min_words))
+    if words < min_words:
+        return False
+    dur = max(0.0, float(duration_seconds or 0.0))
+    if dur <= 2.0:
+        return True
+    need = max(min_words, int(dur * 0.35))
+    return words >= need
+
+
+def _result_from_live_caption(
+    db,
+    meeting: Meeting,
+    live_caption: str,
+    *,
+    language: str | None,
+) -> asr.ASRResult:
+    """Promote live captions (and stored live segments) to the final transcript."""
+    from ..models import TranscriptSegment
+
+    live = (live_caption or "").strip()
+    duration = float(getattr(meeting, "duration_seconds", None) or 0.0)
+    rows = (
+        db.query(TranscriptSegment)
+        .filter(
+            TranscriptSegment.meeting_id == meeting.id,
+            TranscriptSegment.kind == "live",
+        )
+        .order_by(TranscriptSegment.seq.asc())
+        .all()
+    )
+    segs: list[asr.Segment] = []
+    for row in rows:
+        text = (row.text or "").strip()
+        if not text:
+            continue
+        segs.append(
+            asr.Segment(
+                text=text,
+                start=float(row.start_time or 0.0),
+                end=float(row.end_time or 0.0),
+                avg_logprob=row.avg_logprob,
+                no_speech_prob=row.no_speech_prob,
+                low_confidence=bool(row.low_confidence),
+                speaker_index=int(row.speaker_index or 0),
+                speaker_label=str(row.speaker_label or ""),
+            )
+        )
+    if not segs:
+        segs = [
+            asr.Segment(
+                text=live,
+                start=0.0,
+                end=duration,
+            )
+        ]
+    text = live or " ".join(s.text for s in segs).strip()
+    return asr.ASRResult(
+        text=text,
+        segments=segs,
+        engine="whisper-live",
+        language=language
+        if (language or "").strip().lower() not in {"", "auto", "detect", "none"}
+        else None,
+        language_confidence=None,
+        language_detected_by="live_finalize",
+    )
+
+
 def finalize_meeting_recording(
     meeting_id: str,
     live_caption: str = "",
@@ -176,8 +249,23 @@ def finalize_meeting_recording(
         extra_terms = transcription_svc.meeting_prompt_terms(meeting)
 
         try:
-            # Prefer file path so we do not keep a second full PCM copy in RAM.
-            result = asr.transcribe_file(audio_path, lang, extra_terms=extra_terms)
+            live = (live_caption or "").strip()
+            if bool(settings.whisper_fast_finalize) and live_caption_covers_recording(
+                live, duration
+            ):
+                logger.info(
+                    "asr.fast_finalize meeting=%s live_words=%d duration=%.1fs "
+                    "(skipping second Whisper pass)",
+                    meeting_id,
+                    len(live.split()),
+                    duration,
+                )
+                result = _result_from_live_caption(
+                    db, meeting, live, language=lang
+                )
+            else:
+                # Prefer file path so we do not keep a second full PCM copy in RAM.
+                result = asr.transcribe_file(audio_path, lang, extra_terms=extra_terms)
         except asr.ASRUnavailable as exc:
             live = (live_caption or "").strip()
             if live:
@@ -201,30 +289,31 @@ def finalize_meeting_recording(
                 return {"ok": False, "message": str(exc)}
 
         live = (live_caption or "").strip()
-        final_text = (result.text or "").strip()
-        live_words = len(live.split()) if live else 0
-        final_words = len(final_text.split()) if final_text else 0
-        prefer_ratio = min(1.0, max(0.0, float(settings.live_caption_prefer_ratio)))
-        min_live_words = max(1, int(settings.live_caption_prefer_min_words))
-        final_threshold = max(1, int(live_words * prefer_ratio))
-        # Only prefer live when the final pass is drastically shorter — never
-        # replace a solid final transcript with a partial live merge.
-        prefer_live = (
-            live_words >= min_live_words
-            and final_words < final_threshold
-            and final_words < max(8, int(live_words * 0.35))
-        )
-        logger.info(
-            "asr.finalize_choice meeting=%s live_words=%d final_words=%d "
-            "prefer_ratio=%.2f min_live_words=%d threshold=%d prefer_live=%s",
-            meeting_id,
-            live_words,
-            final_words,
-            prefer_ratio,
-            min_live_words,
-            final_threshold,
-            prefer_live,
-        )
+        if (result.engine or "").startswith("whisper-live"):
+            prefer_live = False
+        else:
+            final_text = (result.text or "").strip()
+            live_words = len(live.split()) if live else 0
+            final_words = len(final_text.split()) if final_text else 0
+            prefer_ratio = min(1.0, max(0.0, float(settings.live_caption_prefer_ratio)))
+            min_live_words = max(1, int(settings.live_caption_prefer_min_words))
+            final_threshold = max(1, int(live_words * prefer_ratio))
+            prefer_live = (
+                live_words >= min_live_words
+                and final_words < final_threshold
+                and final_words < max(8, int(live_words * 0.35))
+            )
+            logger.info(
+                "asr.finalize_choice meeting=%s live_words=%d final_words=%d "
+                "prefer_ratio=%.2f min_live_words=%d threshold=%d prefer_live=%s",
+                meeting_id,
+                live_words,
+                final_words,
+                prefer_ratio,
+                min_live_words,
+                final_threshold,
+                prefer_live,
+            )
         if prefer_live:
             result = asr.ASRResult(
                 text=live,

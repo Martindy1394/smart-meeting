@@ -894,7 +894,7 @@ export default function MeetingRoom({
               <span className="spinner" />{" "}
               {asrBusy
                 ? "Whisper ASR processing audio…"
-                : "Finalizing full-accuracy Whisper transcript…"}
+                : "Saving transcript…"}
             </span>
           )}
           {recorder.connectionState === "connecting" && (

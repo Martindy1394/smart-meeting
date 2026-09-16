@@ -863,8 +863,9 @@ async def transcribe_ws(websocket: WebSocket):
     finally:
         asr_stop.set()
         asr_wake.set()
+        drain_s = 12.0 if explicit_stop else 120.0
         try:
-            await asyncio.wait_for(asr_task, timeout=120.0)
+            await asyncio.wait_for(asr_task, timeout=drain_s)
         except (Exception, asyncio.CancelledError):
             asr_task.cancel()
             try:
@@ -886,60 +887,24 @@ async def transcribe_ws(websocket: WebSocket):
         )
         return
 
-    # Flush leftover live audio in overlapping windows (never one giant chunk —
-    # Whisper live models truncate / drop speech on multi-minute buffers).
+    # One leftover window at most — hop-draining every 1s of tail audio made
+    # Stop Recording wait on large-v3 before the finalizing spinner even starts.
+    # Skip entirely when live captions already cover the meeting.
     if live_available:
         total = _recording_length()
-        min_flush = int(0.4 * settings.audio_sample_rate * 2)
-        flush_guard = 0
-        while total - live_offset >= bytes_per_window and flush_guard < 500:
-            chunk = _read_slice(live_offset, live_offset + bytes_per_window - 1)
-            if len(chunk) < bytes_per_window:
-                break
-            seq += 1
-            try:
-                await _detect_once_and_lock(
-                    chunk,
-                    window_seconds=float(settings.whisper_live_window_seconds or 8.0),
-                )
-                live_caption, previous_window, _det = await _emit_live_window(
-                    websocket,
-                    meeting_id=meeting_id,
-                    chunk=chunk,
-                    language=language,
-                    seq=seq,
-                    extra_terms=extra_terms,
-                    prompt_context=_prompt_ctx(),
-                    live_caption=live_caption,
-                    previous_window=previous_window,
-                    byte_offset=live_offset,
-                )
-                language, language_locked, locked_language, speech_seconds_seen = (
-                    _maybe_lock_language(
-                        language=language,
-                        language_locked=language_locked,
-                        locked_language=locked_language,
-                        detection=last_language_detection or _det,
-                        speech_seconds_seen=speech_seconds_seen,
-                        meeting_id=meeting_id,
-                        window_seconds=float(settings.whisper_live_window_seconds or 8.0),
-                        elapsed_audio_seconds=_recording_length()
-                        / float(settings.audio_sample_rate * 2),
-                    )
-                )
-            except Exception as exc:
-                logger.exception("Live flush transcription error: %s", exc)
-            live_offset += bytes_per_hop
-            flush_guard += 1
-            _persist_meta()
         leftover = total - live_offset
-        if leftover >= min_flush:
-            chunk = _read_slice(live_offset, total - 1)
+        min_flush = int(0.4 * settings.audio_sample_rate * 2)
+        live_words = len((live_caption or "").split())
+        min_words = max(1, int(settings.live_caption_prefer_min_words))
+        if leftover >= min_flush and live_words < min_words:
+            cap = bytes_per_window
+            start = max(live_offset, total - cap)
+            chunk = _read_slice(start, total - 1)
             seq += 1
             try:
                 await _detect_once_and_lock(
                     chunk,
-                    window_seconds=float(leftover)
+                    window_seconds=float(len(chunk))
                     / float(settings.audio_sample_rate * 2),
                 )
                 live_caption, previous_window, _det = await _emit_live_window(
@@ -952,21 +917,7 @@ async def transcribe_ws(websocket: WebSocket):
                     prompt_context=_prompt_ctx(),
                     live_caption=live_caption,
                     previous_window=previous_window,
-                    byte_offset=live_offset,
-                )
-                language, language_locked, locked_language, speech_seconds_seen = (
-                    _maybe_lock_language(
-                        language=language,
-                        language_locked=language_locked,
-                        locked_language=locked_language,
-                        detection=last_language_detection or _det,
-                        speech_seconds_seen=speech_seconds_seen,
-                        meeting_id=meeting_id,
-                        window_seconds=float(leftover)
-                        / float(settings.audio_sample_rate * 2),
-                        elapsed_audio_seconds=_recording_length()
-                        / float(settings.audio_sample_rate * 2),
-                    )
+                    byte_offset=start,
                 )
             except Exception as exc:
                 logger.exception("Live leftover flush error: %s", exc)

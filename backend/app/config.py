@@ -182,6 +182,10 @@ class Settings(BaseSettings):
     # Minimum live-caption word count before the preference rule can fire
     # (avoids overriding a short/empty final with a tiny live hallucination).
     live_caption_prefer_min_words: int = 12
+    # After Stop: promote live captions to the final transcript when they already
+    # cover the recording. Skips a second large-v3 pass (the slow "Finalizing…"
+    # spinner). Re-transcribe still runs full ASR.
+    whisper_fast_finalize: bool = True
     # ffmpeg subprocess timeout when decoding non-WAV uploads (seconds).
     ffmpeg_timeout_seconds: float = 120.0
 
