@@ -2341,9 +2341,35 @@ def _transcribe_final_faster_whisper(
             best_score = score
             best = segs
             best_detection = detection
-        # Early exit only when dense + well covered.
+        queued_en = False
+        if lang != "en" and _english_detection_confident(detection):
+            # Same gate as explicit-en: the score from this decode, not the
+            # meeting language label. Re-run with the English prompt + token.
+            prompt = _final_decode_prompt(
+                "en", extra_terms=_EXTRA_TERMS_CTX, detection=detection
+            )
+            extras: list[tuple[str, str | None, bool]] = [
+                ("en_confident", "en", use_vad)
+            ]
+            if use_vad:
+                extras.append(("en_confident_no_vad", "en", False))
+            for extra_label, extra_lang, extra_vad in extras:
+                key = (extra_lang, extra_vad)
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_attempts.append((extra_label, extra_lang, extra_vad))
+                queued_en = True
+            if queued_en:
+                logger.info(
+                    "asr.final_fw queue_en conf=%.3f prompt=%r",
+                    float(detection.confidence or 0.0),
+                    prompt,
+                )
+        # Early exit only when dense + well covered (and no English retry queued).
         if (
-            cov >= max(min_cov, 0.75)
+            not queued_en
+            and cov >= max(min_cov, 0.75)
             and gap <= 10.0
             and sparse_penalty < 8.0
             and words >= max(12, int(duration * 0.8))
