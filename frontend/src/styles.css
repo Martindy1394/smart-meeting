@@ -1339,6 +1339,17 @@ button {
 .transcript-turn.is-live .transcript-words {
   color: var(--text);
 }
+.transcript-words.is-live-words::after {
+  content: "▍";
+  margin-left: 2px;
+  color: var(--accent, #2563eb);
+  animation: live-caret 1s steps(1) infinite;
+}
+@keyframes live-caret {
+  50% {
+    opacity: 0;
+  }
+}
 .caption-low-confidence {
   text-decoration: underline wavy;
   text-decoration-color: var(--danger);

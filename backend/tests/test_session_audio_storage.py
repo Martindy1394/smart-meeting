@@ -47,18 +47,19 @@ def test_align_pcm16_drops_odd_trailing_byte():
 
 
 def test_window_hop_overlap_math():
-    """8s window / 6s hop retains 2s overlap (rolling context, hop-sized new audio)."""
+    """8s window / 6s hop retained historically; live now hops 1s for word-by-word."""
     from app.config import Settings
 
     sr = settings.audio_sample_rate
-    window = int(8.0 * sr * 2)
-    hop = int(6.0 * sr * 2)
-    assert window == 256_000
-    assert hop == 192_000
-    assert window - hop == int(2.0 * sr * 2)
+    window = int(4.0 * sr * 2)
+    hop = int(1.0 * sr * 2)
+    assert window == 128_000
+    assert hop == 32_000
+    assert window - hop == int(3.0 * sr * 2)
     fields = Settings.model_fields
-    assert fields["whisper_live_window_seconds"].default == 8.0
-    assert fields["whisper_live_hop_seconds"].default == 6.0
+    assert fields["whisper_live_window_seconds"].default == 4.0
+    assert fields["whisper_live_hop_seconds"].default == 1.0
+    assert fields["whisper_live_warmup_seconds"].default == 1.0
     assert fields["whisper_live_model"].default == "large-v3"
     assert fields["whisper_final_model"].default == "large-v3"
     assert fields["whisper_final_backend"].default == "faster-whisper"

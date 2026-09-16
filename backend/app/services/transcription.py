@@ -3,7 +3,8 @@
 Implements the two-pass pipeline:
 
 * **Live pass** — Whisper large-v3 via faster-whisper (or an optional CTranslate2
-  Tagalog/Hiligaynon fine-tune) on overlapping 8s windows (6s hop). Tagalog (``tl``) uses
+  Tagalog/Hiligaynon fine-tune) on overlapping 4s windows (1s hop) with
+  word-level timestamps so captions grow word-by-word. Tagalog (``tl``) uses
   Whisper's native ``tl`` token. Hiligaynon (``hil``) uses **auto-detect**
   plus a Hiligaynon prompt — Whisper has no ``hil`` token, and we do **not**
   force Tagalog decode for Ilonggo speech.
@@ -27,7 +28,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -182,6 +183,7 @@ class Segment:
     low_confidence: bool = False
     speaker_index: int = 0
     speaker_label: str = ""
+    words: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1296,8 +1298,8 @@ def transcribe_live(
             # Silero VAD drops quiet / Hiligaynon onsets → empty live panel.
             vad_filter=False,
             condition_on_previous_text=False,
-            without_timestamps=True,
-            word_timestamps=False,
+            without_timestamps=False,
+            word_timestamps=True,
             no_speech_threshold=0.7,
             compression_ratio_threshold=2.4,
             log_prob_threshold=-1.0,
@@ -1310,6 +1312,7 @@ def transcribe_live(
                 msg = str(exc)
                 if "word_timestamps" in msg:
                     decode_kwargs.pop("word_timestamps", None)
+                    decode_kwargs["without_timestamps"] = True
                     return model.transcribe(pcm, **decode_kwargs)
                 raise
 
@@ -1322,6 +1325,9 @@ def transcribe_live(
         text = _strip_initial_prompt_echo(text, live_prompt)
         seg = _segment_from_whisper(s, text=text, live=True)
         if seg:
+            seg.words = _whisper_word_tokens(s)
+            if not seg.words:
+                seg.words = _raw_tokens(seg.text)
             out.append(seg)
 
     # Empty/junk: Tagalog can retry auto↔tl. Hiligaynon stays on auto only.
@@ -1337,6 +1343,9 @@ def transcribe_live(
                     text = _strip_initial_prompt_echo(text, live_prompt)
                     seg = _segment_from_whisper(s, text=text, live=True)
                     if seg:
+                        seg.words = _whisper_word_tokens(s)
+                        if not seg.words:
+                            seg.words = _raw_tokens(seg.text)
                         out.append(seg)
             except Exception as exc:
                 logger.debug("Live decode retry failed: %s", exc)
@@ -1366,6 +1375,31 @@ def _clean_caption(text: str) -> str:
 
 def _raw_tokens(text: str) -> list[str]:
     return _clean_caption(text).split() if _clean_caption(text) else []
+
+
+def _whisper_word_tokens(segment) -> list[str]:
+    """Word pieces from faster-whisper ``segment.words`` (punctuation kept)."""
+    out: list[str] = []
+    for item in getattr(segment, "words", None) or []:
+        token = (getattr(item, "word", None) or getattr(item, "text", None) or "").strip()
+        if token:
+            out.append(token)
+    return out
+
+
+def novel_caption_tokens(previous: str, merged: str) -> list[str]:
+    """Tokens to paint one-by-one when the live caption grows."""
+    prev = _raw_tokens(previous)
+    cur = _raw_tokens(merged)
+    if not cur:
+        return []
+    if not prev:
+        return cur
+    if len(cur) <= len(prev):
+        return []
+    if [t.lower() for t in cur[: len(prev)]] == [t.lower() for t in prev]:
+        return cur[len(prev) :]
+    return cur[len(prev) :]
 
 
 def _norm_token(token: str) -> str:
