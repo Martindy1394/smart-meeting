@@ -1010,9 +1010,15 @@ def _final_decode_language(requested: str | None) -> str | None:
     """Language for the final pass.
 
     Hiligaynon / auto→hil: always ``None`` (Whisper auto-detect).
+    Explicit English always forces ``en``.
     Explicit Tagalog may force ``tl`` when ``prefer_forced`` is configured.
     """
+    raw = (requested or "").strip().lower()
+    if raw in {"en", "english"}:
+        return "en"
     lang = effective_asr_language(requested)
+    if lang in {"en", "english"}:
+        return "en"
     if is_hiligaynon_language(lang):
         return None
     mode = _final_language_mode(requested)
@@ -2117,10 +2123,9 @@ def _run_faster_whisper_final(
             temperature=0.0 if bool(settings.whisper_fast_finalize) else [0.0, 0.2],
             vad_filter=vad_filter,
             vad_parameters=_FINAL_VAD_PARAMS if vad_filter else None,
-            # False avoids Whisper latching onto a repeated phrase on quiet PH
-            # audio ("Thank you…" / "Ay, wala…" loops). Coverage retries still
-            # recover dropped clauses.
-            condition_on_previous_text=False,
+            # Full-file pass: keep decoder context across segments. Fast-finalize
+            # used greedy decode without this; quiet-loop retries still exist.
+            condition_on_previous_text=not bool(settings.whisper_fast_finalize),
             without_timestamps=False,
             initial_prompt=initial_prompt(
                 meeting_language, extra_terms=_EXTRA_TERMS_CTX

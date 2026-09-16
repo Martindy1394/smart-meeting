@@ -183,9 +183,9 @@ class Settings(BaseSettings):
     # (avoids overriding a short/empty final with a tiny live hallucination).
     live_caption_prefer_min_words: int = 12
     # After Stop: promote live captions to the final transcript when they already
-    # cover the recording. Skips a second large-v3 pass (the slow "Finalizing…"
-    # spinner). Re-transcribe still runs full ASR.
-    whisper_fast_finalize: bool = True
+    # cover the recording. Default off so Stop always runs a full-file Whisper
+    # pass (English-capable, longer decoder context). Re-transcribe always does.
+    whisper_fast_finalize: bool = False
     # ffmpeg subprocess timeout when decoding non-WAV uploads (seconds).
     ffmpeg_timeout_seconds: float = 120.0
 

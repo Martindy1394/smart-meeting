@@ -107,6 +107,7 @@ def test_hiligaynon_never_forced_as_tagalog():
     assert _forced_language("auto") is None  # auto → hil default
     assert _forced_language("fil") == "tl"  # fil is Tagalog/Filipino
     assert _forced_language("en") == "en"
+    assert _final_decode_language("en") == "en"
     assert _final_decode_language("hil") is None
     assert _final_language_mode("hil") == "auto"
 

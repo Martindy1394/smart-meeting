@@ -61,8 +61,14 @@ def test_live_caption_covers_recording():
     assert finalize.live_caption_covers_recording(plenty, 1.0) is True
 
 
+def test_fast_finalize_is_off_in_env_example():
+    example = BACKEND_ROOT / ".env.example"
+    assert "WHISPER_FAST_FINALIZE=false" in example.read_text()
+
+
 if __name__ == "__main__":
     test_processing_stale_detection()
     test_redis_client_recovers_after_cooldown()
     test_live_caption_covers_recording()
+    test_fast_finalize_is_off_in_env_example()
     print("all_backend_reliability_tests_passed")
