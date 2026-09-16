@@ -32,6 +32,8 @@ def _whisper_size_hint(model_id: str) -> str:
     name = (model_id or "").strip().lower()
     if not name:
         return "unknown"
+    if "large-v3" in name:
+        return "large-v3"
     if "large" in name:
         return "large"
     if "medium" in name:
@@ -86,8 +88,8 @@ def _build_pipeline_status() -> dict:
             "hardware_hint": (
                 f"setting={device}; resolved={resolved_whisper}; "
                 f"compute_type={resolved_compute}; "
-                "faster-whisper/CTranslate2; live favors latency (small), "
-                "final favors accuracy (medium/HF PH); "
+                "faster-whisper/CTranslate2; live and final default to "
+                "Whisper large-v3; "
                 f"live_speaker_labels={bool(getattr(settings, 'live_speaker_labels', True))}"
             ),
             "metrics_status": "WER/latency/cost TBD — see docs/MODELS.md",

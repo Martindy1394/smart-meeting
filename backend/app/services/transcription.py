@@ -2,8 +2,8 @@
 
 Implements the two-pass pipeline:
 
-* **Live pass** — fast Whisper (or an optional CTranslate2 Tagalog/Hiligaynon
-  fine-tune) on overlapping 8s windows (6s hop). Tagalog (``tl``) uses
+* **Live pass** — Whisper large-v3 via faster-whisper (or an optional CTranslate2
+  Tagalog/Hiligaynon fine-tune) on overlapping 8s windows (6s hop). Tagalog (``tl``) uses
   Whisper's native ``tl`` token. Hiligaynon (``hil``) uses **auto-detect**
   plus a Hiligaynon prompt — Whisper has no ``hil`` token, and we do **not**
   force Tagalog decode for Ilonggo speech.
@@ -597,7 +597,7 @@ def hiligaynon_model_id() -> str:
     cands = hiligaynon_hf_candidates()
     if cands:
         return cands[0]
-    return (settings.whisper_final_model or "medium").strip()
+    return (settings.whisper_final_model or "large-v3").strip()
 
 
 def initial_prompt(
@@ -787,7 +787,7 @@ def live_model_id(language: str | None) -> str:
         custom = (settings.whisper_live_hiligaynon_model or "").strip()
         if custom:
             return custom
-    return (settings.whisper_live_model or "small").strip()
+    return (settings.whisper_live_model or "large-v3").strip()
 
 
 def detect_pcm_language(pcm: np.ndarray) -> LanguageDetection | None:
@@ -824,10 +824,10 @@ def detect_pcm_language(pcm: np.ndarray) -> LanguageDetection | None:
 def final_faster_model_id(language: str | None) -> str:
     """faster-whisper model for final fallback / FW-only backend.
 
-    Always use the configured final size (default ``medium``). Live CT2
+    Always use the configured final size (default ``large-v3``). Live CT2
     fine-tunes are for captions only — using them here downgraded accuracy.
     """
-    return (settings.whisper_final_model or "medium").strip()
+    return (settings.whisper_final_model or "large-v3").strip()
 
 
 def resolve_final_backend(language: str | None) -> str:

@@ -74,12 +74,12 @@ class Settings(BaseSettings):
     session_janitor_interval_seconds: float = 60.0
     # Mark meetings stuck in ``processing`` as failed after this many seconds
     # (Whisper on CPU can take a long time; keep this above worst-case ASR).
-    processing_stale_seconds: int = 60 * 45
+    processing_stale_seconds: int = 60 * 90
     # TTL for the single-writer live WebSocket lock in Redis.
     live_session_lock_ttl_seconds: int = 90
     # Drop old live windows when ASR backlog exceeds this many hops.
     # Higher default reduces live word-loss when Whisper is slower than realtime.
-    live_asr_max_backlog_windows: int = 12
+    live_asr_max_backlog_windows: int = 16
     # When over backlog, skip at most this many hops per wake (partial catch-up
     # instead of jumping to the live edge and losing mid-meeting captions).
     live_asr_backpressure_skip_hops: int = 2
@@ -88,11 +88,11 @@ class Settings(BaseSettings):
     audio_sample_rate: int = 16000
     audio_channels: int = 1
 
-    # Whisper model sizes for the two-pass pipeline.
-    # Live uses faster-whisper. Final prefers a fine-tuned Hiligaynon/PH
-    # checkpoint when backend is ``auto`` / ``huggingface``.
-    whisper_live_model: str = "small"
-    whisper_final_model: str = "medium"
+    # Whisper model sizes for the two-pass pipeline (faster-whisper / CTranslate2).
+    # ``large-v3`` is the default for live captions and the final pass.
+    # Set WHISPER_FINAL_BACKEND=auto to still score HF PH fine-tunes against it.
+    whisper_live_model: str = "large-v3"
+    whisper_final_model: str = "large-v3"
     # Your own Hiligaynon fine-tune (HF repo id or local transformers folder).
     # Tried first for hil meetings when set; leave empty until you have one.
     # Recommended source: UP-DSP PLD Hiligaynon (~41h) via
@@ -112,8 +112,9 @@ class Settings(BaseSettings):
     # Optional CT2 Tagalog fine-tune for live captions.
     whisper_live_tagalog_model: str = ""
     # auto | huggingface | faster-whisper
+    # Default faster-whisper so live + final both run Whisper large-v3.
     # auto: for Hiligaynon/Tagalog/PH meetings try HF candidates, then FW.
-    whisper_final_backend: str = "auto"
+    whisper_final_backend: str = "faster-whisper"
     # Live captions backend: whisper | rnnt | auto
     # auto = NeMo FastConformer-RNNT for PH/Hiligaynon-biased meetings when
     # installed, else faster-whisper. Final pass always stays on Whisper.

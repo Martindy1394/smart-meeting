@@ -724,9 +724,9 @@ export default function MeetingRoom({
               )}
               <span
                 className="card-tag"
-                title="Live captions: Whisper, or FastConformer RNN-T when NeMo is installed. Final/re-transcribe: Whisper with Hiligaynon bias."
+                title="Live and final ASR: faster-whisper large-v3 (multilingual). Hiligaynon-biased auto language; optional FastConformer RNN-T for Tagalog when NeMo is installed."
               >
-                ASR · auto · Hiligaynon bias
+                ASR · Whisper large-v3
               </span>
             </div>
           </div>
