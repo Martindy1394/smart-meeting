@@ -312,7 +312,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
       setMessage(
         reason === "watchdog"
           ? "Socket stalled — finishing transcription via server…"
-          : "Finishing transcription…"
+          : "Saving transcript…"
       );
       try {
         await ensureFreshAccessToken({ minValiditySeconds: 60 });
@@ -997,7 +997,7 @@ export function useRecorder({ onFinalTranscript } = {}) {
     }
     setRecording(false);
     setStatus("finalizing");
-    setMessage("Finishing transcription…");
+    setMessage("Saving transcript…");
     // Flush trailing PCM (~up to 0.25s) before tearing down the mic graph.
     await flushAndCleanupAudio();
     const meetingId = meetingIdRef.current;

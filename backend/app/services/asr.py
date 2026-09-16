@@ -162,7 +162,13 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     samples = None
     path = getattr(meeting, "audio_path", None) or ""
     slots = live_speakers.registered_speaker_count(meeting)
-    if path and os.path.isfile(path) and bool(getattr(settings, "live_speaker_labels", True)):
+    fast_live = (result.engine or "").startswith("whisper-live")
+    if (
+        not fast_live
+        and path
+        and os.path.isfile(path)
+        and bool(getattr(settings, "live_speaker_labels", True))
+    ):
         try:
             samples = audio.load_audio_float32(path)
         except Exception:
@@ -174,7 +180,7 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
             samples,
             max_voices=slots,
         )
-    elif bool(getattr(settings, "live_speaker_labels", True)):
+    elif (not fast_live) and bool(getattr(settings, "live_speaker_labels", True)):
         result.segments = live_speakers.label_segments(
             meeting.id,
             list(result.segments or []),
@@ -185,11 +191,12 @@ def persist_transcript(db, meeting, result: ASRResult) -> None:
     try:
         from . import speaker_id
 
-        speaker_id.identify_segments(
-            list(result.segments or []),
-            meeting,
-            owner_id=getattr(meeting, "owner_id", None),
-        )
+        if not fast_live:
+            speaker_id.identify_segments(
+                list(result.segments or []),
+                meeting,
+                owner_id=getattr(meeting, "owner_id", None),
+            )
         report = speaker_id.build_attendance_report(list(result.segments or []), meeting)
         import json
 

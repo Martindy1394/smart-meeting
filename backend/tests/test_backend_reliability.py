@@ -52,7 +52,17 @@ def test_redis_client_recovers_after_cooldown(monkeypatch=None):
     redis_store.reset_client_for_tests()
 
 
+def test_live_caption_covers_recording():
+    short = "one two three four"
+    plenty = " ".join(["word"] * 40)
+    assert finalize.live_caption_covers_recording("", 30) is False
+    assert finalize.live_caption_covers_recording(short, 30) is False
+    assert finalize.live_caption_covers_recording(plenty, 60) is True
+    assert finalize.live_caption_covers_recording(plenty, 1.0) is True
+
+
 if __name__ == "__main__":
     test_processing_stale_detection()
     test_redis_client_recovers_after_cooldown()
+    test_live_caption_covers_recording()
     print("all_backend_reliability_tests_passed")
