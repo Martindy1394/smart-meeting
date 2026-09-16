@@ -54,6 +54,17 @@ def test_merge_live_caption_never_shrinks():
     assert len(merged.split()) >= len(prev.split())
 
 
+def test_novel_caption_tokens_are_word_by_word():
+    from app.services.transcription import novel_caption_tokens
+
+    assert novel_caption_tokens("", "Maayong aga") == ["Maayong", "aga"]
+    assert novel_caption_tokens("Maayong aga", "Maayong aga sa tanan") == [
+        "sa",
+        "tanan",
+    ]
+    assert novel_caption_tokens("hello world", "hello world") == []
+
+
 def test_model_cache_lru_eviction():
     cache = _ModelCache(max_models=2)
     set_model_cache(cache)
@@ -613,6 +624,7 @@ def test_language_detection_clamps_confidence():
 if __name__ == "__main__":
     test_merge_live_caption_appends_novel_overlap()
     test_merge_live_caption_never_shrinks()
+    test_novel_caption_tokens_are_word_by_word()
     test_model_cache_lru_eviction()
     test_per_model_locks_are_distinct()
     test_hiligaynon_never_forced_as_tagalog()

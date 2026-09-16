@@ -734,16 +734,18 @@ export default function MeetingRoom({
             {asrError && <div className="error-banner">{asrError}</div>}
             {showLive ? (
               <div className="transcript-live-stream" aria-live="polite">
-                {recorder.liveTurns?.length ? (
+                {recorder.liveText ? (
+                  <p className="transcript-turn is-live">
+                    <span className="transcript-words is-live-words">
+                      {recorder.liveText}
+                    </span>
+                  </p>
+                ) : recorder.liveTurns?.length ? (
                   <TranscriptTurns
                     segments={recorder.liveTurns}
                     fallbackText={recorder.liveText}
                     voiceSlots={voiceSlots}
                   />
-                ) : recorder.liveText ? (
-                  <p className="transcript-turn is-live">
-                    <span className="transcript-words">{recorder.liveText}</span>
-                  </p>
                 ) : null}
                 {hasLiveWords &&
                 (recorder.status === "finalizing" || isPaused) &&

@@ -150,8 +150,26 @@ async def _emit_live_window(
             merged = live_caption
     display = (merged or "").strip() or window_text.strip()
     if display:
-        # Always push nonempty window text to the UI. Skipping when merge did
-        # not grow the caption left the transcript card on "Listening…".
+        from ..services.transcription import novel_caption_tokens
+
+        # Paint new tokens one at a time so the transcript grows word-by-word.
+        if not replace_caption:
+            running = (live_caption or "").strip()
+            for tok in novel_caption_tokens(live_caption, display):
+                running = f"{running} {tok}".strip()
+                await _send(
+                    websocket,
+                    {
+                        "type": "live_word",
+                        "word": tok,
+                        "text": running,
+                        "seq": seq,
+                        "engine": "whisper",
+                        "speaker_index": speaker_index,
+                        "speaker_label": speaker_label,
+                    },
+                )
+                await asyncio.sleep(0)
         await _send(
             websocket,
             {
@@ -570,7 +588,7 @@ async def transcribe_ws(websocket: WebSocket):
         total = _recording_length()
         _apply_backpressure(total)
 
-        # Fast first caption: short warmup before the first full 8s window.
+        # Fast first caption: short warmup before the first full window.
         if (
             not warmup_done
             and live_offset == 0

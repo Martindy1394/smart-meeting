@@ -155,13 +155,13 @@ class Settings(BaseSettings):
     # Final-pass VAD: aggressive VAD was dropping long spans of real speech
     # (especially clipped mic audio / mixed EN+PH). Default off for coverage.
     whisper_final_vad_filter: bool = False
-    # Live caption windowing: 8s rolling buffer, hop 6s (2s overlap context).
-    # Transcribes 8s every 6s of audio instead of 10s every 5s (~40% less CPU).
-    whisper_live_window_seconds: float = 8.0
-    whisper_live_hop_seconds: float = 6.0
+    # Live caption windowing: short hops so captions grow word-by-word.
+    # 4s of context, 1s hop (3s overlap), 1s warmup for the first words.
+    whisper_live_window_seconds: float = 4.0
+    whisper_live_hop_seconds: float = 1.0
     # Emit a short first caption quickly so recording does not feel stuck
-    # waiting for the full 8s window (steady-state still uses 8s/6s).
-    whisper_live_warmup_seconds: float = 2.5
+    # waiting for the full window (steady-state still uses window/hop).
+    whisper_live_warmup_seconds: float = 1.0
     # Final ASR chunk size for multi-hour recordings (seconds of audio per pass).
     whisper_final_chunk_seconds: float = 600.0
     whisper_final_chunk_overlap_seconds: float = 15.0

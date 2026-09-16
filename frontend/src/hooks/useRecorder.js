@@ -512,6 +512,26 @@ export function useRecorder({ onFinalTranscript } = {}) {
           }
         } else if (data.type === "info" || data.type === "warning") {
           setMessage(data.message || "");
+        } else if (data.type === "live_word") {
+          const incoming = String(data.text || data.word || "").trim();
+          if (!incoming) return;
+          if (data.speaker_label) {
+            setLiveSpeakerLabel(String(data.speaker_label));
+            setLiveSpeakerIndex(Number(data.speaker_index) || 0);
+          }
+          setLiveText((prev) => {
+            const current = (prev || "").trim();
+            if (!current) return incoming;
+            if (incoming === current) return prev;
+            if (incoming.startsWith(current)) return incoming;
+            const word = String(data.word || "").trim();
+            if (word && !current.endsWith(word)) {
+              return `${current} ${word}`.trim();
+            }
+            return incoming.length >= current.length ? incoming : prev;
+          });
+          setMessage("");
+          setStatus((s) => (s === "starting" ? "recording" : s));
         } else if (data.type === "live_caption") {
           // Cumulative caption — never allow a shorter update to erase older words
           // (protects against aggressive overlap dedupe or WS reconnect resets).
