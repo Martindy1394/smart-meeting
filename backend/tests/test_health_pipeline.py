@@ -39,7 +39,9 @@ class HealthPipelineTests(unittest.TestCase):
         self.assertIn("size_hint_live", pipe["whisper"])
         self.assertIn("hardware_hint", pipe["bart"])
         self.assertIn("metrics_status", pipe["mbart_nllb"])
-        self.assertEqual(pipe["whisper"]["size_hint_live"], "small")
+        self.assertEqual(pipe["whisper"]["size_hint_live"], "large-v3")
+        self.assertEqual(pipe["whisper"]["live_model"], "large-v3")
+        self.assertEqual(pipe["whisper"]["final_model"], "large-v3")
         self.assertIn("TBD", pipe["whisper"]["metrics_status"])
 
 

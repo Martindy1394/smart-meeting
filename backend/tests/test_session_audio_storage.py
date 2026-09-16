@@ -59,6 +59,9 @@ def test_window_hop_overlap_math():
     fields = Settings.model_fields
     assert fields["whisper_live_window_seconds"].default == 8.0
     assert fields["whisper_live_hop_seconds"].default == 6.0
+    assert fields["whisper_live_model"].default == "large-v3"
+    assert fields["whisper_final_model"].default == "large-v3"
+    assert fields["whisper_final_backend"].default == "faster-whisper"
 
 
 if __name__ == "__main__":
