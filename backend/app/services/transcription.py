@@ -72,13 +72,54 @@ def resolve_whisper_device() -> str:
 
 
 def whisper_cpu_threads() -> int:
-    """CTranslate2 CPU threads: cap at 4 (sweet spot) but never exceed cores."""
-    n = int(os.cpu_count() or 4)
-    return max(1, min(4, n))
+    """CTranslate2 CPU threads for large-v3.
+
+    Leave one core for the API/UI on small machines. Cap at 8 — extra threads
+    past that rarely help int8 GEMM and steal time from live hops.
+    """
+    n = int(os.cpu_count() or 2)
+    configured = int(getattr(settings, "whisper_cpu_threads", 0) or 0)
+    if configured > 0:
+        return max(1, min(configured, n))
+    return max(1, min(8, n - 1 if n > 1 else 1))
+
+
+_CPU_COMPUTE_PREF = (
+    "int8_float16",  # AVX-512 VNNI when CTranslate2 compiled for it
+    "int8_float32",  # portable: int8 weights, FP32 compute (this host)
+    "int8",
+    "int16",
+    "float32",
+)
+
+
+def supported_cpu_compute_types() -> set[str]:
+    """Compute types CTranslate2 can actually run on this CPU."""
+    try:
+        import ctranslate2  # type: ignore
+
+        raw = ctranslate2.get_supported_compute_types("cpu")
+        return {str(x) for x in (raw or [])}
+    except Exception:
+        return {"int8"}
+
+
+def pick_cpu_compute_type(preferred: str | None = None) -> str:
+    """Choose a CPU compute type that will load without a failed-then-retry."""
+    supported = supported_cpu_compute_types()
+    order: list[str] = []
+    pref = (preferred or "").strip().lower()
+    if pref and pref not in {"auto", ""}:
+        order.append(pref)
+    order.extend(_CPU_COMPUTE_PREF)
+    for cand in order:
+        if cand in supported:
+            return cand
+    return "int8"
 
 
 def resolve_whisper_compute_type(device: str | None = None) -> str:
-    """faster-whisper compute type: FP16 on GPU, int8_float16 on CPU."""
+    """faster-whisper compute type: FP16 on GPU; probed int8 family on CPU."""
     raw = (settings.whisper_compute_type or "auto").strip().lower() or "auto"
     if raw in {"fp16", "float16"}:
         raw = "float16"
@@ -90,10 +131,14 @@ def resolve_whisper_compute_type(device: str | None = None) -> str:
         raw = "int8_float32"
     dev = (device or resolve_whisper_device()).strip().lower()
     if raw in {"", "auto"}:
-        return "float16" if dev == "cuda" else "int8_float16"
+        if dev == "cuda":
+            return "float16"
+        return pick_cpu_compute_type()
     # CTranslate2 GPU INT8 uses int8_float16 (quantized weights, FP16 compute).
     if raw == "int8" and dev == "cuda":
         return "int8_float16"
+    if dev == "cpu":
+        return pick_cpu_compute_type(raw)
     return raw
 
 
@@ -274,8 +319,11 @@ class _ModelCache:
         def _load(dev: str, ctype: str):
             kwargs: dict = {"device": dev, "compute_type": ctype}
             if dev == "cpu":
-                kwargs["cpu_threads"] = whisper_cpu_threads()
+                threads = whisper_cpu_threads()
+                kwargs["cpu_threads"] = threads
                 kwargs["num_workers"] = 1
+                os.environ.setdefault("OMP_NUM_THREADS", str(threads))
+                os.environ.setdefault("CT2_USE_EXPERIMENTAL_PACKED_GEMM", "1")
             return WhisperModel(model_size, **kwargs)
 
         try:
@@ -287,8 +335,9 @@ class _ModelCache:
                     compute_type,
                     exc_info=True,
                 )
+                cpu_type = pick_cpu_compute_type()
                 try:
-                    model = _load("cpu", "int8_float16")
+                    model = _load("cpu", cpu_type)
                 except Exception:
                     model = _load("cpu", "int8")
             elif compute_type != "int8":
@@ -298,7 +347,8 @@ class _ModelCache:
                     exc_info=True,
                 )
                 try:
-                    model = _load("cpu", "int8_float32")
+                    fallback = pick_cpu_compute_type("int8")
+                    model = _load("cpu", fallback if fallback != compute_type else "int8")
                 except Exception:
                     model = _load("cpu", "int8")
             else:
@@ -613,7 +663,9 @@ def initial_prompt(
     appended as a short Whisper prompt hint.
     """
     lang = effective_asr_language(language)
-    if is_hiligaynon_language(lang):
+    if lang in {"en", "english"}:
+        prompt = "English meeting discussion."
+    elif is_hiligaynon_language(lang):
         prompt = (settings.whisper_hiligaynon_initial_prompt or "").strip()
         if not prompt:
             prompt = (settings.whisper_initial_prompt or "").strip()
@@ -675,6 +727,10 @@ def parse_prompt_terms(raw) -> list[str]:
             continue
         key = term.casefold()
         if key in seen:
+            continue
+        # Single-letter / stub roster chips ("j") poison Whisper's prompt.
+        alpha = sum(1 for ch in term if ch.isalpha())
+        if alpha < 3:
             continue
         seen.add(key)
         out.append(term)
@@ -1006,20 +1062,106 @@ def _final_language_mode(requested: str | None) -> str:
     return (settings.whisper_final_language_mode or "prefer_forced").strip().lower()
 
 
-def _final_decode_language(requested: str | None) -> str | None:
+def _english_detection_confident(detection: LanguageDetection | None) -> bool:
+    """True when Whisper already scored the audio as English above the lock gate."""
+    if detection is None:
+        return False
+    code = (detection.language or "").strip().lower()
+    if code not in {"en", "english"}:
+        return False
+    conf = _clamp_confidence(detection.confidence)
+    if conf is None:
+        return False
+    min_conf = float(getattr(settings, "asr_language_min_confidence", 0.7) or 0.7)
+    return conf >= min_conf
+
+
+def _final_decode_language(
+    requested: str | None,
+    *,
+    detection: LanguageDetection | None = None,
+) -> str | None:
     """Language for the final pass.
 
-    Hiligaynon / auto→hil: always ``None`` (Whisper auto-detect).
+    Explicit English always forces ``en``. Auto / Hiligaynon-biased auto forces
+    ``en`` only when ``detect_language`` already scored English at or above
+    ``asr_language_min_confidence``. Otherwise Hiligaynon / auto stays
+    ``None`` (Whisper auto-detect, never Tagalog ``tl``).
     Explicit Tagalog may force ``tl`` when ``prefer_forced`` is configured.
     """
+    raw = (requested or "").strip().lower()
+    if raw in {"en", "english"}:
+        return "en"
     lang = effective_asr_language(requested)
-    if is_hiligaynon_language(lang):
+    if lang in {"en", "english"}:
+        return "en"
+    if is_auto_language(raw) or not raw or is_hiligaynon_language(lang):
+        if _english_detection_confident(detection):
+            return "en"
         return None
     mode = _final_language_mode(requested)
     if mode in {"forced", "force", "tl", "prefer_forced", "prefer-tl", "prefer_tl"}:
         return _forced_language(requested)
     # auto / detect / none
     return None
+
+
+def _final_decode_prompt(
+    meeting_language: str | None,
+    *,
+    extra_terms: list[str] | None = None,
+    detection: LanguageDetection | None = None,
+) -> str | None:
+    """Prompt for the full-file pass.
+
+    Auto meetings do not get the Hiligaynon board prompt. English is used when
+    the meeting is explicitly English **or** Whisper already scored English
+    above ``asr_language_min_confidence``.
+    """
+    if _final_decode_language(meeting_language, detection=detection) == "en":
+        return initial_prompt("en", extra_terms=extra_terms)
+    raw = (meeting_language or "").strip().lower()
+    if is_auto_language(raw) or not raw:
+        prompt = "Meeting discussion."
+        terms = [
+            t.strip()
+            for t in (extra_terms or [])
+            if isinstance(t, str) and t.strip()
+        ][:24]
+        if terms:
+            prompt = f"{prompt} Vocabulary: {', '.join(terms)}."
+        return prompt
+    return initial_prompt(meeting_language, extra_terms=extra_terms)
+
+
+def _faster_whisper_final_kwargs(
+    *,
+    language: str | None,
+    vad_filter: bool,
+    initial_prompt: str | None,
+) -> dict:
+    """Exact ``WhisperModel.transcribe`` kwargs for the full-file pass.
+
+    Kept in one place so production matches the manual full-file repro
+    (English, beam 5, previous-text context) plus Silero VAD.
+    """
+    fast = bool(settings.whisper_fast_finalize)
+    lang_arg = whisper_language_arg(language) if language else None
+    return {
+        "language": lang_arg,
+        "task": _WHISPER_TASK,
+        "beam_size": 1 if fast else 5,
+        "best_of": 1 if fast else 5,
+        "temperature": 0.0 if fast else [0.0, 0.2],
+        "vad_filter": bool(vad_filter),
+        "vad_parameters": _FINAL_VAD_PARAMS if vad_filter else None,
+        "condition_on_previous_text": (not fast),
+        "without_timestamps": False,
+        "initial_prompt": initial_prompt,
+        "no_speech_threshold": 0.25,
+        "compression_ratio_threshold": 2.6,
+        "log_prob_threshold": -1.2,
+    }
 
 
 def _segment_time_coverage(segments: list[Segment], duration: float) -> float:
@@ -1292,8 +1434,9 @@ def transcribe_live(
         decode_kwargs = dict(
             language=lang_arg,
             task=_WHISPER_TASK,
-            beam_size=2,
-            best_of=2,
+            # CPU large-v3: beam 3 is a quality bump vs 2 without GPU cost.
+            beam_size=3,
+            best_of=3,
             temperature=0.0,
             # Silero VAD drops quiet / Hiligaynon onsets → empty live panel.
             vad_filter=False,
@@ -1993,7 +2136,8 @@ def _transcribe_final_hf(
         return [], None
 
     duration = float(samples.size) / float(settings.audio_sample_rate or 16000)
-    primary = _final_decode_language(language)
+    pre_det = detect_pcm_language(samples) if samples.size else None
+    primary = _final_decode_language(language, detection=pre_det)
     lang_attempts: list[str | None] = [primary]
     # Tagalog only: if primary was auto, also try forced native ``tl``.
     # Never append ``tl`` for Hiligaynon.
@@ -2009,7 +2153,14 @@ def _transcribe_final_hf(
         or "hiligaynon" in (model_id or "").lower()
     )
     prompt_ids = (
-        _hf_prompt_ids(pipe, initial_prompt(language, extra_terms=_EXTRA_TERMS_CTX)) if use_prompt else None
+        _hf_prompt_ids(
+            pipe,
+            _final_decode_prompt(
+                language, extra_terms=_EXTRA_TERMS_CTX, detection=pre_det
+            ),
+        )
+        if use_prompt
+        else None
     )
     best: list[Segment] = []
     best_score = -1.0
@@ -2103,33 +2254,15 @@ def _run_faster_whisper_final(
     *,
     language: str | None,
     vad_filter: bool,
-    meeting_language: str | None = None,
+    prompt: str | None = None,
 ) -> tuple[list[Segment], object]:
-    # Sanitize: never pass ``fil``/``hil`` into faster-whisper.
-    lang_arg = whisper_language_arg(language) if language else None
+    kwargs = _faster_whisper_final_kwargs(
+        language=language,
+        vad_filter=vad_filter,
+        initial_prompt=prompt,
+    )
     with get_model_cache().fw_infer_lock(model_id):
-        segments, info = model.transcribe(
-            audio_in,
-            language=lang_arg,
-            task=_WHISPER_TASK,
-            beam_size=1 if bool(settings.whisper_fast_finalize) else 5,
-            best_of=1 if bool(settings.whisper_fast_finalize) else 5,
-            temperature=0.0 if bool(settings.whisper_fast_finalize) else [0.0, 0.2],
-            vad_filter=vad_filter,
-            vad_parameters=_FINAL_VAD_PARAMS if vad_filter else None,
-            # False avoids Whisper latching onto a repeated phrase on quiet PH
-            # audio ("Thank you…" / "Ay, wala…" loops). Coverage retries still
-            # recover dropped clauses.
-            condition_on_previous_text=False,
-            without_timestamps=False,
-            initial_prompt=initial_prompt(
-                meeting_language, extra_terms=_EXTRA_TERMS_CTX
-            ),
-            # Quiet laptop/board mics need a lower gate or speech is dropped.
-            no_speech_threshold=0.25,
-            compression_ratio_threshold=2.6,
-            log_prob_threshold=-1.2,
-        )
+        segments, info = model.transcribe(audio_in, **kwargs)
     return _segments_to_list(segments), info
 
 
@@ -2138,11 +2271,9 @@ def _transcribe_final_faster_whisper(
 ) -> tuple[list[Segment], LanguageDetection | None]:
     """Final pass via faster-whisper with coverage-aware retries.
 
-    Root cause of missing spoken words on board meetings:
-    forcing ``language=tl`` + aggressive VAD skipped long spans of real English
-    speech (verified on production WAVs with continuous energy but empty
-    transcript gaps of 20–30s). We now default to auto language and no VAD,
-    and retry if timeline coverage is still poor.
+    Full-file decode uses Silero VAD first; a no-VAD retry still runs if
+    coverage is poor. Auto meetings pick English only when detect_language
+    already scored English above ``asr_language_min_confidence``.
 
     Returns ``(segments, language_detection)``.
     """
@@ -2163,10 +2294,22 @@ def _transcribe_final_faster_whisper(
             samples = _audio_to_float32(audio_source)
             duration = float(samples.size) / float(settings.audio_sample_rate)
 
+    pre_det = detect_pcm_language(samples) if isinstance(samples, np.ndarray) and samples.size else None
     mode = _final_language_mode(language)
-    primary_lang = _final_decode_language(language)
+    primary_lang = _final_decode_language(language, detection=pre_det)
+    prompt = _final_decode_prompt(
+        language, extra_terms=_EXTRA_TERMS_CTX, detection=pre_det
+    )
     use_vad = bool(settings.whisper_final_vad_filter)
     min_cov = min(0.95, max(0.2, float(settings.whisper_final_min_coverage)))
+    logger.info(
+        "asr.final_fw setup detect=%s conf=%s primary_lang=%s vad=%s prompt=%r",
+        getattr(pre_det, "language", None),
+        getattr(pre_det, "confidence", None),
+        primary_lang,
+        use_vad,
+        prompt,
+    )
 
     attempts: list[tuple[str, str | None, bool]] = [
         ("primary", primary_lang, use_vad),
@@ -2212,7 +2355,7 @@ def _transcribe_final_faster_whisper(
                 audio_in,
                 language=lang,
                 vad_filter=vad,
-                meeting_language=language,
+                prompt=prompt,
             )
         except Exception as exc:
             logger.warning("Final ASR attempt %s failed: %s", label, exc)
@@ -2253,9 +2396,35 @@ def _transcribe_final_faster_whisper(
             best_score = score
             best = segs
             best_detection = detection
-        # Early exit only when dense + well covered.
+        queued_en = False
+        if lang != "en" and _english_detection_confident(detection):
+            # Same gate as explicit-en: the score from this decode, not the
+            # meeting language label. Re-run with the English prompt + token.
+            prompt = _final_decode_prompt(
+                "en", extra_terms=_EXTRA_TERMS_CTX, detection=detection
+            )
+            extras: list[tuple[str, str | None, bool]] = [
+                ("en_confident", "en", use_vad)
+            ]
+            if use_vad:
+                extras.append(("en_confident_no_vad", "en", False))
+            for extra_label, extra_lang, extra_vad in extras:
+                key = (extra_lang, extra_vad)
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_attempts.append((extra_label, extra_lang, extra_vad))
+                queued_en = True
+            if queued_en:
+                logger.info(
+                    "asr.final_fw queue_en conf=%.3f prompt=%r",
+                    float(detection.confidence or 0.0),
+                    prompt,
+                )
+        # Early exit only when dense + well covered (and no English retry queued).
         if (
-            cov >= max(min_cov, 0.75)
+            not queued_en
+            and cov >= max(min_cov, 0.75)
             and gap <= 10.0
             and sparse_penalty < 8.0
             and words >= max(12, int(duration * 0.8))

@@ -178,9 +178,25 @@ def extract_introduction(text: str) -> str | None:
         if not m:
             continue
         name = _clean_extracted_name(m.group(1))
-        if name:
+        if name and _looks_like_person_name(name):
             return name
     return None
+
+
+def _looks_like_person_name(name: str) -> bool:
+    """Reject Whisper garbage captured by ``this is <token>`` (e.g. cryptocur)."""
+    parts = [p for p in (name or "").split() if p]
+    if not parts or len(name) > 40:
+        return False
+    if any(p.lower() in _STOP for p in parts):
+        return False
+    token0 = parts[0]
+    # Real intros are capitalized ("Martin"); mashed lowercase tokens are ASR junk.
+    if token0.islower() and len(parts) == 1:
+        return False
+    if len(token0) >= 10 and token0.islower():
+        return False
+    return True
 
 
 def _clean_extracted_name(raw: str) -> str | None:

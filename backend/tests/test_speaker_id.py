@@ -25,6 +25,15 @@ class SpeakerIdTests(unittest.TestCase):
             "Pedro Garcia",
         )
         self.assertIsNone(speaker_id.extract_introduction("The motion is carried."))
+        self.assertIsNone(
+            speaker_id.extract_introduction(
+                "Hello, coop test. This is cryptocur and I would like to raise my concern"
+            )
+        )
+        self.assertEqual(
+            speaker_id.extract_introduction("This is Martin and I would like to raise my concern"),
+            "Martin",
+        )
 
     def test_roster_match_and_guest(self):
         roster = ["Maria Santos", "Juan Dela Cruz"]

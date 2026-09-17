@@ -121,6 +121,32 @@ class LiveSpeakerTests(unittest.TestCase):
         self.assertEqual(out[1].speaker_index, 1)
         self.assertEqual(out[0].speaker_index, 2)
 
+    def test_low_confidence_tail_stays_on_same_voice(self):
+        sr = 16000
+        live_speakers.reset_meeting("meet-tail")
+        low = np.frombuffer(_tone(90.0, seconds=1.0), dtype="<i2").astype(np.float32) / 32768.0
+        high = np.frombuffer(_tone(280.0, seconds=1.0), dtype="<i2").astype(np.float32) / 32768.0
+        wav = np.concatenate([low, high])
+
+        class Seg:
+            def __init__(self, text, start, end, *, low_confidence=False, no_speech_prob=0.1):
+                self.text = text
+                self.start = start
+                self.end = end
+                self.low_confidence = low_confidence
+                self.no_speech_prob = no_speech_prob
+                self.avg_logprob = -0.4
+                self.speaker_label = ""
+                self.speaker_index = 0
+
+        segs = [
+            Seg("hello mic test this is martin", 0.0, 1.0),
+            Seg("which created an impact cling to", 1.0, 2.0, low_confidence=True, no_speech_prob=0.8),
+        ]
+        out = live_speakers.label_segments("meet-tail", segs, wav, sample_rate=sr)
+        self.assertEqual(out[0].speaker_index, out[1].speaker_index)
+        self.assertEqual(out[0].speaker_label, out[1].speaker_label)
+
     def test_bind_asr_accuracy_promotes_best_cluster(self):
         live_speakers.reset_meeting("meet-live-acc")
         low = _tone(90.0)

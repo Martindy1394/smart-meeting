@@ -128,6 +128,13 @@ class PromptTermTests(unittest.TestCase):
         terms = meeting_prompt_terms(meeting)
         self.assertEqual(terms, ["Garcia", "Juan", "Maria Santos"])
 
+    def test_parse_prompt_terms_drops_stub_names(self):
+        from app.services.transcription import parse_prompt_terms
+
+        terms = parse_prompt_terms(["Jester", "Marie", "Rey", "MARTIN", "j", "JOHN"])
+        self.assertEqual(terms, ["Jester", "Marie", "Rey", "MARTIN", "JOHN"])
+        self.assertNotIn("j", terms)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,24 +38,58 @@ class WhisperDeviceTests(unittest.TestCase):
                 transcription.resolve_whisper_compute_type("cuda"), "float16"
             )
 
-    def test_auto_falls_back_to_cpu_int8_float16(self):
+    def test_auto_cpu_picks_supported_int8_family(self):
         from app.config import settings
         from app.services import transcription
 
+        ct2 = _mock_ct2(0)
+        ct2.get_supported_compute_types.return_value = {
+            "int8",
+            "int8_float32",
+            "float32",
+        }
         with (
-            patch.object(settings, "whisper_device", "auto"),
+            patch.object(settings, "whisper_device", "cpu"),
             patch.object(settings, "whisper_compute_type", "auto"),
             patch.dict(
                 "sys.modules",
-                {"torch": _mock_torch(False), "ctranslate2": _mock_ct2(0)},
+                {"torch": _mock_torch(False), "ctranslate2": ct2},
             ),
         ):
             self.assertEqual(transcription.resolve_whisper_device(), "cpu")
             self.assertEqual(
-                transcription.resolve_whisper_compute_type("cpu"), "int8_float16"
+                transcription.resolve_whisper_compute_type("cpu"), "int8_float32"
             )
             self.assertGreaterEqual(transcription.whisper_cpu_threads(), 1)
-            self.assertLessEqual(transcription.whisper_cpu_threads(), 4)
+            self.assertLessEqual(transcription.whisper_cpu_threads(), 8)
+
+    def test_auto_cpu_prefers_int8_float16_when_supported(self):
+        from app.config import settings
+        from app.services import transcription
+
+        ct2 = _mock_ct2(0)
+        ct2.get_supported_compute_types.return_value = {"int8_float16", "int8"}
+        with (
+            patch.object(settings, "whisper_compute_type", "auto"),
+            patch.dict("sys.modules", {"ctranslate2": ct2}),
+        ):
+            self.assertEqual(
+                transcription.resolve_whisper_compute_type("cpu"), "int8_float16"
+            )
+
+    def test_unsupported_int8_float16_falls_back_on_cpu(self):
+        from app.config import settings
+        from app.services import transcription
+
+        ct2 = _mock_ct2(0)
+        ct2.get_supported_compute_types.return_value = {"int8", "int8_float32"}
+        with (
+            patch.object(settings, "whisper_compute_type", "int8_float16"),
+            patch.dict("sys.modules", {"ctranslate2": ct2}),
+        ):
+            self.assertEqual(
+                transcription.resolve_whisper_compute_type("cpu"), "int8_float32"
+            )
 
     def test_cuda_setting_falls_back_without_gpu(self):
         from app.config import settings
@@ -80,11 +114,16 @@ class WhisperDeviceTests(unittest.TestCase):
             )
             self.assertEqual(transcription.resolve_whisper_compute_type("cpu"), "int8")
 
-    def test_explicit_int8_float16_stays_on_cpu(self):
+    def test_explicit_int8_float16_stays_when_supported(self):
         from app.config import settings
         from app.services import transcription
 
-        with patch.object(settings, "whisper_compute_type", "int8_float16"):
+        ct2 = _mock_ct2(0)
+        ct2.get_supported_compute_types.return_value = {"int8_float16", "int8"}
+        with (
+            patch.object(settings, "whisper_compute_type", "int8_float16"),
+            patch.dict("sys.modules", {"ctranslate2": ct2}),
+        ):
             self.assertEqual(
                 transcription.resolve_whisper_compute_type("cpu"), "int8_float16"
             )
