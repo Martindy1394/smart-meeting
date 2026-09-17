@@ -121,11 +121,13 @@ class Settings(BaseSettings):
     whisper_live_backend: str = "auto"
     # NeMo .nemo path or HF repo for live RNN-T (Tagalog FastConformer-Hybrid).
     rnnt_live_model: str = "NCSpeech/stt_tl_fastconformer_hybrid_large"
-    # auto = CUDA when a GPU is present, else CPU. faster-whisper / CTranslate2.
-    whisper_device: str = "auto"
-    # auto = float16 on CUDA (Tensor Cores), int8_float16 on CPU (x86).
-    # On GPU, explicit int8 is mapped to CTranslate2 int8_float16.
+    # CPU-only large-v3 (no CUDA). Set WHISPER_DEVICE=auto to use a GPU if present.
+    whisper_device: str = "cpu"
+    # auto = float16 on CUDA; on CPU pick a CTranslate2 type this machine supports
+    # (int8_float16 when available, else int8_float32, else int8).
     whisper_compute_type: str = "auto"
+    # 0 = auto (min(8, cores-1)). CTranslate2 intra-op threads for large-v3.
+    whisper_cpu_threads: int = 0
     # Meeting language label is always ``auto`` in the product UI. This setting
     # is the ASR bias used when resolving ``auto`` (Hiligaynon prompts + PH
     # models). Hiligaynon uses Whisper auto-detect — never forced Tagalog.
@@ -156,13 +158,13 @@ class Settings(BaseSettings):
     # decode does not latch onto silence. Coverage retries still disable VAD
     # if the first pass is too sparse.
     whisper_final_vad_filter: bool = True
-    # Live caption windowing: short hops so captions grow word-by-word.
-    # 4s of context, 1s hop (3s overlap), 1s warmup for the first words.
-    whisper_live_window_seconds: float = 4.0
-    whisper_live_hop_seconds: float = 1.0
+    # Live caption windowing on CPU large-v3: longer context, 2s hop so the
+    # decoder is not starved (4s/1s hops were too short and fell behind).
+    whisper_live_window_seconds: float = 8.0
+    whisper_live_hop_seconds: float = 2.0
     # Emit a short first caption quickly so recording does not feel stuck
     # waiting for the full window (steady-state still uses window/hop).
-    whisper_live_warmup_seconds: float = 1.0
+    whisper_live_warmup_seconds: float = 2.0
     # Final ASR chunk size for multi-hour recordings (seconds of audio per pass).
     whisper_final_chunk_seconds: float = 600.0
     whisper_final_chunk_overlap_seconds: float = 15.0

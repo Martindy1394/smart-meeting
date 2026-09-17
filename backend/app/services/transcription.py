@@ -72,13 +72,54 @@ def resolve_whisper_device() -> str:
 
 
 def whisper_cpu_threads() -> int:
-    """CTranslate2 CPU threads: cap at 4 (sweet spot) but never exceed cores."""
-    n = int(os.cpu_count() or 4)
-    return max(1, min(4, n))
+    """CTranslate2 CPU threads for large-v3.
+
+    Leave one core for the API/UI on small machines. Cap at 8 — extra threads
+    past that rarely help int8 GEMM and steal time from live hops.
+    """
+    n = int(os.cpu_count() or 2)
+    configured = int(getattr(settings, "whisper_cpu_threads", 0) or 0)
+    if configured > 0:
+        return max(1, min(configured, n))
+    return max(1, min(8, n - 1 if n > 1 else 1))
+
+
+_CPU_COMPUTE_PREF = (
+    "int8_float16",  # AVX-512 VNNI when CTranslate2 compiled for it
+    "int8_float32",  # portable: int8 weights, FP32 compute (this host)
+    "int8",
+    "int16",
+    "float32",
+)
+
+
+def supported_cpu_compute_types() -> set[str]:
+    """Compute types CTranslate2 can actually run on this CPU."""
+    try:
+        import ctranslate2  # type: ignore
+
+        raw = ctranslate2.get_supported_compute_types("cpu")
+        return {str(x) for x in (raw or [])}
+    except Exception:
+        return {"int8"}
+
+
+def pick_cpu_compute_type(preferred: str | None = None) -> str:
+    """Choose a CPU compute type that will load without a failed-then-retry."""
+    supported = supported_cpu_compute_types()
+    order: list[str] = []
+    pref = (preferred or "").strip().lower()
+    if pref and pref not in {"auto", ""}:
+        order.append(pref)
+    order.extend(_CPU_COMPUTE_PREF)
+    for cand in order:
+        if cand in supported:
+            return cand
+    return "int8"
 
 
 def resolve_whisper_compute_type(device: str | None = None) -> str:
-    """faster-whisper compute type: FP16 on GPU, int8_float16 on CPU."""
+    """faster-whisper compute type: FP16 on GPU; probed int8 family on CPU."""
     raw = (settings.whisper_compute_type or "auto").strip().lower() or "auto"
     if raw in {"fp16", "float16"}:
         raw = "float16"
@@ -90,10 +131,14 @@ def resolve_whisper_compute_type(device: str | None = None) -> str:
         raw = "int8_float32"
     dev = (device or resolve_whisper_device()).strip().lower()
     if raw in {"", "auto"}:
-        return "float16" if dev == "cuda" else "int8_float16"
+        if dev == "cuda":
+            return "float16"
+        return pick_cpu_compute_type()
     # CTranslate2 GPU INT8 uses int8_float16 (quantized weights, FP16 compute).
     if raw == "int8" and dev == "cuda":
         return "int8_float16"
+    if dev == "cpu":
+        return pick_cpu_compute_type(raw)
     return raw
 
 
@@ -274,8 +319,11 @@ class _ModelCache:
         def _load(dev: str, ctype: str):
             kwargs: dict = {"device": dev, "compute_type": ctype}
             if dev == "cpu":
-                kwargs["cpu_threads"] = whisper_cpu_threads()
+                threads = whisper_cpu_threads()
+                kwargs["cpu_threads"] = threads
                 kwargs["num_workers"] = 1
+                os.environ.setdefault("OMP_NUM_THREADS", str(threads))
+                os.environ.setdefault("CT2_USE_EXPERIMENTAL_PACKED_GEMM", "1")
             return WhisperModel(model_size, **kwargs)
 
         try:
@@ -287,8 +335,9 @@ class _ModelCache:
                     compute_type,
                     exc_info=True,
                 )
+                cpu_type = pick_cpu_compute_type()
                 try:
-                    model = _load("cpu", "int8_float16")
+                    model = _load("cpu", cpu_type)
                 except Exception:
                     model = _load("cpu", "int8")
             elif compute_type != "int8":
@@ -298,7 +347,8 @@ class _ModelCache:
                     exc_info=True,
                 )
                 try:
-                    model = _load("cpu", "int8_float32")
+                    fallback = pick_cpu_compute_type("int8")
+                    model = _load("cpu", fallback if fallback != compute_type else "int8")
                 except Exception:
                     model = _load("cpu", "int8")
             else:
@@ -1384,8 +1434,9 @@ def transcribe_live(
         decode_kwargs = dict(
             language=lang_arg,
             task=_WHISPER_TASK,
-            beam_size=2,
-            best_of=2,
+            # CPU large-v3: beam 3 is a quality bump vs 2 without GPU cost.
+            beam_size=3,
+            best_of=3,
             temperature=0.0,
             # Silero VAD drops quiet / Hiligaynon onsets → empty live panel.
             vad_filter=False,
